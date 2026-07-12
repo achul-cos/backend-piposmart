@@ -24,6 +24,7 @@ type PenjualanSummary struct {
 	NamaBrand      string    `json:"nama_brand"`
 	TotalPenjualan float64   `json:"total_penjualan"`
 	PicTeam        string    `json:"pic_team"`
+	TargetPaket    string    `json:"target_paket"` // 🌟 FIX UTAMA: Loloskan target_paket agar Chart Donut Dashboard bisa baca kuantitas!
 }
 
 // GET /api/pipo/penjualan
@@ -47,6 +48,7 @@ func GetPenjualan(c *gin.Context) {
 			NamaBrand:      p.NamaBrand,
 			TotalPenjualan: p.TotalPenjualan,
 			PicTeam:        p.PicTeam,
+			TargetPaket:    p.TargetPaket, // 🌟 Petakan field paket ke FE summary list
 		})
 	}
 
@@ -188,48 +190,20 @@ func UpdatePenjualan(c *gin.Context) {
 			updates["tanggal"] = t
 		}
 	}
-	if input.PicNasabah != nil {
-		updates["pic_team"] = *input.PicNasabah
-	}
-	if input.KodeOwner != nil {
-		updates["kode_owner"] = *input.KodeOwner
-	}
-	if input.NamaOwner != nil {
-		updates["nama_owner"] = *input.NamaOwner
-	}
-	if input.Brand != nil {
-		updates["nama_brand"] = *input.Brand
-	}
-	if input.NamaOutlet != nil {
-		updates["nama_outlet"] = *input.NamaOutlet
-	}
-	if input.HpOwner != nil {
-		updates["hp_owner"] = *input.HpOwner
-	}
-	if input.SumberData != nil {
-		updates["sumber_data"] = *input.SumberData
-	}
-	if input.Status != nil {
-		updates["status"] = *input.Status
-	}
-	if input.Membership != nil {
-		updates["membership"] = *input.Membership
-	}
-	if input.TargetPaket != nil {
-		updates["target_paket"] = *input.TargetPaket
-	}
-	if input.TargetNominal != nil {
-		updates["target_nominal"] = *input.TargetNominal
-	}
-	if input.NominalAktual != nil {
-		updates["total_penjualan"] = *input.NominalAktual
-	}
-	if input.StatusTraining != nil {
-		updates["status_training"] = *input.StatusTraining
-	}
-	if input.BuktiTransfer != nil {
-		updates["bukti_transfer"] = *input.BuktiTransfer
-	}
+	if input.PicNasabah != nil { updates["pic_team"] = *input.PicNasabah }
+	if input.KodeOwner != nil { updates["kode_owner"] = *input.KodeOwner }
+	if input.NamaOwner != nil { updates["nama_owner"] = *input.NamaOwner }
+	if input.Brand != nil { updates["nama_brand"] = *input.Brand }
+	if input.NamaOutlet != nil { updates["nama_outlet"] = *input.NamaOutlet }
+	if input.HpOwner != nil { updates["hp_owner"] = *input.HpOwner }
+	if input.SumberData != nil { updates["sumber_data"] = *input.SumberData }
+	if input.Status != nil { updates["status"] = *input.Status }
+	if input.Membership != nil { updates["membership"] = *input.Membership }
+	if input.TargetPaket != nil { updates["target_paket"] = *input.TargetPaket }
+	if input.TargetNominal != nil { updates["target_nominal"] = *input.TargetNominal }
+	if input.NominalAktual != nil { updates["total_penjualan"] = *input.NominalAktual }
+	if input.StatusTraining != nil { updates["status_training"] = *input.StatusTraining }
+	if input.BuktiTransfer != nil { updates["bukti_transfer"] = *input.BuktiTransfer }
 
 	if input.TanggalTraining != nil {
 		if *input.TanggalTraining != "" {
@@ -277,9 +251,7 @@ func DeletePenjualan(c *gin.Context) {
 }
 
 // ==========================================================
-// BARU: IMPORT EXCEL (BULK) — dipakai frontend saat import
-// dari file Excel finance. Struktur payload SAMA PERSIS
-// dengan CreateInput, jadi FE tinggal kirim array darinya.
+// IMPORT EXCEL (BULK) — dipakai frontend saat import
 // ==========================================================
 type bulkPenjualanInput struct {
 	TanggalInput     string  `json:"tanggalInput"`
@@ -310,21 +282,13 @@ func BulkCreatePenjualan(c *gin.Context) {
 	}
 
 	parseTanggal := func(s string, fallback time.Time) time.Time {
-		if s == "" {
-			return fallback
-		}
-		if t, err := time.Parse("2006-01-02", s); err == nil {
-			return t
-		}
+		if s == "" { return fallback }
+		if t, err := time.Parse("2006-01-02", s); err == nil { return t }
 		return fallback
 	}
 	parseTanggalPtr := func(s string) *time.Time {
-		if s == "" {
-			return nil
-		}
-		if t, err := time.Parse("2006-01-02", s); err == nil {
-			return &t
-		}
+		if s == "" { return nil }
+		if t, err := time.Parse("2006-01-02", s); err == nil { return &t }
 		return nil
 	}
 
@@ -366,14 +330,12 @@ func BulkCreatePenjualan(c *gin.Context) {
 }
 
 // ==========================================================
-// BARU: HAPUS SEMUA DATA (dengan proteksi double confirm di FE)
+// HAPUS SEMUA DATA (dengan proteksi double confirm di FE)
 // ==========================================================
-// POST /api/pipo/penjualan/delete-all
-// (sengaja POST, bukan DELETE, supaya tidak bentrok dengan wildcard :id)
 func DeleteAllPenjualan(c *gin.Context) {
 	if err := config.DB.Where("1 = 1").Delete(&models.Penjualan{}).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": "Gagal mengosongkan database"})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"status": "success", "message": "Seluruh data penjualan berhasil dihapus permanen"})
+	c.JSON(http.StatusOK, gin.H{"status": "success"})
 }
