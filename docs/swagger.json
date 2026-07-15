@@ -1,0 +1,542 @@
+{
+    "swagger": "2.0",
+    "info": {
+        "description": "Backend API untuk aplikasi frontend CRM Piposmart",
+        "title": "Backend CRM Piposmart",
+        "contact": {},
+        "version": "0.1"
+    },
+    "basePath": "/",
+    "paths": {
+        "/customer": {
+            "get": {
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Customer"
+                ],
+                "summary": "Menampilkan data semua customer",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/responses.ApiResponse-array_responses_CustomerResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/responses.ApiResponse-any"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Customer"
+                ],
+                "summary": "Membuat data customer",
+                "parameters": [
+                    {
+                        "description": "Create Data Customer",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/requests.CreateCustomerRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/responses.ApiResponse-responses_CustomerResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/responses.ApiResponse-requests_CreateCustomerRequest"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Customer"
+                ],
+                "summary": "Menghapus (soft delete) data customer",
+                "parameters": [
+                    {
+                        "description": "Delete Data Customer",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/requests.DeleteCustomerRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "Accepted",
+                        "schema": {
+                            "$ref": "#/definitions/responses.ApiResponse-responses_CustomerResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/responses.ApiResponse-requests_DeleteCustomerRequest"
+                        }
+                    }
+                }
+            },
+            "patch": {
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Customer"
+                ],
+                "summary": "Mengubah Data Customer",
+                "parameters": [
+                    {
+                        "description": "Update Data Customer",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/requests.UpdateCustomerRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/responses.ApiResponse-responses_CustomerResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/responses.ApiResponse-requests_UpdateCustomerRequest"
+                        }
+                    }
+                }
+            }
+        },
+        "/customer/force": {
+            "delete": {
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Customer"
+                ],
+                "summary": "Menghapus secara permanen data customer",
+                "parameters": [
+                    {
+                        "description": "Hard Delete Data Customer",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/requests.DeleteCustomerRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "Accepted",
+                        "schema": {
+                            "$ref": "#/definitions/responses.ApiResponse-responses_CustomerResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/responses.ApiResponse-requests_DeleteCustomerRequest"
+                        }
+                    }
+                }
+            }
+        },
+        "/customer/restore": {
+            "post": {
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Customer"
+                ],
+                "summary": "Memulihkan Data Customer",
+                "parameters": [
+                    {
+                        "description": "Restore Data Customer",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/requests.RestoreCustomerRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "Accepted",
+                        "schema": {
+                            "$ref": "#/definitions/responses.ApiResponse-responses_CustomerResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/responses.ApiResponse-requests_RestoreCustomerRequest"
+                        }
+                    }
+                }
+            }
+        },
+        "/sales": {
+            "post": {
+                "description": "Menambahkan data sales kedalam tabel sales atau halaman kelola sales",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Sales"
+                ],
+                "summary": "Membuat data sales",
+                "parameters": [
+                    {
+                        "description": "Data Sales",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/requests.CreateSalesRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/responses.ApiResponse-responses_SalesResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/responses.ApiResponse-requests_CreateSalesRequest"
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "definitions": {
+        "requests.CreateCustomerRequest": {
+            "type": "object",
+            "required": [
+                "kode_owner",
+                "kontak_outlet",
+                "kontak_owner",
+                "nama_brand",
+                "nama_outlet",
+                "nama_owner"
+            ],
+            "properties": {
+                "kode_owner": {
+                    "type": "string"
+                },
+                "kontak_outlet": {
+                    "type": "string"
+                },
+                "kontak_owner": {
+                    "type": "string"
+                },
+                "nama_brand": {
+                    "type": "string"
+                },
+                "nama_outlet": {
+                    "type": "string"
+                },
+                "nama_owner": {
+                    "type": "string"
+                },
+                "sales_id": {
+                    "type": "integer"
+                }
+            }
+        },
+        "requests.CreateSalesRequest": {
+            "type": "object",
+            "required": [
+                "email_sales",
+                "kontak_sales",
+                "nama_sales",
+                "password_sales"
+            ],
+            "properties": {
+                "email_sales": {
+                    "type": "string"
+                },
+                "is_super_admin": {
+                    "type": "boolean"
+                },
+                "kontak_sales": {
+                    "type": "string"
+                },
+                "nama_sales": {
+                    "type": "string"
+                },
+                "password_sales": {
+                    "type": "string"
+                }
+            }
+        },
+        "requests.DeleteCustomerRequest": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "integer"
+                }
+            }
+        },
+        "requests.RestoreCustomerRequest": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "integer"
+                }
+            }
+        },
+        "requests.UpdateCustomerRequest": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "integer"
+                },
+                "kode_owner": {
+                    "type": "string"
+                },
+                "kontak_outlet": {
+                    "type": "string"
+                },
+                "kontak_owner": {
+                    "type": "string"
+                },
+                "nama_brand": {
+                    "type": "string"
+                },
+                "nama_outlet": {
+                    "type": "string"
+                },
+                "nama_owner": {
+                    "type": "string"
+                },
+                "sales_id": {
+                    "type": "integer"
+                }
+            }
+        },
+        "responses.ApiResponse-any": {
+            "type": "object",
+            "properties": {
+                "data": {},
+                "message": {
+                    "type": "string"
+                }
+            }
+        },
+        "responses.ApiResponse-array_responses_CustomerResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/responses.CustomerResponse"
+                    }
+                },
+                "message": {
+                    "type": "string"
+                }
+            }
+        },
+        "responses.ApiResponse-requests_CreateCustomerRequest": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/requests.CreateCustomerRequest"
+                },
+                "message": {
+                    "type": "string"
+                }
+            }
+        },
+        "responses.ApiResponse-requests_CreateSalesRequest": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/requests.CreateSalesRequest"
+                },
+                "message": {
+                    "type": "string"
+                }
+            }
+        },
+        "responses.ApiResponse-requests_DeleteCustomerRequest": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/requests.DeleteCustomerRequest"
+                },
+                "message": {
+                    "type": "string"
+                }
+            }
+        },
+        "responses.ApiResponse-requests_RestoreCustomerRequest": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/requests.RestoreCustomerRequest"
+                },
+                "message": {
+                    "type": "string"
+                }
+            }
+        },
+        "responses.ApiResponse-requests_UpdateCustomerRequest": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/requests.UpdateCustomerRequest"
+                },
+                "message": {
+                    "type": "string"
+                }
+            }
+        },
+        "responses.ApiResponse-responses_CustomerResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/responses.CustomerResponse"
+                },
+                "message": {
+                    "type": "string"
+                }
+            }
+        },
+        "responses.ApiResponse-responses_SalesResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/responses.SalesResponse"
+                },
+                "message": {
+                    "type": "string"
+                }
+            }
+        },
+        "responses.CustomerResponse": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "kode_owner": {
+                    "type": "string"
+                },
+                "kontak_outler": {
+                    "type": "string"
+                },
+                "kontak_owner": {
+                    "type": "string"
+                },
+                "nama_brand": {
+                    "type": "string"
+                },
+                "nama_outlet": {
+                    "type": "string"
+                },
+                "nama_owner": {
+                    "type": "string"
+                },
+                "sales": {
+                    "$ref": "#/definitions/responses.SalesSummaryResponse"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "responses.SalesResponse": {
+            "type": "object",
+            "properties": {
+                "email_sales": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "is_super_admin": {
+                    "type": "boolean"
+                },
+                "kontak_sales": {
+                    "type": "string"
+                },
+                "nama_sales": {
+                    "type": "string"
+                }
+            }
+        },
+        "responses.SalesSummaryResponse": {
+            "type": "object",
+            "properties": {
+                "sales_id": {
+                    "type": "integer"
+                },
+                "sales_name": {
+                    "type": "string"
+                }
+            }
+        }
+    }
+}
