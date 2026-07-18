@@ -17,6 +17,7 @@ const docTemplate = `{
     "paths": {
         "/customer": {
             "get": {
+                "description": "Menampilkan data dalam jumlah yang banyak, biasanya untuk tabel",
                 "consumes": [
                     "application/json"
                 ],
@@ -43,6 +44,7 @@ const docTemplate = `{
                 }
             },
             "post": {
+                "description": "Menambahkan data customer kedalam database",
                 "consumes": [
                     "application/json"
                 ],
@@ -80,6 +82,7 @@ const docTemplate = `{
                 }
             },
             "delete": {
+                "description": "Menghapus data customer tetapi dapat dipulihkan nantinya",
                 "consumes": [
                     "application/json"
                 ],
@@ -117,6 +120,7 @@ const docTemplate = `{
                 }
             },
             "patch": {
+                "description": "Mengubah Data Customer",
                 "consumes": [
                     "application/json"
                 ],
@@ -154,8 +158,67 @@ const docTemplate = `{
                 }
             }
         },
+        "/customer/all": {
+            "get": {
+                "description": "Menampilkan semua data-data customer bahkan yang telah terhapus",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Customer"
+                ],
+                "summary": "Menampilkan semua data-data customer bahkan yang telah terhapus",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/responses.ApiResponse-array_responses_CustomerResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/responses.ApiResponse-any"
+                        }
+                    }
+                }
+            }
+        },
+        "/customer/deleted": {
+            "get": {
+                "description": "Menampilkan data-data customer yang terhapus (Soft delete)",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Customer"
+                ],
+                "summary": "Menampilkan data semua customer yang terhapus",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/responses.ApiResponse-array_responses_CustomerResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/responses.ApiResponse-any"
+                        }
+                    }
+                }
+            }
+        },
         "/customer/force": {
             "delete": {
+                "description": "Menghapus secara permanen data customer (hard delete)",
                 "consumes": [
                     "application/json"
                 ],
@@ -195,6 +258,7 @@ const docTemplate = `{
         },
         "/customer/restore": {
             "post": {
+                "description": "Memulihakan data customer yang terhapus (soft delete)",
                 "consumes": [
                     "application/json"
                 ],
@@ -233,6 +297,32 @@ const docTemplate = `{
             }
         },
         "/sales": {
+            "get": {
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Sales"
+                ],
+                "summary": "Menampilkan data sales",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/responses.ApiResponse-array_responses_SalesResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/responses.ApiResponse-any"
+                        }
+                    }
+                }
+            },
             "post": {
                 "description": "Menambahkan data sales kedalam tabel sales atau halaman kelola sales",
                 "consumes": [
@@ -247,7 +337,7 @@ const docTemplate = `{
                 "summary": "Membuat data sales",
                 "parameters": [
                     {
-                        "description": "Data Sales",
+                        "description": "Create Data Sales",
                         "name": "request",
                         "in": "body",
                         "required": true,
@@ -267,6 +357,220 @@ const docTemplate = `{
                         "description": "Bad Request",
                         "schema": {
                             "$ref": "#/definitions/responses.ApiResponse-requests_CreateSalesRequest"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "description": "Menghapus data sales tetapi dapat dipulihkan nantinya",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Sales"
+                ],
+                "summary": "Menghapus (soft delete) data sales",
+                "parameters": [
+                    {
+                        "description": "Delete Data Sales",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/requests.DeleteSalesRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "Accepted",
+                        "schema": {
+                            "$ref": "#/definitions/responses.ApiResponse-responses_SalesResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/responses.ApiResponse-requests_DeleteSalesRequest"
+                        }
+                    }
+                }
+            },
+            "patch": {
+                "description": "Mengubah data sales sebagaian atau semua data sales",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Sales"
+                ],
+                "summary": "Mengubah data sales secara patch",
+                "parameters": [
+                    {
+                        "description": "Update Data Sales",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/requests.UpdateSalesRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "Accepted",
+                        "schema": {
+                            "$ref": "#/definitions/responses.ApiResponse-responses_SalesResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/responses.ApiResponse-requests_UpdateSalesRequest"
+                        }
+                    }
+                }
+            }
+        },
+        "/sales/all": {
+            "get": {
+                "description": "Menampilkan semua data-data sales bahkan yang telah terhapus",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Sales"
+                ],
+                "summary": "Menampilkan semua data-data sales bahkan yang telah terhapus",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/responses.ApiResponse-array_responses_SalesResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/responses.ApiResponse-any"
+                        }
+                    }
+                }
+            }
+        },
+        "/sales/deleted": {
+            "get": {
+                "description": "Menampilkan data-data sales yang terhapus (Soft delete)",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Sales"
+                ],
+                "summary": "Menampilkan data-data sales yang terhapus",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/responses.ApiResponse-array_responses_SalesResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/responses.ApiResponse-any"
+                        }
+                    }
+                }
+            }
+        },
+        "/sales/force": {
+            "delete": {
+                "description": "Menghapus secara permanen data sales (hard delete)",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Sales"
+                ],
+                "summary": "Menghapus secara permanen data sales",
+                "parameters": [
+                    {
+                        "description": "Hard Delete Data Sales",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/requests.DeleteSalesRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "Accepted",
+                        "schema": {
+                            "$ref": "#/definitions/responses.ApiResponse-responses_SalesResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/responses.ApiResponse-requests_DeleteSalesRequest"
+                        }
+                    }
+                }
+            }
+        },
+        "/sales/restore": {
+            "post": {
+                "description": "Memulihkan data sales yang terhapus (soft delete)",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Sales"
+                ],
+                "summary": "Memulihkan data sales",
+                "parameters": [
+                    {
+                        "description": "Restore Data Sales",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/requests.RestoreSalesRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "Accepted",
+                        "schema": {
+                            "$ref": "#/definitions/responses.ApiResponse-responses_SalesResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/responses.ApiResponse-requests_RestoreSalesRequest"
                         }
                     }
                 }
@@ -342,7 +646,23 @@ const docTemplate = `{
                 }
             }
         },
+        "requests.DeleteSalesRequest": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "integer"
+                }
+            }
+        },
         "requests.RestoreCustomerRequest": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "integer"
+                }
+            }
+        },
+        "requests.RestoreSalesRequest": {
             "type": "object",
             "properties": {
                 "id": {
@@ -379,6 +699,29 @@ const docTemplate = `{
                 }
             }
         },
+        "requests.UpdateSalesRequest": {
+            "type": "object",
+            "properties": {
+                "email_sales": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "is_super_admin": {
+                    "type": "boolean"
+                },
+                "kontak_sales": {
+                    "type": "string"
+                },
+                "nama_sales": {
+                    "type": "string"
+                },
+                "password_sales": {
+                    "type": "string"
+                }
+            }
+        },
         "responses.ApiResponse-any": {
             "type": "object",
             "properties": {
@@ -395,6 +738,20 @@ const docTemplate = `{
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/responses.CustomerResponse"
+                    }
+                },
+                "message": {
+                    "type": "string"
+                }
+            }
+        },
+        "responses.ApiResponse-array_responses_SalesResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/responses.SalesResponse"
                     }
                 },
                 "message": {
@@ -435,6 +792,17 @@ const docTemplate = `{
                 }
             }
         },
+        "responses.ApiResponse-requests_DeleteSalesRequest": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/requests.DeleteSalesRequest"
+                },
+                "message": {
+                    "type": "string"
+                }
+            }
+        },
         "responses.ApiResponse-requests_RestoreCustomerRequest": {
             "type": "object",
             "properties": {
@@ -446,11 +814,33 @@ const docTemplate = `{
                 }
             }
         },
+        "responses.ApiResponse-requests_RestoreSalesRequest": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/requests.RestoreSalesRequest"
+                },
+                "message": {
+                    "type": "string"
+                }
+            }
+        },
         "responses.ApiResponse-requests_UpdateCustomerRequest": {
             "type": "object",
             "properties": {
                 "data": {
                     "$ref": "#/definitions/requests.UpdateCustomerRequest"
+                },
+                "message": {
+                    "type": "string"
+                }
+            }
+        },
+        "responses.ApiResponse-requests_UpdateSalesRequest": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/requests.UpdateSalesRequest"
                 },
                 "message": {
                     "type": "string"

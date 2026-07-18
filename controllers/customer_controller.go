@@ -23,7 +23,7 @@ func NewCustomerController() *CustomerController {
 // GetCustomers godoc
 //
 // @Summary			Menampilkan data semua customer
-// @Descripttion	Menampilkan data dalam jumlah yang banyak, biasanya untuk tabel
+// @Description		Menampilkan data dalam jumlah yang banyak, biasanya untuk tabel
 // @Tags			Customer
 // @Accept			json
 // @Produce			json
@@ -31,6 +31,9 @@ func NewCustomerController() *CustomerController {
 // @Failure			400			{object}	responses.ApiResponse[any]
 // @Router			/customer	[get]
 func (c *CustomerController) GetCustomers(ctx *gin.Context) {
+	// Nanti kalau ada param ada disini
+	// ...
+
 	customers, err := c.customerService.MenampilkanDataCustomer()
 
 	if err != nil {
@@ -56,7 +59,7 @@ func (c *CustomerController) GetCustomers(ctx *gin.Context) {
 // CreateCustomer godoc
 //
 // @Summary			Membuat data customer
-// @Descripttion	Menambahkan data customer kedalam database
+// @Description		Menambahkan data customer kedalam database
 // @Tags			Customer
 // @Accept			json
 // @Produce			json
@@ -106,7 +109,7 @@ func (c *CustomerController) CreateCustomer(ctx *gin.Context) {
 // UpdateCustomer godoc
 //
 // @Summary			Mengubah Data Customer
-// @Descripttion	Mengubah Data Customer
+// @Description		Mengubah Data Customer
 // @Tags			Customer
 // @Accept			json
 // @Produce			json
@@ -136,6 +139,8 @@ func (c *CustomerController) UpdateCustomer(ctx *gin.Context) {
 			Message: error.Error(),
 			Data:    request,
 		})
+
+		return
 	}
 
 	// Jalankan service
@@ -160,7 +165,7 @@ func (c *CustomerController) UpdateCustomer(ctx *gin.Context) {
 // DeleteCustomer godoc
 //
 // @Summary			Menghapus (soft delete) data customer
-// @Descripttion	Menghapus data customer tetapi dapa dipulihkan nantinya
+// @Description		Menghapus data customer tetapi dapat dipulihkan nantinya
 // @Tags			Customer
 // @Accept			json
 // @Produce			json
@@ -177,6 +182,8 @@ func (c *CustomerController) DeleteCustomer(ctx *gin.Context) {
 			Message: err.Error(),
 			Data:    request,
 		})
+
+		return
 	}
 
 	// Mengubah menjadi model
@@ -190,6 +197,8 @@ func (c *CustomerController) DeleteCustomer(ctx *gin.Context) {
 			Message: err.Error(),
 			Data:    request,
 		})
+
+		return
 	}
 
 	// Berikan Responses
@@ -204,7 +213,7 @@ func (c *CustomerController) DeleteCustomer(ctx *gin.Context) {
 // RestoreCustomer godoc
 //
 // @Summary			Memulihkan Data Customer
-// @Descripttion	Memulihakan data customer yang terhapus (soft delete)
+// @Description		Memulihakan data customer yang terhapus (soft delete)
 // @Tags			Customer
 // @Accept			json
 // @Produce			json
@@ -221,6 +230,8 @@ func (c *CustomerController) RestoreCustomer(ctx *gin.Context) {
 			Message: err.Error(),
 			Data:    request,
 		})
+
+		return
 	}
 
 	// Mengubah menjadi model
@@ -234,6 +245,8 @@ func (c *CustomerController) RestoreCustomer(ctx *gin.Context) {
 			Message: err.Error(),
 			Data:    request,
 		})
+
+		return
 	}
 
 	// Berikan Response
@@ -248,7 +261,7 @@ func (c *CustomerController) RestoreCustomer(ctx *gin.Context) {
 // DeleteForceCustomer godoc
 //
 // @Summary			Menghapus secara permanen data customer
-// @Descripttion	Menghapus secara permanen data customer (hard delete)
+// @Description		Menghapus secara permanen data customer (hard delete)
 // @Tags			Customer
 // @Accept			json
 // @Produce			json
@@ -265,6 +278,8 @@ func (c *CustomerController) DeleteForceCustomer(ctx *gin.Context) {
 			Message: err.Error(),
 			Data:    request,
 		})
+
+		return
 	}
 
 	// Mengubah menjadi model
@@ -278,6 +293,8 @@ func (c *CustomerController) DeleteForceCustomer(ctx *gin.Context) {
 			Message: err.Error(),
 			Data:    request,
 		})
+
+		return
 	}
 
 	// Berikan response
@@ -287,4 +304,82 @@ func (c *CustomerController) DeleteForceCustomer(ctx *gin.Context) {
 		Message: "Data customer berhasil di hapus permanen",
 		Data:    *response,
 	})
+}
+
+// GetCustomersDeleted godoc
+//
+// @Summary			Menampilkan data semua customer yang terhapus
+// @Description		Menampilkan data-data customer yang terhapus (Soft delete)
+// @Tags			Customer
+// @Accept			json
+// @Produce			json
+// @Success			200			{object}	responses.ApiResponse[[]responses.CustomerResponse]
+// @Failure			400			{object}	responses.ApiResponse[any]
+// @Router			/customer/deleted	[get]
+func (c *CustomerController) GetCustomersDeleted(ctx *gin.Context) {
+	// Kalau ada param, bakal akan di koding disini
+	// ...
+
+	// Jalankan service
+	customersDeleted, err := c.customerService.MenampilkanDataCustomerTerhapus()
+
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, responses.ApiResponse[any]{
+			Message: err.Error(),
+			Data:    nil,
+		})
+
+		return
+	}
+
+	if customersDeleted != nil {
+		response := []*responses.CustomerResponse{}
+		for _, customer := range customersDeleted {
+			response = append(response, customer.ToReponse())
+		}
+
+		ctx.JSON(http.StatusOK, responses.ApiResponse[[]*responses.CustomerResponse]{
+			Message: "Berikut data customer yang telah terhapus",
+			Data:    response,
+		})
+	}
+}
+
+// GetCustomersAll godoc
+//
+// @Summary			Menampilkan semua data-data customer bahkan yang telah terhapus
+// @Description		Menampilkan semua data-data customer bahkan yang telah terhapus
+// @Tags			Customer
+// @Accept			json
+// @Produce			json
+// @Success			200			{object}	responses.ApiResponse[[]responses.CustomerResponse]
+// @Failure			400			{object}	responses.ApiResponse[any]
+// @Router			/customer/all	[get]
+func (c *CustomerController) GetCustomersAll(ctx *gin.Context) {
+	// Kalau ada param, bakal akan di koding disini
+	// ...
+
+	// Jalankan service
+	customersAll, err := c.customerService.MenampilkanDataCustomerSemua()
+
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, responses.ApiResponse[any]{
+			Message: err.Error(),
+			Data:    nil,
+		})
+
+		return
+	}
+
+	if customersAll != nil {
+		response := []*responses.CustomerResponse{}
+		for _, customer := range customersAll {
+			response = append(response, customer.ToReponse())
+		}
+
+		ctx.JSON(http.StatusOK, responses.ApiResponse[[]*responses.CustomerResponse]{
+			Message: "Berikut semua data-data customer termasuk yang terhapus",
+			Data:    response,
+		})
+	}
 }

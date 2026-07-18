@@ -47,7 +47,17 @@ definitions:
       id:
         type: integer
     type: object
+  requests.DeleteSalesRequest:
+    properties:
+      id:
+        type: integer
+    type: object
   requests.RestoreCustomerRequest:
+    properties:
+      id:
+        type: integer
+    type: object
+  requests.RestoreSalesRequest:
     properties:
       id:
         type: integer
@@ -71,6 +81,21 @@ definitions:
       sales_id:
         type: integer
     type: object
+  requests.UpdateSalesRequest:
+    properties:
+      email_sales:
+        type: string
+      id:
+        type: integer
+      is_super_admin:
+        type: boolean
+      kontak_sales:
+        type: string
+      nama_sales:
+        type: string
+      password_sales:
+        type: string
+    type: object
   responses.ApiResponse-any:
     properties:
       data: {}
@@ -82,6 +107,15 @@ definitions:
       data:
         items:
           $ref: '#/definitions/responses.CustomerResponse'
+        type: array
+      message:
+        type: string
+    type: object
+  responses.ApiResponse-array_responses_SalesResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/responses.SalesResponse'
         type: array
       message:
         type: string
@@ -107,6 +141,13 @@ definitions:
       message:
         type: string
     type: object
+  responses.ApiResponse-requests_DeleteSalesRequest:
+    properties:
+      data:
+        $ref: '#/definitions/requests.DeleteSalesRequest'
+      message:
+        type: string
+    type: object
   responses.ApiResponse-requests_RestoreCustomerRequest:
     properties:
       data:
@@ -114,10 +155,24 @@ definitions:
       message:
         type: string
     type: object
+  responses.ApiResponse-requests_RestoreSalesRequest:
+    properties:
+      data:
+        $ref: '#/definitions/requests.RestoreSalesRequest'
+      message:
+        type: string
+    type: object
   responses.ApiResponse-requests_UpdateCustomerRequest:
     properties:
       data:
         $ref: '#/definitions/requests.UpdateCustomerRequest'
+      message:
+        type: string
+    type: object
+  responses.ApiResponse-requests_UpdateSalesRequest:
+    properties:
+      data:
+        $ref: '#/definitions/requests.UpdateSalesRequest'
       message:
         type: string
     type: object
@@ -188,6 +243,7 @@ paths:
     delete:
       consumes:
       - application/json
+      description: Menghapus data customer tetapi dapat dipulihkan nantinya
       parameters:
       - description: Delete Data Customer
         in: body
@@ -212,6 +268,7 @@ paths:
     get:
       consumes:
       - application/json
+      description: Menampilkan data dalam jumlah yang banyak, biasanya untuk tabel
       produces:
       - application/json
       responses:
@@ -229,6 +286,7 @@ paths:
     patch:
       consumes:
       - application/json
+      description: Mengubah Data Customer
       parameters:
       - description: Update Data Customer
         in: body
@@ -253,6 +311,7 @@ paths:
     post:
       consumes:
       - application/json
+      description: Menambahkan data customer kedalam database
       parameters:
       - description: Create Data Customer
         in: body
@@ -274,10 +333,49 @@ paths:
       summary: Membuat data customer
       tags:
       - Customer
+  /customer/all:
+    get:
+      consumes:
+      - application/json
+      description: Menampilkan semua data-data customer bahkan yang telah terhapus
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/responses.ApiResponse-array_responses_CustomerResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/responses.ApiResponse-any'
+      summary: Menampilkan semua data-data customer bahkan yang telah terhapus
+      tags:
+      - Customer
+  /customer/deleted:
+    get:
+      consumes:
+      - application/json
+      description: Menampilkan data-data customer yang terhapus (Soft delete)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/responses.ApiResponse-array_responses_CustomerResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/responses.ApiResponse-any'
+      summary: Menampilkan data semua customer yang terhapus
+      tags:
+      - Customer
   /customer/force:
     delete:
       consumes:
       - application/json
+      description: Menghapus secara permanen data customer (hard delete)
       parameters:
       - description: Hard Delete Data Customer
         in: body
@@ -303,6 +401,7 @@ paths:
     post:
       consumes:
       - application/json
+      description: Memulihakan data customer yang terhapus (soft delete)
       parameters:
       - description: Restore Data Customer
         in: body
@@ -325,13 +424,80 @@ paths:
       tags:
       - Customer
   /sales:
+    delete:
+      consumes:
+      - application/json
+      description: Menghapus data sales tetapi dapat dipulihkan nantinya
+      parameters:
+      - description: Delete Data Sales
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/requests.DeleteSalesRequest'
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Accepted
+          schema:
+            $ref: '#/definitions/responses.ApiResponse-responses_SalesResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/responses.ApiResponse-requests_DeleteSalesRequest'
+      summary: Menghapus (soft delete) data sales
+      tags:
+      - Sales
+    get:
+      consumes:
+      - application/json
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/responses.ApiResponse-array_responses_SalesResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/responses.ApiResponse-any'
+      summary: Menampilkan data sales
+      tags:
+      - Sales
+    patch:
+      consumes:
+      - application/json
+      description: Mengubah data sales sebagaian atau semua data sales
+      parameters:
+      - description: Update Data Sales
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/requests.UpdateSalesRequest'
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Accepted
+          schema:
+            $ref: '#/definitions/responses.ApiResponse-responses_SalesResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/responses.ApiResponse-requests_UpdateSalesRequest'
+      summary: Mengubah data sales secara patch
+      tags:
+      - Sales
     post:
       consumes:
       - application/json
       description: Menambahkan data sales kedalam tabel sales atau halaman kelola
         sales
       parameters:
-      - description: Data Sales
+      - description: Create Data Sales
         in: body
         name: request
         required: true
@@ -349,6 +515,96 @@ paths:
           schema:
             $ref: '#/definitions/responses.ApiResponse-requests_CreateSalesRequest'
       summary: Membuat data sales
+      tags:
+      - Sales
+  /sales/all:
+    get:
+      consumes:
+      - application/json
+      description: Menampilkan semua data-data sales bahkan yang telah terhapus
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/responses.ApiResponse-array_responses_SalesResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/responses.ApiResponse-any'
+      summary: Menampilkan semua data-data sales bahkan yang telah terhapus
+      tags:
+      - Sales
+  /sales/deleted:
+    get:
+      consumes:
+      - application/json
+      description: Menampilkan data-data sales yang terhapus (Soft delete)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/responses.ApiResponse-array_responses_SalesResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/responses.ApiResponse-any'
+      summary: Menampilkan data-data sales yang terhapus
+      tags:
+      - Sales
+  /sales/force:
+    delete:
+      consumes:
+      - application/json
+      description: Menghapus secara permanen data sales (hard delete)
+      parameters:
+      - description: Hard Delete Data Sales
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/requests.DeleteSalesRequest'
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Accepted
+          schema:
+            $ref: '#/definitions/responses.ApiResponse-responses_SalesResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/responses.ApiResponse-requests_DeleteSalesRequest'
+      summary: Menghapus secara permanen data sales
+      tags:
+      - Sales
+  /sales/restore:
+    post:
+      consumes:
+      - application/json
+      description: Memulihkan data sales yang terhapus (soft delete)
+      parameters:
+      - description: Restore Data Sales
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/requests.RestoreSalesRequest'
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Accepted
+          schema:
+            $ref: '#/definitions/responses.ApiResponse-responses_SalesResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/responses.ApiResponse-requests_RestoreSalesRequest'
+      summary: Memulihkan data sales
       tags:
       - Sales
 swagger: "2.0"

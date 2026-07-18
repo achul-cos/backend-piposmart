@@ -86,3 +86,23 @@ func (s *CustomerService) MenghapusPermanenDataCustomer(customer *models.Custome
 
 	return customerDeletedForce, nil
 }
+
+func (s *CustomerService) MenampilkanDataCustomerTerhapus() ([]*models.Customer, error) {
+	customersDeleted, err := s.customerRepository.ReadDeleted()
+
+	if err != nil {
+		return nil, err
+	}
+
+	return customersDeleted, nil
+}
+
+func (s *CustomerService) MenampilkanDataCustomerSemua() ([]*models.Customer, error) {
+	customersAll, err := s.customerRepository.ReadAll()
+
+	if err != nil {
+		return nil, err
+	}
+
+	return customersAll, nil
+}

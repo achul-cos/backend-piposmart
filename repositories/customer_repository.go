@@ -31,6 +31,26 @@ func (r *CustomerRepository) Read() ([]models.Customer, error) {
 	return customers, nil
 }
 
+func (r *CustomerRepository) ReadDeleted() ([]*models.Customer, error) {
+	customers := []*models.Customer{}
+
+	if err := r.db.Preload("Sales").Unscoped().Where("deleted_at IS NOT NULL").Find(&customers).Error; err != nil {
+		return nil, err
+	}
+
+	return customers, nil
+}
+
+func (r *CustomerRepository) ReadAll() ([]*models.Customer, error) {
+	customers := []*models.Customer{}
+
+	if err := r.db.Preload("Sales").Unscoped().Find(&customers).Error; err != nil {
+		return nil, err
+	}
+
+	return customers, nil
+}
+
 func (r *CustomerRepository) FindByID(id uint64) (*models.Customer, error) {
 	customer := &models.Customer{}
 
