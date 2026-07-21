@@ -24,12 +24,15 @@ func (s *CustomerSeeder) Name() string {
 	return "customer"
 }
 
-func (s *CustomerSeeder) Run(count ...int) error {
+func (s *CustomerSeeder) Run(count int) error {
 	// Mengetahui jumlah sales yang dimiliki
 	sales, _ := services.NewSalesService().MenampilkanDataSales()
 	jumlahSales := len(sales)
 
-	for i := 0; i < len(count); i++ {
+	for range count {
+
+		salesId := uint64(rand.Int64N(int64(jumlahSales + 1)))
+
 		customer := &models.Customer{
 			KodeOwner:    strconv.Itoa(gofakeit.Number(10000, 99999)),
 			NamaOwner:    gofakeit.Name(),
@@ -37,8 +40,8 @@ func (s *CustomerSeeder) Run(count ...int) error {
 			NamaOutlet:   gofakeit.City(),
 			KontakOwner:  gofakeit.Phone(),
 			KontakOutlet: gofakeit.Phone(),
+			SalesID:      &salesId,
 		}
-		*customer.SalesID = uint64(rand.Int64N(int64(jumlahSales + 1)))
 
 		if _, err := s.customerService.MenambahkanDataCustomer(customer); err != nil {
 			return err
