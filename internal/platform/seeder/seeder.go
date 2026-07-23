@@ -611,8 +611,20 @@ func seedDemoMinimal(ctx context.Context, tx *sql.Tx, options Options) error {
 			salesEmail = users[3].Email
 		}
 		lead := fake.BuildLead(owner.Code, 1, salesEmail)
-		if _, err := fake.CreateLead(ctx, tx, ownerID, firstOutletID, lead); err != nil {
+		leadID, err := fake.CreateLead(ctx, tx, ownerID, firstOutletID, lead)
+		if err != nil {
 			return err
+		}
+		remarkScore := ownerIndex - 1
+		interaction := fake.BuildInteraction(ownerIndex, remarkScore)
+		if _, err := fake.CreateInteraction(ctx, tx, leadID, interaction); err != nil {
+			return err
+		}
+		if remarkScore == 2 {
+			training := fake.BuildTrainingReport(ownerIndex, false)
+			if _, err := fake.CreateTrainingReport(ctx, tx, leadID, training); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

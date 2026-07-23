@@ -65,6 +65,29 @@ type Lead struct {
 	ActiveSalesEmail string
 }
 
+type Interaction struct {
+	Type             string
+	InteractionAt    time.Time
+	RemarkScore      int
+	Note             string
+	CustomerResponse string
+	FollowUpAt       time.Time
+	FollowUpNote     string
+}
+
+type TrainingReport struct {
+	TrainingType    string
+	Status          string
+	ScheduledAt     time.Time
+	CompletedAt     sql.NullTime
+	Location        string
+	MeetingURL      string
+	TrainerName     string
+	ParticipantName string
+	Note            string
+	ResultNote      string
+}
+
 func (f *Factory) BuildUser(roleCode string, index int) User {
 	rolePrefix := strings.ToLower(roleCode)
 	codePrefix := map[string]string{
@@ -134,6 +157,45 @@ func (f *Factory) BuildLead(ownerCode string, index int, activeSalesEmail string
 		NextFollowUpAt:   f.asOf.AddDate(0, 0, 3+index),
 		ActiveSalesEmail: activeSalesEmail,
 	}
+}
+
+func (f *Factory) BuildInteraction(index int, score int) Interaction {
+	interactionType := "CALL"
+	if index%2 == 0 {
+		interactionType = "CHAT"
+	}
+	return Interaction{
+		Type:             interactionType,
+		InteractionAt:    f.asOf.Add(time.Duration(index) * time.Hour),
+		RemarkScore:      score,
+		Note:             fmt.Sprintf("Demo Sprint 06 remark %d", score),
+		CustomerResponse: fmt.Sprintf("Response customer demo untuk remark %d", score),
+		FollowUpAt:       f.asOf.AddDate(0, 0, 3+index),
+		FollowUpNote:     "Follow-up demo dari factory",
+	}
+}
+
+func (f *Factory) BuildTrainingReport(index int, completed bool) TrainingReport {
+	trainingType := "ONLINE"
+	if index%2 == 0 {
+		trainingType = "OFFLINE"
+	}
+	item := TrainingReport{
+		TrainingType:    trainingType,
+		Status:          "SCHEDULED",
+		ScheduledAt:     f.asOf.AddDate(0, 0, 2+index).Add(10 * time.Hour),
+		Location:        fmt.Sprintf("Kantor customer demo %02d", index),
+		MeetingURL:      fmt.Sprintf("https://meet.example.test/demo-%02d", index),
+		TrainerName:     fmt.Sprintf("Sales Demo %03d", index),
+		ParticipantName: fmt.Sprintf("Owner Demo %03d", index),
+		Note:            "Training/demo aplikasi dari factory",
+	}
+	if completed {
+		item.Status = "COMPLETED"
+		item.CompletedAt = sql.NullTime{Time: item.ScheduledAt.Add(90 * time.Minute), Valid: true}
+		item.ResultNote = "Customer memahami flow kasir dan outlet."
+	}
+	return item
 }
 
 func (f *Factory) CreateUser(ctx context.Context, tx *sql.Tx, user User) (int64, error) {
@@ -260,6 +322,151 @@ func (f *Factory) CreateLead(ctx context.Context, tx *sql.Tx, ownerID, outletID 
 	return leadID, nil
 }
 
+func (f *Factory) CreateInteraction(ctx context.Context, tx *sql.Tx, leadID int64, interaction Interaction) (int64, error) {
+	state, err := lookupLeadSeedState(ctx, tx, leadID)
+	if err != nil {
+		return 0, err
+	}
+	reasonID, reasonCode, reasonLabel, err := lookupRemarkReasonByScore(ctx, tx, interaction.RemarkScore)
+	if err != nil {
+		return 0, err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		DELETE FROM customer_interactions
+		WHERE lead_id = ? AND note = ?`,
+		leadID, interaction.Note,
+	); err != nil {
+		return 0, fmt.Errorf("reset demo interaction lead=%d: %w", leadID, err)
+	}
+
+	result, err := tx.ExecContext(ctx, `
+		INSERT INTO customer_interactions
+			(lead_id, owner_id, outlet_id, sales_id, supervisor_id, interaction_type, interaction_at,
+			 remark_reason_id, remark_score, remark_code, remark_label, note, customer_response,
+			 follow_up_at, follow_up_note, stage_before, stage_after, status_before, status_after,
+			 score_before, score_after, created_by_user_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		leadID,
+		state.ownerID,
+		state.outletID,
+		state.salesID,
+		state.supervisorID,
+		interaction.Type,
+		interaction.InteractionAt,
+		reasonID,
+		interaction.RemarkScore,
+		reasonCode,
+		reasonLabel,
+		interaction.Note,
+		interaction.CustomerResponse,
+		interaction.FollowUpAt,
+		interaction.FollowUpNote,
+		state.stage,
+		stageForScore(interaction.RemarkScore, state.stage),
+		state.status,
+		statusForScore(interaction.RemarkScore),
+		state.score,
+		scoreForRemark(interaction.RemarkScore),
+		state.salesID,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("seed interaction lead=%d: %w", leadID, err)
+	}
+	id, err := result.LastInsertId()
+	if err != nil {
+		return 0, err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE customer_leads
+		SET last_interaction_at = ?, next_follow_up_at = ?
+		WHERE id = ?`,
+		interaction.InteractionAt, interaction.FollowUpAt, leadID,
+	); err != nil {
+		return 0, fmt.Errorf("update lead interaction seed lead=%d: %w", leadID, err)
+	}
+	return id, nil
+}
+
+func (f *Factory) CreateTrainingReport(ctx context.Context, tx *sql.Tx, leadID int64, training TrainingReport) (int64, error) {
+	state, err := lookupLeadSeedState(ctx, tx, leadID)
+	if err != nil {
+		return 0, err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		DELETE FROM training_reports
+		WHERE lead_id = ? AND note = ?`,
+		leadID, training.Note,
+	); err != nil {
+		return 0, fmt.Errorf("reset demo training lead=%d: %w", leadID, err)
+	}
+	result, err := tx.ExecContext(ctx, `
+		INSERT INTO training_reports
+			(lead_id, owner_id, outlet_id, sales_id, supervisor_id, training_type, status,
+			 scheduled_at, completed_at, location, meeting_url, trainer_name, participant_name,
+			 note, result_note, created_by_user_id, updated_by_user_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		leadID,
+		state.ownerID,
+		state.outletID,
+		state.salesID,
+		state.supervisorID,
+		training.TrainingType,
+		training.Status,
+		training.ScheduledAt,
+		training.CompletedAt,
+		training.Location,
+		training.MeetingURL,
+		training.TrainerName,
+		training.ParticipantName,
+		training.Note,
+		training.ResultNote,
+		state.salesID,
+		state.salesID,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("seed training lead=%d: %w", leadID, err)
+	}
+	return result.LastInsertId()
+}
+
+type leadSeedState struct {
+	ownerID      sql.NullInt64
+	outletID     sql.NullInt64
+	salesID      sql.NullInt64
+	supervisorID sql.NullInt64
+	stage        string
+	status       string
+	score        sql.NullInt64
+}
+
+func lookupLeadSeedState(ctx context.Context, tx *sql.Tx, leadID int64) (leadSeedState, error) {
+	var state leadSeedState
+	err := tx.QueryRowContext(ctx, `
+		SELECT owner_id, outlet_id, active_sales_id, supervisor_id, stage, status, current_score
+		FROM customer_leads
+		WHERE id = ?`, leadID).
+		Scan(&state.ownerID, &state.outletID, &state.salesID, &state.supervisorID, &state.stage, &state.status, &state.score)
+	if err != nil {
+		return leadSeedState{}, fmt.Errorf("lookup lead seed state id=%d: %w", leadID, err)
+	}
+	return state, nil
+}
+
+func lookupRemarkReasonByScore(ctx context.Context, tx *sql.Tx, score int) (int64, string, string, error) {
+	var id int64
+	var code, label string
+	err := tx.QueryRowContext(ctx, `
+		SELECT id, code, label
+		FROM remark_reasons
+		WHERE score = ? AND active = TRUE
+		ORDER BY id
+		LIMIT 1`, score).Scan(&id, &code, &label)
+	if err != nil {
+		return 0, "", "", fmt.Errorf("lookup remark score=%d: %w", score, err)
+	}
+	return id, code, label, nil
+}
+
 func lookupID(ctx context.Context, tx *sql.Tx, table, column, value string) (int64, error) {
 	query := fmt.Sprintf("SELECT id FROM %s WHERE %s = ?", table, column)
 	var id int64
@@ -295,6 +502,38 @@ func scoreForStage(stage string) int {
 	default:
 		return 1
 	}
+}
+
+func stageForScore(score int, fallback string) string {
+	switch score {
+	case 0:
+		return "INVALID"
+	case 1:
+		if fallback == "POTENTIAL" || fallback == "CLOSING" {
+			return fallback
+		}
+		return "POSSIBLE"
+	case 2:
+		return "POTENTIAL"
+	case 3:
+		return "CLOSING"
+	default:
+		return fallback
+	}
+}
+
+func statusForScore(score int) string {
+	if score == 0 {
+		return "INVALID"
+	}
+	return "OPEN"
+}
+
+func scoreForRemark(score int) sql.NullInt64 {
+	if score < 0 || score > 3 {
+		return sql.NullInt64{}
+	}
+	return sql.NullInt64{Int64: int64(score), Valid: true}
 }
 
 func deterministicPasswordHash(email string) string {

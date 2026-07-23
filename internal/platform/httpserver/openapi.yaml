@@ -1,8 +1,8 @@
 openapi: 3.0.3
 info:
   title: Backend CRM Piposmart
-  version: 0.5.0-sprint-5
-  description: API CRM Piposmart dengan Owner/Outlet Management serta Lead Ownership dan Assignment Sprint 5.
+  version: 0.6.0-sprint-6
+  description: API CRM Piposmart dengan Owner/Outlet, Lead Ownership, Call/Chat Customer, Follow-up, Stage History, dan Training Sprint 6.
 servers:
   - url: http://localhost:8080
 paths:
@@ -933,6 +933,292 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/customer-interactions:
+    get:
+      summary: List call/chat customer sesuai visibility actor
+      operationId: listCustomerInteractions
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: lead_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: type
+          in: query
+          schema:
+            type: string
+            enum: [CALL, CHAT]
+        - name: score
+          in: query
+          schema:
+            type: integer
+            enum: [0, 1, 2, 3]
+        - name: sales_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: interaction_from
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: interaction_to
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: follow_up_from
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: follow_up_to
+          in: query
+          schema:
+            type: string
+            format: date
+        - $ref: "#/components/parameters/PageQuery"
+        - $ref: "#/components/parameters/LimitQuery"
+      responses:
+        "200":
+          description: List interaksi customer
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/follow-ups:
+    get:
+      summary: List jadwal follow-up dari interaksi customer
+      operationId: listFollowUps
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: follow_up_from
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: follow_up_to
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: sales_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - $ref: "#/components/parameters/PageQuery"
+        - $ref: "#/components/parameters/LimitQuery"
+      responses:
+        "200":
+          description: List follow-up
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/leads/{lead_id}/interactions:
+    get:
+      summary: List interaksi pada satu lead
+      operationId: listLeadInteractions
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/LeadID"
+        - $ref: "#/components/parameters/PageQuery"
+        - $ref: "#/components/parameters/LimitQuery"
+      responses:
+        "200":
+          description: List interaksi lead
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+    post:
+      summary: Mencatat call/chat customer dan remark
+      operationId: createLeadInteraction
+      description: Remark 0 membuat lead INVALID dan ownership kembali ke Supervisor. Remark 1 tidak menurunkan lead yang sudah POTENTIAL. Remark 2 menjadi POTENTIAL. Remark 3 menjadi CLOSING sementara sampai modul closing Sprint 8 tersedia.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/LeadID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateInteractionRequest"
+      responses:
+        "201":
+          description: Interaksi berhasil dicatat
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/leads/{lead_id}/stage-history:
+    get:
+      summary: Riwayat perubahan stage lead
+      operationId: getLeadStageHistory
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/LeadID"
+      responses:
+        "200":
+          description: Riwayat stage
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/trainings:
+    get:
+      summary: List jadwal dan laporan training
+      operationId: listTrainings
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: lead_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [SCHEDULED, COMPLETED, CANCELED]
+        - name: training_type
+          in: query
+          schema:
+            type: string
+            enum: [ONLINE, OFFLINE]
+        - name: sales_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: scheduled_from
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: scheduled_to
+          in: query
+          schema:
+            type: string
+            format: date
+        - $ref: "#/components/parameters/PageQuery"
+        - $ref: "#/components/parameters/LimitQuery"
+      responses:
+        "200":
+          description: List training
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/leads/{lead_id}/trainings:
+    get:
+      summary: List training pada satu lead
+      operationId: listLeadTrainings
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/LeadID"
+        - $ref: "#/components/parameters/PageQuery"
+        - $ref: "#/components/parameters/LimitQuery"
+      responses:
+        "200":
+          description: List training lead
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+    post:
+      summary: Menjadwalkan training/demo aplikasi
+      operationId: scheduleLeadTraining
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/LeadID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ScheduleTrainingRequest"
+      responses:
+        "201":
+          description: Training berhasil dijadwalkan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/trainings/{training_id}/reschedule:
+    post:
+      summary: Reschedule training
+      operationId: rescheduleTraining
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/TrainingID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RescheduleTrainingRequest"
+      responses:
+        "200":
+          description: Training berhasil di-reschedule
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/trainings/{training_id}/complete:
+    post:
+      summary: Menyelesaikan training
+      operationId: completeTraining
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/TrainingID"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CompleteTrainingRequest"
+      responses:
+        "200":
+          description: Training selesai
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/trainings/{training_id}/cancel:
+    post:
+      summary: Membatalkan training
+      operationId: cancelTraining
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/TrainingID"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CancelTrainingRequest"
+      responses:
+        "200":
+          description: Training dibatalkan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
 components:
   securitySchemes:
     bearerAuth:
@@ -963,6 +1249,13 @@ components:
         format: int64
     LeadID:
       name: lead_id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+    TrainingID:
+      name: training_id
       in: path
       required: true
       schema:
@@ -1343,6 +1636,105 @@ components:
         reason:
           type: string
           example: Customer tidak potensial dari call terakhir
+    CreateInteractionRequest:
+      type: object
+      required: [type]
+      properties:
+        type:
+          type: string
+          enum: [CALL, CHAT]
+          example: CALL
+        interaction_at:
+          type: string
+          format: date-time
+          nullable: true
+          example: "2026-07-23T10:00:00+07:00"
+        contact_name:
+          type: string
+          example: Budi Santoso
+        contact_phone:
+          type: string
+          example: "081234567890"
+        duration_seconds:
+          type: integer
+          nullable: true
+          example: 300
+        remark_reason_id:
+          type: integer
+          format: int64
+          nullable: true
+        remark_score:
+          type: integer
+          enum: [0, 1, 2, 3]
+          nullable: true
+          description: 0 invalid, 1 kemungkinan, 2 potensial, 3 closing.
+        note:
+          type: string
+          example: Customer tertarik demo.
+        customer_response:
+          type: string
+          example: Minta dijadwalkan training online.
+        follow_up_at:
+          type: string
+          format: date-time
+          nullable: true
+          example: "2026-07-28T10:00:00+07:00"
+        follow_up_note:
+          type: string
+          example: Follow-up jadwal training.
+    ScheduleTrainingRequest:
+      type: object
+      required: [training_type, scheduled_at]
+      properties:
+        training_type:
+          type: string
+          enum: [ONLINE, OFFLINE]
+        scheduled_at:
+          type: string
+          format: date-time
+          example: "2026-07-30T13:00:00+07:00"
+        location:
+          type: string
+          example: Outlet utama customer
+        meeting_url:
+          type: string
+          example: https://meet.example.test/training
+        trainer_name:
+          type: string
+          example: Sales Demo 001
+        participant_name:
+          type: string
+          example: Owner Laundry
+        note:
+          type: string
+          example: Demo fitur kasir, outlet, dan laporan.
+    RescheduleTrainingRequest:
+      type: object
+      required: [scheduled_at]
+      properties:
+        scheduled_at:
+          type: string
+          format: date-time
+          example: "2026-07-31T14:00:00+07:00"
+        note:
+          type: string
+          example: Reschedule atas permintaan owner.
+    CompleteTrainingRequest:
+      type: object
+      properties:
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+        result_note:
+          type: string
+          example: Owner memahami penggunaan aplikasi.
+    CancelTrainingRequest:
+      type: object
+      properties:
+        cancel_reason:
+          type: string
+          example: Customer meminta pembatalan jadwal.
     SuccessEnvelope:
       type: object
       required: [data, meta]

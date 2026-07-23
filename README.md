@@ -1770,6 +1770,205 @@ Response `404 Not Found`:
 }
 ```
 
+### Customer Activity, Follow-up, dan Training
+
+Mulai Sprint 6, Sales dapat mencatat aktivitas call/chat customer, remark score,
+jadwal follow-up, dan training/demo aplikasi. Visibility tetap mengikuti
+ownership lead:
+
+- Admin melihat seluruh activity.
+- Supervisor melihat activity miliknya dan activity Sales di bawahnya.
+- Sales hanya melihat activity lead miliknya.
+- Interaksi bersifat append-only; perubahan skor/stage disimpan pada stage
+  history.
+
+Aturan remark:
+
+- `0` → lead menjadi `INVALID`, ownership kembali ke Supervisor, Sales kehilangan
+  visibility.
+- `1` → lead menjadi `POSSIBLE`.
+- `1` tidak menurunkan lead yang sudah `POTENTIAL`.
+- `2` → lead menjadi `POTENTIAL`.
+- `3` → lead menjadi `CLOSING` sementara; integrasi laporan closing akan
+  dilanjutkan pada Sprint 8.
+
+| Nama Route | Method | Path | Fungsi |
+| --- | --- | --- | --- |
+| List Interaction | GET | `/api/v1/customer-interactions` | List call/chat sesuai visibility actor. |
+| List Follow-up | GET | `/api/v1/follow-ups` | List activity yang memiliki jadwal follow-up. |
+| List Lead Interaction | GET | `/api/v1/leads/{lead_id}/interactions` | List call/chat pada satu lead. |
+| Create Interaction | POST | `/api/v1/leads/{lead_id}/interactions` | Mencatat call/chat, remark, dan follow-up. |
+| Stage History | GET | `/api/v1/leads/{lead_id}/stage-history` | Melihat riwayat perubahan stage/score lead. |
+| List Training | GET | `/api/v1/trainings` | List jadwal/laporan training. |
+| List Lead Training | GET | `/api/v1/leads/{lead_id}/trainings` | List training pada satu lead. |
+| Schedule Training | POST | `/api/v1/leads/{lead_id}/trainings` | Menjadwalkan training online/offline. |
+| Reschedule Training | POST | `/api/v1/trainings/{training_id}/reschedule` | Mengubah jadwal training. |
+| Complete Training | POST | `/api/v1/trainings/{training_id}/complete` | Menyelesaikan training. |
+| Cancel Training | POST | `/api/v1/trainings/{training_id}/cancel` | Membatalkan training. |
+
+#### POST `/api/v1/leads/{lead_id}/interactions`
+
+Request:
+
+```http
+POST /api/v1/leads/24/interactions
+Authorization: Bearer {sales_access_token}
+Content-Type: application/json
+Accept: application/json
+```
+
+Body:
+
+```json
+{
+  "type": "CALL",
+  "interaction_at": "2026-07-23T10:00:00+07:00",
+  "remark_score": 2,
+  "note": "Customer tertarik demo",
+  "customer_response": "Minta dijadwalkan training online",
+  "follow_up_at": "2026-07-28T10:00:00+07:00",
+  "follow_up_note": "Follow-up jadwal training"
+}
+```
+
+Response `201 Created`:
+
+```json
+{
+  "data": {
+    "id": 13,
+    "lead_id": 24,
+    "type": "CALL",
+    "remark_score": 2,
+    "remark_code": "POTENTIAL",
+    "stage_before": "POSSIBLE",
+    "stage_after": "POTENTIAL",
+    "follow_up_at": "2026-07-28T03:00:00Z"
+  },
+  "meta": {
+    "request_id": "generated-request-id"
+  }
+}
+```
+
+Contoh remark invalid:
+
+```json
+{
+  "type": "CALL",
+  "remark_score": 0,
+  "note": "Customer membatalkan dan tidak potensial"
+}
+```
+
+Response `201 Created`: interaksi tetap tercatat, lalu lead berpindah ke
+Supervisor dengan stage `INVALID`.
+
+#### GET `/api/v1/follow-ups`
+
+Query params:
+
+| Param | Contoh | Fungsi |
+| --- | --- | --- |
+| `follow_up_from` | `2026-07-28` | Filter jadwal follow-up awal. |
+| `follow_up_to` | `2026-07-30` | Filter jadwal follow-up akhir. |
+| `sales_id` | `3` | Filter Sales. |
+| `page` | `1` | Nomor halaman. |
+| `limit` | `10` | Jumlah data per halaman. |
+
+Request:
+
+```http
+GET /api/v1/follow-ups?follow_up_from=2026-07-28&follow_up_to=2026-07-30
+Authorization: Bearer {sales_access_token}
+Accept: application/json
+```
+
+#### POST `/api/v1/leads/{lead_id}/trainings`
+
+Request:
+
+```http
+POST /api/v1/leads/24/trainings
+Authorization: Bearer {sales_access_token}
+Content-Type: application/json
+Accept: application/json
+```
+
+Body:
+
+```json
+{
+  "training_type": "ONLINE",
+  "scheduled_at": "2026-07-30T13:00:00+07:00",
+  "meeting_url": "https://meet.example.test/sprint-06",
+  "trainer_name": "Sales Demo 001",
+  "participant_name": "Owner Laundry",
+  "note": "Demo aplikasi Piposmart"
+}
+```
+
+Response `201 Created`:
+
+```json
+{
+  "data": {
+    "id": 4,
+    "lead_id": 24,
+    "training_type": "ONLINE",
+    "status": "SCHEDULED",
+    "scheduled_at": "2026-07-30T06:00:00Z"
+  },
+  "meta": {
+    "request_id": "generated-request-id"
+  }
+}
+```
+
+#### POST `/api/v1/trainings/{training_id}/complete`
+
+```http
+POST /api/v1/trainings/4/complete
+Authorization: Bearer {sales_access_token}
+Content-Type: application/json
+Accept: application/json
+```
+
+```json
+{
+  "completed_at": "2026-07-31T15:30:00+07:00",
+  "result_note": "Owner memahami penggunaan kasir dan outlet"
+}
+```
+
+Contoh error score tidak valid:
+
+```http
+POST /api/v1/leads/24/interactions
+Authorization: Bearer {sales_access_token}
+Content-Type: application/json
+Accept: application/json
+```
+
+```json
+{
+  "type": "CALL",
+  "remark_score": 9
+}
+```
+
+Response `400 Bad Request`:
+
+```json
+{
+  "error": {
+    "code": "INVALID_SCORE",
+    "message": "score remark harus 0 sampai 3",
+    "request_id": "generated-request-id"
+  }
+}
+```
+
 ### Error Umum API
 
 | Kondisi | Status | Code |
