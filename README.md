@@ -146,6 +146,1460 @@ Invoke-RestMethod `
   -Body '{"name":"Sales Baru","email":"sales.baru@demo.piposmart.id","phone":"6281212345678"}'
 ```
 
+## Dokumentasi Route API
+
+Base URL lokal:
+
+```text
+http://localhost:8080
+```
+
+Base path API bisnis:
+
+```text
+/api/v1
+```
+
+Semua response memakai envelope standar.
+
+Response sukses:
+
+```json
+{
+  "data": {},
+  "meta": {
+    "request_id": "generated-request-id"
+  }
+}
+```
+
+Response error:
+
+```json
+{
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "Payload request tidak valid",
+    "details": null,
+    "request_id": "generated-request-id"
+  }
+}
+```
+
+Header untuk route publik:
+
+```http
+Accept: application/json
+Content-Type: application/json
+```
+
+Header untuk route protected:
+
+```http
+Authorization: Bearer {access_token}
+Accept: application/json
+Content-Type: application/json
+```
+
+### System, Health, dan Dokumentasi API
+
+| Nama Route | Method | Path | Fungsi |
+| --- | --- | --- | --- |
+| Service Info | GET | `/` | Melihat informasi service backend. |
+| Health Live | GET | `/health/live` | Mengecek proses API hidup. |
+| Health Ready | GET | `/health/ready` | Mengecek API siap dan database terhubung. |
+| API Status | GET | `/api/v1/status` | Mengecek status API versi 1. |
+| OpenAPI YAML | GET | `/openapi.yaml` | Mengambil kontrak OpenAPI mentah. |
+| Swagger UI | GET | `/swagger/index.html` | Membuka UI dokumentasi API interaktif. |
+
+Contoh request:
+
+```http
+GET /health/ready
+Accept: application/json
+```
+
+Contoh response:
+
+```json
+{
+  "data": {
+    "status": "ready"
+  },
+  "meta": {
+    "request_id": "generated-request-id"
+  }
+}
+```
+
+Contoh error:
+
+```http
+GET /health/ready
+Accept: application/json
+```
+
+Jika database tidak dapat diakses:
+
+```json
+{
+  "error": {
+    "code": "SERVICE_UNAVAILABLE",
+    "message": "Dependency belum siap",
+    "request_id": "generated-request-id"
+  }
+}
+```
+
+### Authentication
+
+| Nama Route | Method | Path | Fungsi |
+| --- | --- | --- | --- |
+| Login | POST | `/api/v1/auth/login` | Login user dan mendapatkan access token serta refresh token. |
+| Refresh Token | POST | `/api/v1/auth/refresh` | Menukar refresh token lama dengan token baru. |
+| Logout | POST | `/api/v1/auth/logout` | Revoke refresh token. |
+| Me | GET | `/api/v1/auth/me` | Melihat profil user yang sedang login. |
+| Change Password | POST | `/api/v1/auth/change-password` | Mengubah password user yang sedang login. |
+
+#### POST `/api/v1/auth/login`
+
+Request:
+
+```http
+POST /api/v1/auth/login
+Content-Type: application/json
+Accept: application/json
+```
+
+Body:
+
+```json
+{
+  "email": "admin.001@demo.piposmart.id",
+  "password": "Password123!"
+}
+```
+
+Response `200 OK`:
+
+```json
+{
+  "data": {
+    "access_token": "eyJhbGciOiJIUzI1NiIs...",
+    "refresh_token": "refresh-token-value",
+    "token_type": "Bearer",
+    "expires_in": 900,
+    "refresh_token_expires_at": "2026-08-22T08:00:00Z",
+    "user": {
+      "id": 1,
+      "name": "Admin Demo 001",
+      "email": "admin.001@demo.piposmart.id",
+      "role": "ADMIN",
+      "status": "ACTIVE"
+    }
+  },
+  "meta": {
+    "request_id": "generated-request-id"
+  }
+}
+```
+
+Contoh error request:
+
+```json
+{
+  "email": "admin.001@demo.piposmart.id",
+  "password": "password-salah"
+}
+```
+
+Response `401 Unauthorized`:
+
+```json
+{
+  "error": {
+    "code": "INVALID_CREDENTIALS",
+    "message": "email atau password tidak valid",
+    "request_id": "generated-request-id"
+  }
+}
+```
+
+#### POST `/api/v1/auth/refresh`
+
+Request:
+
+```http
+POST /api/v1/auth/refresh
+Content-Type: application/json
+Accept: application/json
+```
+
+Body:
+
+```json
+{
+  "refresh_token": "refresh-token-value"
+}
+```
+
+Response `200 OK`: format sama seperti login, berisi access token dan refresh token baru.
+
+Contoh error request:
+
+```json
+{
+  "refresh_token": "token-tidak-valid"
+}
+```
+
+Response `401 Unauthorized`:
+
+```json
+{
+  "error": {
+    "code": "INVALID_TOKEN",
+    "message": "token tidak valid",
+    "request_id": "generated-request-id"
+  }
+}
+```
+
+#### POST `/api/v1/auth/logout`
+
+Request:
+
+```http
+POST /api/v1/auth/logout
+Authorization: Bearer {access_token}
+Content-Type: application/json
+Accept: application/json
+```
+
+Body:
+
+```json
+{
+  "refresh_token": "refresh-token-value"
+}
+```
+
+Response `200 OK`:
+
+```json
+{
+  "data": {
+    "status": "logged_out"
+  },
+  "meta": {
+    "request_id": "generated-request-id"
+  }
+}
+```
+
+Contoh error tanpa header:
+
+```http
+POST /api/v1/auth/logout
+Accept: application/json
+```
+
+Response `401 Unauthorized`:
+
+```json
+{
+  "error": {
+    "code": "UNAUTHENTICATED",
+    "message": "Token akses wajib dikirim",
+    "request_id": "generated-request-id"
+  }
+}
+```
+
+#### GET `/api/v1/auth/me`
+
+Request:
+
+```http
+GET /api/v1/auth/me
+Authorization: Bearer {access_token}
+Accept: application/json
+```
+
+Response `200 OK`:
+
+```json
+{
+  "data": {
+    "id": 1,
+    "code": "ADM-001",
+    "name": "Admin Demo 001",
+    "email": "admin.001@demo.piposmart.id",
+    "role": "ADMIN",
+    "status": "ACTIVE",
+    "permissions": ["owners.manage", "users.manage_sales"]
+  },
+  "meta": {
+    "request_id": "generated-request-id"
+  }
+}
+```
+
+#### POST `/api/v1/auth/change-password`
+
+Request:
+
+```http
+POST /api/v1/auth/change-password
+Authorization: Bearer {access_token}
+Content-Type: application/json
+Accept: application/json
+```
+
+Body:
+
+```json
+{
+  "current_password": "Password123!",
+  "new_password": "PasswordBaru123!"
+}
+```
+
+Response `200 OK`:
+
+```json
+{
+  "data": {
+    "status": "password_changed"
+  },
+  "meta": {
+    "request_id": "generated-request-id"
+  }
+}
+```
+
+Contoh error body:
+
+```json
+{
+  "current_password": "Password123!",
+  "new_password": "short"
+}
+```
+
+Response `400 Bad Request`:
+
+```json
+{
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "Payload request tidak valid",
+    "details": {
+      "error": "Field validation for 'NewPassword' failed on the 'min' tag"
+    },
+    "request_id": "generated-request-id"
+  }
+}
+```
+
+### Sales Management
+
+Route Sales membutuhkan JWT Admin atau Supervisor. Sales tidak boleh mengelola
+akun Sales lain.
+
+| Nama Route | Method | Path | Fungsi |
+| --- | --- | --- | --- |
+| List Sales | GET | `/api/v1/sales` | Melihat daftar akun Sales. |
+| Create Sales | POST | `/api/v1/sales` | Membuat akun Sales baru. |
+| Detail Sales | GET | `/api/v1/sales/{id}` | Melihat detail akun Sales. |
+| Update Sales | PATCH | `/api/v1/sales/{id}` | Mengubah profil akun Sales. |
+| Activate Sales | POST | `/api/v1/sales/{id}/activate` | Mengaktifkan akun Sales. |
+| Deactivate Sales | POST | `/api/v1/sales/{id}/deactivate` | Menonaktifkan akun Sales dan revoke session aktif. |
+| Reset Sales Password | POST | `/api/v1/sales/{id}/reset-password` | Reset password akun Sales. |
+
+#### GET `/api/v1/sales`
+
+Query params:
+
+| Param | Tipe | Contoh | Fungsi |
+| --- | --- | --- | --- |
+| `status` | string | `ACTIVE` atau `INACTIVE` | Filter status Sales. |
+
+Request:
+
+```http
+GET /api/v1/sales?status=ACTIVE
+Authorization: Bearer {admin_or_supervisor_access_token}
+Accept: application/json
+```
+
+Response `200 OK`:
+
+```json
+{
+  "data": {
+    "items": [
+      {
+        "id": 3,
+        "code": "SLS-001",
+        "name": "Sales Demo 001",
+        "email": "sales.001@demo.piposmart.id",
+        "role": "SALES",
+        "status": "ACTIVE"
+      }
+    ],
+    "total": 1
+  },
+  "meta": {
+    "request_id": "generated-request-id"
+  }
+}
+```
+
+#### POST `/api/v1/sales`
+
+Request:
+
+```http
+POST /api/v1/sales
+Authorization: Bearer {admin_or_supervisor_access_token}
+Content-Type: application/json
+Accept: application/json
+```
+
+Body:
+
+```json
+{
+  "code": "SLS-NEW",
+  "name": "Sales Baru",
+  "email": "sales.baru@demo.piposmart.id",
+  "phone": "6281212345678",
+  "password": "Password123!"
+}
+```
+
+Response `201 Created`:
+
+```json
+{
+  "data": {
+    "user": {
+      "id": 10,
+      "code": "SLS-NEW",
+      "name": "Sales Baru",
+      "email": "sales.baru@demo.piposmart.id",
+      "role": "SALES",
+      "status": "ACTIVE",
+      "must_change_password": true
+    },
+    "temporary_password": "Password123!"
+  },
+  "meta": {
+    "request_id": "generated-request-id"
+  }
+}
+```
+
+Jika `password` dikosongkan, sistem membuat temporary password otomatis.
+
+Contoh error duplicate email:
+
+```json
+{
+  "name": "Sales Duplikat",
+  "email": "sales.001@demo.piposmart.id"
+}
+```
+
+Response `409 Conflict`:
+
+```json
+{
+  "error": {
+    "code": "EMAIL_ALREADY_USED",
+    "message": "email sudah digunakan",
+    "request_id": "generated-request-id"
+  }
+}
+```
+
+#### GET `/api/v1/sales/{id}`
+
+Path params:
+
+| Param | Tipe | Fungsi |
+| --- | --- | --- |
+| `id` | integer | ID user Sales. |
+
+Request:
+
+```http
+GET /api/v1/sales/3
+Authorization: Bearer {admin_or_supervisor_access_token}
+Accept: application/json
+```
+
+Response `200 OK`: mengembalikan object user Sales.
+
+Contoh error:
+
+```http
+GET /api/v1/sales/999999
+Authorization: Bearer {admin_or_supervisor_access_token}
+Accept: application/json
+```
+
+Response `404 Not Found`:
+
+```json
+{
+  "error": {
+    "code": "NOT_FOUND",
+    "message": "data tidak ditemukan",
+    "request_id": "generated-request-id"
+  }
+}
+```
+
+#### PATCH `/api/v1/sales/{id}`
+
+Request:
+
+```http
+PATCH /api/v1/sales/3
+Authorization: Bearer {admin_or_supervisor_access_token}
+Content-Type: application/json
+Accept: application/json
+```
+
+Body:
+
+```json
+{
+  "name": "Sales Demo Updated",
+  "phone": "6281299998888"
+}
+```
+
+Response `200 OK`: mengembalikan object user Sales terbaru.
+
+#### POST `/api/v1/sales/{id}/activate`
+
+Request:
+
+```http
+POST /api/v1/sales/3/activate
+Authorization: Bearer {admin_or_supervisor_access_token}
+Accept: application/json
+```
+
+Response `200 OK`: mengembalikan object user Sales dengan `status = ACTIVE`.
+
+#### POST `/api/v1/sales/{id}/deactivate`
+
+Request:
+
+```http
+POST /api/v1/sales/3/deactivate
+Authorization: Bearer {admin_or_supervisor_access_token}
+Accept: application/json
+```
+
+Response `200 OK`: mengembalikan object user Sales dengan `status = INACTIVE`.
+
+#### POST `/api/v1/sales/{id}/reset-password`
+
+Request:
+
+```http
+POST /api/v1/sales/3/reset-password
+Authorization: Bearer {admin_or_supervisor_access_token}
+Content-Type: application/json
+Accept: application/json
+```
+
+Body opsional:
+
+```json
+{
+  "new_password": "PasswordBaru123!"
+}
+```
+
+Response `200 OK`:
+
+```json
+{
+  "data": {
+    "user": {
+      "id": 3,
+      "name": "Sales Demo 001",
+      "email": "sales.001@demo.piposmart.id",
+      "role": "SALES",
+      "must_change_password": true
+    },
+    "temporary_password": "PasswordBaru123!"
+  },
+  "meta": {
+    "request_id": "generated-request-id"
+  }
+}
+```
+
+Contoh error akses Sales:
+
+```http
+GET /api/v1/sales
+Authorization: Bearer {sales_access_token}
+Accept: application/json
+```
+
+Response `403 Forbidden`:
+
+```json
+{
+  "error": {
+    "code": "FORBIDDEN",
+    "message": "akses ditolak",
+    "request_id": "generated-request-id"
+  }
+}
+```
+
+### Owner Management
+
+Route Owner membutuhkan JWT Admin atau Supervisor dengan permission
+`owners.manage`. Sales belum mengakses route ini secara langsung; akses Sales
+ke customer miliknya akan masuk melalui modul Lead/Assignment.
+
+| Nama Route | Method | Path | Fungsi |
+| --- | --- | --- | --- |
+| List Owner | GET | `/api/v1/owners` | Melihat daftar owner aktif. |
+| Create Owner | POST | `/api/v1/owners` | Membuat owner baru. |
+| Bulk Create Owner | POST | `/api/v1/owners/bulk` | Membuat banyak owner dalam satu request. |
+| Bulk Update Owner | PATCH | `/api/v1/owners/bulk` | Mengubah banyak owner dalam satu request. |
+| Bulk Soft Delete Owner | DELETE | `/api/v1/owners/bulk` | Soft delete banyak owner. |
+| Bulk Hard Delete Owner | DELETE | `/api/v1/owners/bulk/force` | Menghapus permanen banyak owner. |
+| Detail Owner | GET | `/api/v1/owners/{owner_id}` | Melihat detail owner aktif. |
+| Update Owner | PATCH | `/api/v1/owners/{owner_id}` | Mengubah data owner. |
+| Soft Delete Owner | DELETE | `/api/v1/owners/{owner_id}` | Mengisi `deleted_at` owner. |
+| Restore Owner | PATCH | `/api/v1/owners/{owner_id}/restore` | Memulihkan owner soft-deleted. |
+| Hard Delete Owner | DELETE | `/api/v1/owners/{owner_id}/force` | Menghapus owner permanen. |
+
+#### GET `/api/v1/owners`
+
+Query params:
+
+| Param | Tipe | Contoh | Fungsi |
+| --- | --- | --- | --- |
+| `q` | string | `Laundry Cerah` | Search global pada kode, nama, telepon, brand, kota, provinsi. |
+| `code` | string | `OWN-00001` | Filter kode owner. |
+| `name` | string | `Budi` | Filter nama owner. |
+| `phone` | string | `0812` | Filter nomor telepon. |
+| `brand_name` | string | `Laundry Cerah` | Filter brand laundry. |
+| `province` | string | `Jawa Barat` | Filter provinsi. |
+| `city` | string | `Bandung` | Filter kota. |
+| `page` | integer | `1` | Nomor halaman, default `1`. |
+| `limit` | integer | `10` | Jumlah data per halaman, default `10`, maksimum `100`. |
+| `sort` | string | `-created_at` | Sorting. Field: `created_at`, `updated_at`, `code`, `name`, `brand_name`, `city`, `province`. Prefix `-` untuk descending. |
+
+Request:
+
+```http
+GET /api/v1/owners?q=Laundry&page=1&limit=10&sort=-created_at
+Authorization: Bearer {admin_or_supervisor_access_token}
+Accept: application/json
+```
+
+Response `200 OK`:
+
+```json
+{
+  "data": {
+    "items": [
+      {
+        "id": 1,
+        "code": "OWN-00001",
+        "name": "Owner Laundry 001",
+        "phone": "6281320000001",
+        "brand_name": "Laundry Cerah 001",
+        "province": "Jawa Barat",
+        "city": "Bandung",
+        "status": "ACTIVE",
+        "outlet_count": 2
+      }
+    ],
+    "pagination": {
+      "page": 1,
+      "limit": 10,
+      "total": 1
+    }
+  },
+  "meta": {
+    "request_id": "generated-request-id"
+  }
+}
+```
+
+Contoh error sort:
+
+```http
+GET /api/v1/owners?sort=unknown
+Authorization: Bearer {admin_or_supervisor_access_token}
+Accept: application/json
+```
+
+Response `400 Bad Request`:
+
+```json
+{
+  "error": {
+    "code": "INVALID_SORT",
+    "message": "parameter sort tidak valid",
+    "request_id": "generated-request-id"
+  }
+}
+```
+
+#### POST `/api/v1/owners`
+
+Request:
+
+```http
+POST /api/v1/owners
+Authorization: Bearer {admin_or_supervisor_access_token}
+Content-Type: application/json
+Accept: application/json
+```
+
+Body:
+
+```json
+{
+  "code": "OWN-API-001",
+  "name": "Budi Santoso",
+  "phone": "0812-3456-7890",
+  "email": "budi@example.test",
+  "brand_name": "Laundry Cerah",
+  "province": "Jawa Barat",
+  "city": "Bandung",
+  "address": "Jl. Contoh No. 1"
+}
+```
+
+Response `201 Created`:
+
+```json
+{
+  "data": {
+    "id": 20,
+    "code": "OWN-API-001",
+    "name": "Budi Santoso",
+    "phone": "6281234567890",
+    "email": "budi@example.test",
+    "brand_name": "Laundry Cerah",
+    "province": "Jawa Barat",
+    "city": "Bandung",
+    "address": "Jl. Contoh No. 1",
+    "status": "ACTIVE"
+  },
+  "meta": {
+    "request_id": "generated-request-id"
+  }
+}
+```
+
+Contoh error invalid phone:
+
+```json
+{
+  "code": "OWN-BAD-PHONE",
+  "name": "Owner Bad Phone",
+  "phone": "abc"
+}
+```
+
+Response `400 Bad Request`:
+
+```json
+{
+  "error": {
+    "code": "INVALID_PHONE",
+    "message": "nomor telepon tidak valid",
+    "request_id": "generated-request-id"
+  }
+}
+```
+
+#### GET `/api/v1/owners/{owner_id}`
+
+Path params:
+
+| Param | Tipe | Fungsi |
+| --- | --- | --- |
+| `owner_id` | integer | ID owner. |
+
+Request:
+
+```http
+GET /api/v1/owners/20
+Authorization: Bearer {admin_or_supervisor_access_token}
+Accept: application/json
+```
+
+Response `200 OK`: mengembalikan object owner.
+
+Contoh error:
+
+```http
+GET /api/v1/owners/999999
+Authorization: Bearer {admin_or_supervisor_access_token}
+Accept: application/json
+```
+
+Response `404 Not Found`:
+
+```json
+{
+  "error": {
+    "code": "NOT_FOUND",
+    "message": "data tidak ditemukan",
+    "request_id": "generated-request-id"
+  }
+}
+```
+
+#### PATCH `/api/v1/owners/{owner_id}`
+
+Request:
+
+```http
+PATCH /api/v1/owners/20
+Authorization: Bearer {admin_or_supervisor_access_token}
+Content-Type: application/json
+Accept: application/json
+```
+
+Body:
+
+```json
+{
+  "name": "Budi Santoso Updated",
+  "phone": "+62 812 9999 8888",
+  "city": "Bekasi"
+}
+```
+
+Response `200 OK`: mengembalikan object owner terbaru.
+
+#### DELETE `/api/v1/owners/{owner_id}`
+
+Request:
+
+```http
+DELETE /api/v1/owners/20
+Authorization: Bearer {admin_or_supervisor_access_token}
+Accept: application/json
+```
+
+Response `200 OK`:
+
+```json
+{
+  "data": {
+    "status": "deleted"
+  },
+  "meta": {
+    "request_id": "generated-request-id"
+  }
+}
+```
+
+Soft delete owner tidak menghapus outlet child.
+
+#### PATCH `/api/v1/owners/{owner_id}/restore`
+
+Request:
+
+```http
+PATCH /api/v1/owners/20/restore
+Authorization: Bearer {admin_or_supervisor_access_token}
+Accept: application/json
+```
+
+Response `200 OK`: mengembalikan object owner dengan `status = ACTIVE`.
+
+#### DELETE `/api/v1/owners/{owner_id}/force`
+
+Request:
+
+```http
+DELETE /api/v1/owners/20/force
+Authorization: Bearer {admin_or_supervisor_access_token}
+Accept: application/json
+```
+
+Response `200 OK`:
+
+```json
+{
+  "data": {
+    "status": "force_deleted"
+  },
+  "meta": {
+    "request_id": "generated-request-id"
+  }
+}
+```
+
+Hard delete owner menghapus row owner permanen. Outlet child tidak ikut terhapus;
+`owner_id` pada outlet menjadi `null`.
+
+#### POST `/api/v1/owners/bulk`
+
+Request:
+
+```http
+POST /api/v1/owners/bulk
+Authorization: Bearer {admin_or_supervisor_access_token}
+Content-Type: application/json
+Accept: application/json
+```
+
+Body:
+
+```json
+{
+  "items": [
+    {
+      "code": "OWN-BULK-001",
+      "name": "Owner Bulk 1",
+      "phone": "0812-7000-0001",
+      "brand_name": "Laundry Bulk",
+      "province": "Jawa Barat",
+      "city": "Bandung"
+    },
+    {
+      "code": "OWN-BULK-002",
+      "name": "Owner Bulk 2",
+      "phone": "0812-7000-0002",
+      "brand_name": "Laundry Bulk",
+      "province": "Jawa Barat",
+      "city": "Bekasi"
+    }
+  ]
+}
+```
+
+Response `201 Created`:
+
+```json
+{
+  "data": {
+    "items": [
+      {
+        "id": 21,
+        "code": "OWN-BULK-001",
+        "name": "Owner Bulk 1",
+        "phone": "6281270000001",
+        "status": "ACTIVE"
+      }
+    ],
+    "total": 2
+  },
+  "meta": {
+    "request_id": "generated-request-id"
+  }
+}
+```
+
+#### PATCH `/api/v1/owners/bulk`
+
+Request:
+
+```http
+PATCH /api/v1/owners/bulk
+Authorization: Bearer {admin_or_supervisor_access_token}
+Content-Type: application/json
+Accept: application/json
+```
+
+Body:
+
+```json
+{
+  "items": [
+    {
+      "id": 21,
+      "name": "Owner Bulk Updated 1"
+    },
+    {
+      "id": 22,
+      "city": "Cimahi"
+    }
+  ]
+}
+```
+
+Response `200 OK`: mengembalikan daftar owner yang berhasil diperbarui.
+
+#### DELETE `/api/v1/owners/bulk`
+
+Request:
+
+```http
+DELETE /api/v1/owners/bulk
+Authorization: Bearer {admin_or_supervisor_access_token}
+Content-Type: application/json
+Accept: application/json
+```
+
+Body:
+
+```json
+{
+  "ids": [21, 22]
+}
+```
+
+Response `200 OK`:
+
+```json
+{
+  "data": {
+    "ids": [21, 22],
+    "affected": 2
+  },
+  "meta": {
+    "request_id": "generated-request-id"
+  }
+}
+```
+
+#### DELETE `/api/v1/owners/bulk/force`
+
+Request dan response sama seperti bulk soft delete, tetapi row owner dihapus permanen.
+
+Contoh error bulk kosong:
+
+```json
+{
+  "ids": []
+}
+```
+
+Response `400 Bad Request`:
+
+```json
+{
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "Payload request tidak valid",
+    "details": {
+      "error": "Field validation for 'IDs' failed on the 'min' tag"
+    },
+    "request_id": "generated-request-id"
+  }
+}
+```
+
+### Outlet Management
+
+Route Outlet berada di bawah Owner. Owner harus aktif untuk create/list/detail
+outlet melalui nested route.
+
+| Nama Route | Method | Path | Fungsi |
+| --- | --- | --- | --- |
+| List Outlet | GET | `/api/v1/owners/{owner_id}/outlets` | Melihat daftar outlet aktif milik owner. |
+| Create Outlet | POST | `/api/v1/owners/{owner_id}/outlets` | Membuat outlet untuk owner. |
+| Bulk Create Outlet | POST | `/api/v1/owners/{owner_id}/outlets/bulk` | Membuat banyak outlet. |
+| Bulk Update Outlet | PATCH | `/api/v1/owners/{owner_id}/outlets/bulk` | Mengubah banyak outlet. |
+| Bulk Soft Delete Outlet | DELETE | `/api/v1/owners/{owner_id}/outlets/bulk` | Soft delete banyak outlet. |
+| Bulk Hard Delete Outlet | DELETE | `/api/v1/owners/{owner_id}/outlets/bulk/force` | Menghapus permanen banyak outlet. |
+| Detail Outlet | GET | `/api/v1/owners/{owner_id}/outlets/{outlet_id}` | Melihat detail outlet. |
+| Update Outlet | PATCH | `/api/v1/owners/{owner_id}/outlets/{outlet_id}` | Mengubah outlet. |
+| Soft Delete Outlet | DELETE | `/api/v1/owners/{owner_id}/outlets/{outlet_id}` | Mengisi `deleted_at` outlet. |
+| Restore Outlet | PATCH | `/api/v1/owners/{owner_id}/outlets/{outlet_id}/restore` | Memulihkan outlet soft-deleted. |
+| Hard Delete Outlet | DELETE | `/api/v1/owners/{owner_id}/outlets/{outlet_id}/force` | Menghapus outlet permanen. |
+
+#### GET `/api/v1/owners/{owner_id}/outlets`
+
+Query params:
+
+| Param | Tipe | Contoh | Fungsi |
+| --- | --- | --- | --- |
+| `q` | string | `Outlet Utama` | Search global pada kode, nama, telepon, kota, provinsi. |
+| `code` | string | `OUT-00001` | Filter kode outlet. |
+| `name` | string | `Outlet Utama` | Filter nama outlet. |
+| `phone` | string | `0812` | Filter nomor telepon outlet. |
+| `province` | string | `Jawa Barat` | Filter provinsi. |
+| `city` | string | `Bandung` | Filter kota. |
+| `page` | integer | `1` | Nomor halaman. |
+| `limit` | integer | `10` | Jumlah data per halaman, maksimum `100`. |
+| `sort` | string | `name` | Field: `created_at`, `updated_at`, `code`, `name`, `city`, `province`. |
+
+Request:
+
+```http
+GET /api/v1/owners/20/outlets?q=Outlet&page=1&limit=10&sort=name
+Authorization: Bearer {admin_or_supervisor_access_token}
+Accept: application/json
+```
+
+Response `200 OK`:
+
+```json
+{
+  "data": {
+    "items": [
+      {
+        "id": 31,
+        "owner_id": 20,
+        "code": "OUT-API-001",
+        "name": "Laundry Cerah Outlet 1",
+        "phone": "6281234567891",
+        "province": "Jawa Barat",
+        "city": "Bandung",
+        "status": "ACTIVE"
+      }
+    ],
+    "pagination": {
+      "page": 1,
+      "limit": 10,
+      "total": 1
+    }
+  },
+  "meta": {
+    "request_id": "generated-request-id"
+  }
+}
+```
+
+#### POST `/api/v1/owners/{owner_id}/outlets`
+
+Request:
+
+```http
+POST /api/v1/owners/20/outlets
+Authorization: Bearer {admin_or_supervisor_access_token}
+Content-Type: application/json
+Accept: application/json
+```
+
+Body:
+
+```json
+{
+  "code": "OUT-API-001",
+  "name": "Laundry Cerah Outlet 1",
+  "phone": "0812-3456-7891",
+  "province": "Jawa Barat",
+  "city": "Bandung",
+  "address": "Jl. Outlet No. 1"
+}
+```
+
+Response `201 Created`:
+
+```json
+{
+  "data": {
+    "id": 31,
+    "owner_id": 20,
+    "code": "OUT-API-001",
+    "name": "Laundry Cerah Outlet 1",
+    "phone": "6281234567891",
+    "province": "Jawa Barat",
+    "city": "Bandung",
+    "address": "Jl. Outlet No. 1",
+    "status": "ACTIVE"
+  },
+  "meta": {
+    "request_id": "generated-request-id"
+  }
+}
+```
+
+Contoh error owner tidak ada:
+
+```http
+POST /api/v1/owners/999999/outlets
+Authorization: Bearer {admin_or_supervisor_access_token}
+Content-Type: application/json
+Accept: application/json
+```
+
+```json
+{
+  "code": "OUT-NO-OWNER",
+  "name": "Outlet Tanpa Owner"
+}
+```
+
+Response `404 Not Found`:
+
+```json
+{
+  "error": {
+    "code": "NOT_FOUND",
+    "message": "data tidak ditemukan",
+    "request_id": "generated-request-id"
+  }
+}
+```
+
+#### GET `/api/v1/owners/{owner_id}/outlets/{outlet_id}`
+
+Request:
+
+```http
+GET /api/v1/owners/20/outlets/31
+Authorization: Bearer {admin_or_supervisor_access_token}
+Accept: application/json
+```
+
+Response `200 OK`: mengembalikan object outlet.
+
+#### PATCH `/api/v1/owners/{owner_id}/outlets/{outlet_id}`
+
+Request:
+
+```http
+PATCH /api/v1/owners/20/outlets/31
+Authorization: Bearer {admin_or_supervisor_access_token}
+Content-Type: application/json
+Accept: application/json
+```
+
+Body:
+
+```json
+{
+  "name": "Outlet Updated",
+  "city": "Bekasi"
+}
+```
+
+Response `200 OK`: mengembalikan object outlet terbaru.
+
+#### DELETE `/api/v1/owners/{owner_id}/outlets/{outlet_id}`
+
+Request:
+
+```http
+DELETE /api/v1/owners/20/outlets/31
+Authorization: Bearer {admin_or_supervisor_access_token}
+Accept: application/json
+```
+
+Response `200 OK`:
+
+```json
+{
+  "data": {
+    "status": "deleted"
+  },
+  "meta": {
+    "request_id": "generated-request-id"
+  }
+}
+```
+
+#### PATCH `/api/v1/owners/{owner_id}/outlets/{outlet_id}/restore`
+
+Request:
+
+```http
+PATCH /api/v1/owners/20/outlets/31/restore
+Authorization: Bearer {admin_or_supervisor_access_token}
+Accept: application/json
+```
+
+Response `200 OK`: mengembalikan object outlet dengan `status = ACTIVE`.
+
+#### DELETE `/api/v1/owners/{owner_id}/outlets/{outlet_id}/force`
+
+Request:
+
+```http
+DELETE /api/v1/owners/20/outlets/31/force
+Authorization: Bearer {admin_or_supervisor_access_token}
+Accept: application/json
+```
+
+Response `200 OK`:
+
+```json
+{
+  "data": {
+    "status": "force_deleted"
+  },
+  "meta": {
+    "request_id": "generated-request-id"
+  }
+}
+```
+
+#### POST `/api/v1/owners/{owner_id}/outlets/bulk`
+
+Request:
+
+```http
+POST /api/v1/owners/20/outlets/bulk
+Authorization: Bearer {admin_or_supervisor_access_token}
+Content-Type: application/json
+Accept: application/json
+```
+
+Body:
+
+```json
+{
+  "items": [
+    {
+      "code": "OUT-BULK-001",
+      "name": "Outlet Bulk 1",
+      "phone": "0812-7100-0001",
+      "province": "Jawa Barat",
+      "city": "Bandung"
+    },
+    {
+      "code": "OUT-BULK-002",
+      "name": "Outlet Bulk 2",
+      "phone": "0812-7100-0002",
+      "province": "Jawa Barat",
+      "city": "Cimahi"
+    }
+  ]
+}
+```
+
+Response `201 Created`:
+
+```json
+{
+  "data": {
+    "items": [
+      {
+        "id": 41,
+        "owner_id": 20,
+        "code": "OUT-BULK-001",
+        "name": "Outlet Bulk 1",
+        "phone": "6281271000001",
+        "status": "ACTIVE"
+      }
+    ],
+    "total": 2
+  },
+  "meta": {
+    "request_id": "generated-request-id"
+  }
+}
+```
+
+#### PATCH `/api/v1/owners/{owner_id}/outlets/bulk`
+
+Request:
+
+```http
+PATCH /api/v1/owners/20/outlets/bulk
+Authorization: Bearer {admin_or_supervisor_access_token}
+Content-Type: application/json
+Accept: application/json
+```
+
+Body:
+
+```json
+{
+  "items": [
+    {
+      "id": 41,
+      "name": "Outlet Bulk Updated 1"
+    },
+    {
+      "id": 42,
+      "city": "Bekasi"
+    }
+  ]
+}
+```
+
+Response `200 OK`: mengembalikan daftar outlet yang berhasil diperbarui.
+
+#### DELETE `/api/v1/owners/{owner_id}/outlets/bulk`
+
+Request:
+
+```http
+DELETE /api/v1/owners/20/outlets/bulk
+Authorization: Bearer {admin_or_supervisor_access_token}
+Content-Type: application/json
+Accept: application/json
+```
+
+Body:
+
+```json
+{
+  "ids": [41, 42]
+}
+```
+
+Response `200 OK`:
+
+```json
+{
+  "data": {
+    "ids": [41, 42],
+    "affected": 2
+  },
+  "meta": {
+    "request_id": "generated-request-id"
+  }
+}
+```
+
+#### DELETE `/api/v1/owners/{owner_id}/outlets/bulk/force`
+
+Request dan response sama seperti bulk soft delete, tetapi row outlet dihapus permanen.
+
+### Error Umum API
+
+| Kondisi | Status | Code |
+| --- | ---: | --- |
+| Tidak mengirim JWT | 401 | `UNAUTHENTICATED` |
+| JWT tidak valid | 401 | `INVALID_TOKEN` |
+| Role/permission tidak cukup | 403 | `FORBIDDEN` |
+| Resource tidak ditemukan | 404 | `NOT_FOUND` |
+| Duplicate code | 409 | `CODE_ALREADY_USED` |
+| Duplicate email | 409 | `EMAIL_ALREADY_USED` |
+| Nomor telepon tidak valid | 400 | `INVALID_PHONE` |
+| Sort tidak valid | 400 | `INVALID_SORT` |
+| Method tidak tersedia | 405 | `METHOD_NOT_ALLOWED` |
+
+Contoh method tidak tersedia:
+
+```http
+PUT /api/v1/owners/20
+Authorization: Bearer {admin_or_supervisor_access_token}
+Content-Type: application/json
+Accept: application/json
+```
+
+Response `405 Method Not Allowed`:
+
+```json
+{
+  "error": {
+    "code": "METHOD_NOT_ALLOWED",
+    "message": "HTTP method tidak didukung",
+    "request_id": "generated-request-id"
+  }
+}
+```
+
 ## Konfigurasi
 
 `.env.example` adalah kontrak konfigurasi. File `.env` tidak boleh dikomit.
