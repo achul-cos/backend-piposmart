@@ -14,6 +14,7 @@ import (
 	"backend_crm_piposmart/internal/lead"
 	"backend_crm_piposmart/internal/platform/config"
 	"backend_crm_piposmart/internal/platform/httpx"
+	"backend_crm_piposmart/internal/subscription"
 	"backend_crm_piposmart/internal/wallet"
 
 	"database/sql"
@@ -135,6 +136,12 @@ func NewRouter(cfg config.Config, logger *slog.Logger, connection Connection) *g
 		walletRoutes := api.Group("")
 		walletRoutes.Use(identity.AuthMiddleware(identityService))
 		wallet.NewHandler(walletService).RegisterRoutes(walletRoutes)
+
+		subscriptionRepository := subscription.NewRepository(connection.SQLDB())
+		subscriptionService := subscription.NewService(subscriptionRepository)
+		subscriptionRoutes := api.Group("")
+		subscriptionRoutes.Use(identity.AuthMiddleware(identityService))
+		subscription.NewHandler(subscriptionService).RegisterRoutes(subscriptionRoutes)
 	}
 
 	router.NoRoute(func(c *gin.Context) {

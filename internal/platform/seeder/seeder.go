@@ -637,13 +637,16 @@ func seedDemoMinimal(ctx context.Context, tx *sql.Tx, options Options) error {
 		fake.BuildClosing(2, "BUSINESS_12_MONTHS", "FREE_1_MONTH_BUSINESS_12", "CONFIRMED"),
 		fake.BuildClosing(3, "PRO_12_MONTHS", "PRO_12_ANDROID_POS_BUNDLE", "PENDING_RECONCILIATION"),
 	}
+	closingIDs := []int64{}
 	for index, closing := range closingScenarios {
 		if index >= len(leadIDs) {
 			break
 		}
-		if _, err := fake.CreateClosing(ctx, tx, leadIDs[index], closing); err != nil {
+		closingID, err := fake.CreateClosing(ctx, tx, leadIDs[index], closing)
+		if err != nil {
 			return err
 		}
+		closingIDs = append(closingIDs, closingID)
 	}
 
 	if len(ownerIDs) >= 2 {
@@ -664,6 +667,44 @@ func seedDemoMinimal(ctx context.Context, tx *sql.Tx, options Options) error {
 		unusedTopup.ExternalReference = "DEMO-TOPUP-UNUSED-OWNER-002"
 		unusedTopup.IdempotencyKey = "demo:topup:unused-owner-002"
 		if _, err := fake.CreateWalletTopup(ctx, tx, ownerIDs[1], unusedTopup); err != nil {
+			return err
+		}
+	}
+
+	if len(ownerIDs) >= 4 && len(closingIDs) >= 3 {
+		aprilTopup := fake.BuildWalletTopup(10, "4500000.00")
+		aprilTopup.ExternalReference = "DEMO-TOPUP-APRIL-OWNER-003"
+		aprilTopup.IdempotencyKey = "demo:topup:april-owner-003"
+		aprilTopup.PaidAt = time.Date(2026, 4, 15, 10, 0, 0, 0, time.UTC)
+		aprilTopup.Note = "Demo Sprint 10: top-up April, saldo dipakai beli subscription Juli"
+		if _, err := fake.CreateWalletTopup(ctx, tx, ownerIDs[2], aprilTopup); err != nil {
+			return err
+		}
+		julyOrder := fake.BuildSubscriptionOrder(10, "PRO_12_MONTHS", "", sql.NullInt64{Int64: closingIDs[2], Valid: true})
+		julyOrder.ExternalReference = "DEMO-SUB-JULY-OWNER-003"
+		julyOrder.IdempotencyKey = "demo:subscription-order:april-topup-july-purchase-owner-003"
+		julyOrder.PurchasedAt = time.Date(2026, 7, 10, 13, 0, 0, 0, time.UTC)
+		julyOrder.SubscriptionStartDate = time.Date(2026, 7, 10, 0, 0, 0, 0, time.UTC)
+		julyOrder.Note = "Demo Sprint 10: pembelian Juli dari top-up April dan auto reconciliation closing"
+		if _, err := fake.CreateSubscriptionOrder(ctx, tx, ownerIDs[2], julyOrder); err != nil {
+			return err
+		}
+
+		hangingTopup := fake.BuildWalletTopup(11, "500000.00")
+		hangingTopup.ExternalReference = "DEMO-TOPUP-HANGING-OWNER-004"
+		hangingTopup.IdempotencyKey = "demo:topup:hanging-owner-004"
+		hangingTopup.PaidAt = time.Date(2026, 4, 20, 10, 0, 0, 0, time.UTC)
+		hangingTopup.Note = "Demo Sprint 10: top-up April untuk hanging subscription order"
+		if _, err := fake.CreateWalletTopup(ctx, tx, ownerIDs[3], hangingTopup); err != nil {
+			return err
+		}
+		hangingOrder := fake.BuildSubscriptionOrder(11, "BASIC_01_MONTHS", "", sql.NullInt64{})
+		hangingOrder.ExternalReference = "DEMO-SUB-HANGING-OWNER-004"
+		hangingOrder.IdempotencyKey = "demo:subscription-order:hanging-owner-004"
+		hangingOrder.PurchasedAt = time.Date(2026, 7, 12, 13, 0, 0, 0, time.UTC)
+		hangingOrder.SubscriptionStartDate = time.Date(2026, 7, 12, 0, 0, 0, 0, time.UTC)
+		hangingOrder.Note = "Demo Sprint 10: pembelian tanpa closing untuk reconciliation issue queue"
+		if _, err := fake.CreateSubscriptionOrder(ctx, tx, ownerIDs[3], hangingOrder); err != nil {
 			return err
 		}
 	}

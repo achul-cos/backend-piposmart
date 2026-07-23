@@ -2531,6 +2531,331 @@ Response `405 Method Not Allowed`:
 }
 ```
 
+### Subscription, Order, dan Reconciliation
+
+Mulai Sprint 10, pembelian paket subscription dicatat sebagai `subscription_order` yang mendebit saldo wallet owner, membuat subscription aktif, dan dapat direkonsiliasi dengan closing Sales. Revenue perusahaan tetap diambil dari top-up/payment berdasarkan `paid_at`; order subscription tidak boleh dijumlahkan ulang sebagai revenue agar tidak terjadi double counting.
+
+Aturan penting:
+
+- Create subscription order hanya boleh dilakukan Admin.
+- Manual reconciliation boleh dilakukan Admin dan Supervisor sesuai cakupan data.
+- `idempotency_key` atau `external_reference` wajib pada create order.
+- Wallet debit, order, subscription, dan subscription period dibuat dalam satu database transaction.
+- Subscription memakai fixed duration: `tenure_months x 30 hari`, ditambah benefit free duration jika promo snapshot memiliki benefit tersebut.
+- Order dengan `closing_id` akan dicoba auto reconciliation.
+- Order tanpa closing menjadi `PAID` dan masuk `reconciliation_issues` sebagai `HANGING_ORDER`.
+
+| Nama Route | Method | Path | Fungsi |
+| --- | --- | --- | --- |
+| List Subscription Order | GET | `/api/v1/subscription-orders` | Melihat order pembelian paket sesuai role/ownership. |
+| Detail Subscription Order | GET | `/api/v1/subscription-orders/{order_id}` | Melihat detail order, snapshot paket/plan/promo, wallet transaction, dan status reconciliation. |
+| Create Owner Subscription Order | POST | `/api/v1/owners/{owner_id}/subscription-orders` | Admin membuat pembelian paket dari saldo wallet owner. |
+| Manual Reconcile Order | POST | `/api/v1/subscription-orders/{order_id}/reconcile` | Admin/Supervisor confirm atau reject order terhadap closing. |
+| List Subscription | GET | `/api/v1/subscriptions` | Melihat subscription owner aktif/expired/cancelled. |
+| Detail Subscription | GET | `/api/v1/subscriptions/{subscription_id}` | Melihat detail subscription owner. |
+| List Reconciliation | GET | `/api/v1/reconciliations` | Melihat histori auto/manual reconciliation order dengan closing. |
+| List Reconciliation Issue | GET | `/api/v1/reconciliation-issues` | Melihat hanging transaction dan issue reconciliation yang perlu review. |
+
+Query list subscription order:
+
+| Query | Contoh | Fungsi |
+| --- | --- | --- |
+| `q` | `Owner Laundry` | Search kode order, kode owner, nama owner, atau external reference. |
+| `owner_id` | `4` | Filter berdasarkan owner. |
+| `closing_id` | `9` | Filter berdasarkan closing. |
+| `sales_id` | `3` | Filter berdasarkan Sales. |
+| `supervisor_id` | `2` | Filter berdasarkan Supervisor. |
+| `plan_id` | `1` | Filter berdasarkan plan. |
+| `status` | `RECONCILED` | Filter status order: `PAID`, `RECONCILED`, `REJECTED`, `CANCELED`. |
+| `purchased_from` | `2026-07-01` | Batas awal tanggal pembelian. |
+| `purchased_to` | `2026-07-31` | Batas akhir tanggal pembelian. |
+| `sort` | `-purchased_at` | Sort by `purchased_at`, `created_at`, `updated_at`, `final_amount`, atau `code`. |
+| `page`, `limit` | `1`, `10` | Pagination. |
+
+Query list subscription:
+
+| Query | Contoh | Fungsi |
+| --- | --- | --- |
+| `q` | `OWN-00004` | Search kode subscription, kode owner, atau nama owner. |
+| `owner_id` | `4` | Filter berdasarkan owner. |
+| `order_id` | `3` | Filter berdasarkan order. |
+| `plan_id` | `1` | Filter berdasarkan plan. |
+| `status` | `ACTIVE` | Filter status: `ACTIVE`, `EXPIRED`, `CANCELED`. |
+| `active_from` | `2026-07-01` | Batas awal tanggal aktif. |
+| `active_to` | `2026-07-31` | Batas akhir tanggal aktif. |
+| `sort` | `-active_from` | Sort by `active_from`, `active_until`, `created_at`, `updated_at`, atau `code`. |
+| `page`, `limit` | `1`, `10` | Pagination. |
+
+Query list reconciliation issue:
+
+| Query | Contoh | Fungsi |
+| --- | --- | --- |
+| `q` | `HANGING` | Search kode issue, kode order, atau nama owner. |
+| `order_id` | `2` | Filter issue berdasarkan order. |
+| `owner_id` | `4` | Filter issue berdasarkan owner. |
+| `issue_type` | `HANGING_ORDER` | Filter tipe issue: `HANGING_ORDER`, `CLOSING_MISMATCH`, `MANUAL_REVIEW`. |
+| `status` | `OPEN` | Filter status issue: `OPEN`, `RESOLVED`. |
+| `sort` | `-detected_at` | Sort by `detected_at`, `created_at`, `updated_at`, atau `code`. |
+| `page`, `limit` | `1`, `10` | Pagination. |
+
+#### GET `/api/v1/subscription-orders`
+
+Contoh request:
+
+```http
+GET /api/v1/subscription-orders?status=RECONCILED&purchased_from=2026-07-01&purchased_to=2026-07-31&sort=-purchased_at&page=1&limit=10
+Authorization: Bearer {admin_access_token}
+Accept: application/json
+```
+
+Contoh response `200 OK`:
+
+```json
+{
+  "data": {
+    "items": [
+      {
+        "id": 1,
+        "code": "DEMO-ORD-000003-RDER-APRIL-TOPUP-JULY-PURCHASE-OWNER-003",
+        "owner": {
+          "id": 3,
+          "code": "OWN-00003",
+          "name": "Owner Laundry 003"
+        },
+        "closing": {
+          "id": 9,
+          "code": "DEMO-CLS-000003-PRO_12_MONTHS"
+        },
+        "plan": {
+          "id": 13,
+          "code": "PRO_12_MONTHS",
+          "name": "Pro 12 Bulan"
+        },
+        "duration_days": 360,
+        "final_amount": "3768703.00",
+        "status": "RECONCILED",
+        "purchased_at": "2026-07-10T13:00:00Z",
+        "subscription_start_date": "2026-07-10"
+      }
+    ],
+    "pagination": {
+      "page": 1,
+      "limit": 10,
+      "total": 1
+    }
+  },
+  "meta": {
+    "request_id": "generated-request-id"
+  }
+}
+```
+
+#### POST `/api/v1/owners/{owner_id}/subscription-orders`
+
+Contoh request order tanpa closing:
+
+```http
+POST /api/v1/owners/4/subscription-orders
+Authorization: Bearer {admin_access_token}
+Accept: application/json
+Content-Type: application/json
+```
+
+```json
+{
+  "plan_id": 1,
+  "idempotency_key": "subscription-order-owner-4-20260724-001",
+  "external_reference": "ADMIN-DASHBOARD-SUB-20260724-001",
+  "purchased_at": "2026-07-24T03:00:00Z",
+  "subscription_start_date": "2026-07-24",
+  "note": "Pembelian Basic 1 bulan dari saldo wallet"
+}
+```
+
+Contoh response `201 Created`:
+
+```json
+{
+  "data": {
+    "order": {
+      "id": 3,
+      "owner": {
+        "id": 4,
+        "code": "OWN-00004",
+        "name": "Owner Laundry 004"
+      },
+      "wallet_transaction_id": 13,
+      "plan": {
+        "id": 1,
+        "code": "BASIC_01_MONTHS"
+      },
+      "duration_days": 30,
+      "final_amount": "99000.00",
+      "status": "PAID"
+    },
+    "subscription": {
+      "id": 3,
+      "status": "ACTIVE",
+      "active_from": "2026-07-24",
+      "active_until": "2026-08-23",
+      "total_duration_days": 30
+    },
+    "period": {
+      "period_index": 1,
+      "start_date": "2026-07-24",
+      "end_date": "2026-08-23",
+      "duration_days": 30
+    },
+    "issue": {
+      "issue_type": "HANGING_ORDER",
+      "status": "OPEN"
+    },
+    "idempotent": false
+  },
+  "meta": {
+    "request_id": "generated-request-id"
+  }
+}
+```
+
+Jika `closing_id` dikirim dan cocok, order akan dibuat memakai snapshot closing dan reconciliation dapat langsung `CONFIRMED`.
+
+#### POST `/api/v1/subscription-orders/{order_id}/reconcile`
+
+Contoh request manual confirm:
+
+```http
+POST /api/v1/subscription-orders/4/reconcile
+Authorization: Bearer {admin_access_token}
+Accept: application/json
+Content-Type: application/json
+```
+
+```json
+{
+  "action": "CONFIRM",
+  "closing_id": 7,
+  "note": "Cocok dengan closing Sales Juli"
+}
+```
+
+Contoh response `200 OK`:
+
+```json
+{
+  "data": {
+    "order": {
+      "id": 4,
+      "status": "RECONCILED"
+    },
+    "reconciliation": {
+      "status": "CONFIRMED",
+      "match_type": "MANUAL",
+      "amount_difference": "-101.00"
+    }
+  },
+  "meta": {
+    "request_id": "generated-request-id"
+  }
+}
+```
+
+#### Contoh error subscription order
+
+Create order tanpa `idempotency_key` dan tanpa `external_reference`:
+
+```http
+POST /api/v1/owners/4/subscription-orders
+Authorization: Bearer {admin_access_token}
+Content-Type: application/json
+```
+
+```json
+{
+  "plan_id": 1,
+  "purchased_at": "2026-07-20T10:00:00Z",
+  "subscription_start_date": "2026-07-20"
+}
+```
+
+Response `400 Bad Request`:
+
+```json
+{
+  "error": {
+    "code": "IDEMPOTENCY_REQUIRED",
+    "message": "idempotency_key atau external_reference wajib dikirim",
+    "request_id": "generated-request-id"
+  }
+}
+```
+
+Saldo wallet tidak cukup:
+
+```json
+{
+  "plan_id": 13,
+  "idempotency_key": "subscription-order-owner-4-pro-12",
+  "purchased_at": "2026-07-24T04:00:00Z",
+  "subscription_start_date": "2026-07-24"
+}
+```
+
+Response `400 Bad Request`:
+
+```json
+{
+  "error": {
+    "code": "INSUFFICIENT_BALANCE",
+    "message": "saldo wallet tidak mencukupi",
+    "request_id": "generated-request-id"
+  }
+}
+```
+
+Sales mencoba membuat order:
+
+```http
+POST /api/v1/owners/4/subscription-orders
+Authorization: Bearer {sales_access_token}
+Content-Type: application/json
+```
+
+Response `403 Forbidden`:
+
+```json
+{
+  "error": {
+    "code": "FORBIDDEN",
+    "message": "akses ditolak",
+    "request_id": "generated-request-id"
+  }
+}
+```
+
+Reconcile order yang sudah `RECONCILED`:
+
+```json
+{
+  "action": "CONFIRM",
+  "closing_id": 9,
+  "note": "negative test already reconciled"
+}
+```
+
+Response `409 Conflict`:
+
+```json
+{
+  "error": {
+    "code": "ORDER_ALREADY_RECONCILED",
+    "message": "order sudah direkonsiliasi",
+    "request_id": "generated-request-id"
+  }
+}
+```
+
+Dokumentasi testing lengkap Sprint 10 tersedia di `docs/sprint-10/README.md`.
 ## Konfigurasi
 
 `.env.example` adalah kontrak konfigurasi. File `.env` tidak boleh dikomit.

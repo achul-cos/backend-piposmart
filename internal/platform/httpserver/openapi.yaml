@@ -1,8 +1,8 @@
 openapi: 3.0.3
 info:
   title: Backend CRM Piposmart
-  version: 0.9.0-sprint-9
-  description: API CRM Piposmart dengan Owner/Outlet, Lead Ownership, Activity, Training, Catalog, Closing, serta Payment dan Wallet Ledger Sprint 9.
+  version: 0.10.0-sprint-10
+  description: API CRM Piposmart dengan Owner/Outlet, Lead Ownership, Activity, Training, Catalog, Closing, Payment/Wallet Ledger, Subscription Order, Subscription, dan Reconciliation Sprint 10.
 servers:
   - url: http://localhost:8080
 paths:
@@ -2102,6 +2102,361 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelope"
+  /api/v1/subscription-orders:
+    get:
+      tags: [Subscription]
+      summary: List subscription order
+      operationId: listSubscriptionOrders
+      description: Admin melihat seluruh order. Supervisor dan Sales hanya melihat order pada owner/lead dalam cakupan ownership mereka. Revenue top-up tetap dihitung dari wallet payment, sedangkan order dipakai untuk aktivasi subscription dan performa closing setelah reconciliation.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/SearchQuery"
+        - name: owner_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: closing_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: sales_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: supervisor_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: plan_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [PAID, RECONCILED, REJECTED, CANCELED]
+        - name: purchased_from
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: purchased_to
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: sort
+          in: query
+          schema:
+            type: string
+            example: -purchased_at
+          description: Field yang didukung yaitu purchased_at, created_at, updated_at, final_amount, code. Gunakan prefix minus untuk descending.
+        - $ref: "#/components/parameters/PageQuery"
+        - $ref: "#/components/parameters/LimitQuery"
+      responses:
+        "200":
+          description: List subscription order berhasil diambil
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+        "400":
+          description: Query filter atau sort invalid
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+  /api/v1/subscription-orders/{order_id}:
+    get:
+      tags: [Subscription]
+      summary: Detail subscription order
+      operationId: getSubscriptionOrder
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: order_id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: Detail subscription order berhasil diambil
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+        "404":
+          description: Order tidak ditemukan atau tidak dapat diakses user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+  /api/v1/owners/{owner_id}/subscription-orders:
+    post:
+      tags: [Subscription]
+      summary: Membuat subscription order dari wallet owner
+      operationId: createOwnerSubscriptionOrder
+      description: Admin-only. Order mendebit wallet secara atomic, membuat subscription dan period, lalu otomatis membuat reconciliation jika closing_id dikirim. Wajib mengirim idempotency_key atau external_reference.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OwnerID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateSubscriptionOrderRequest"
+      responses:
+        "201":
+          description: Subscription order berhasil dibuat
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+        "400":
+          description: Payload invalid, promo tidak eligible, saldo tidak cukup, closing mismatch, atau idempotency kosong
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "403":
+          description: User bukan Admin
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "404":
+          description: Owner, wallet, plan, promo, outlet, atau closing tidak ditemukan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+  /api/v1/subscription-orders/{order_id}/reconcile:
+    post:
+      tags: [Subscription]
+      summary: Manual reconciliation subscription order dengan closing
+      operationId: reconcileSubscriptionOrder
+      description: Admin dan Supervisor dapat melakukan confirm/reject. Confirm mengaktifkan status reconciliation dan closing untuk KPI; reject tidak menghasilkan KPI/komisi.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: order_id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ManualReconcileRequest"
+      responses:
+        "200":
+          description: Reconciliation berhasil diproses
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+        "400":
+          description: Action invalid atau closing tidak cocok dengan order
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "403":
+          description: User tidak memiliki akses reconciliation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "409":
+          description: Order sudah direkonsiliasi
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+  /api/v1/subscriptions:
+    get:
+      tags: [Subscription]
+      summary: List subscription aktif/expired owner
+      operationId: listSubscriptions
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/SearchQuery"
+        - name: owner_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: order_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: plan_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [ACTIVE, EXPIRED, CANCELED]
+        - name: active_from
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: active_to
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: sort
+          in: query
+          schema:
+            type: string
+            example: -active_from
+          description: Field yang didukung yaitu active_from, active_until, created_at, updated_at, code.
+        - $ref: "#/components/parameters/PageQuery"
+        - $ref: "#/components/parameters/LimitQuery"
+      responses:
+        "200":
+          description: List subscription berhasil diambil
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/subscriptions/{subscription_id}:
+    get:
+      tags: [Subscription]
+      summary: Detail subscription
+      operationId: getSubscription
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: Detail subscription berhasil diambil
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+        "404":
+          description: Subscription tidak ditemukan atau tidak dapat diakses user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+  /api/v1/reconciliations:
+    get:
+      tags: [Subscription]
+      summary: List reconciliation order dan closing
+      operationId: listSubscriptionReconciliations
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/SearchQuery"
+        - name: order_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: closing_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: owner_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [PENDING, CONFIRMED, REJECTED]
+        - name: sort
+          in: query
+          schema:
+            type: string
+            example: -created_at
+          description: Field yang didukung yaitu created_at, updated_at, confirmed_at, amount_difference, code.
+        - $ref: "#/components/parameters/PageQuery"
+        - $ref: "#/components/parameters/LimitQuery"
+      responses:
+        "200":
+          description: List reconciliation berhasil diambil
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/reconciliation-issues:
+    get:
+      tags: [Subscription]
+      summary: List issue reconciliation yang perlu review
+      operationId: listReconciliationIssues
+      description: Digunakan untuk menemukan hanging transaction, order tanpa closing, atau mismatch reconciliation.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/SearchQuery"
+        - name: order_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: owner_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: issue_type
+          in: query
+          schema:
+            type: string
+            enum: [HANGING_ORDER, CLOSING_MISMATCH, MANUAL_REVIEW]
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [OPEN, RESOLVED]
+        - name: sort
+          in: query
+          schema:
+            type: string
+            example: -detected_at
+          description: Field yang didukung yaitu detected_at, created_at, updated_at, code.
+        - $ref: "#/components/parameters/PageQuery"
+        - $ref: "#/components/parameters/LimitQuery"
+      responses:
+        "200":
+          description: List issue reconciliation berhasil diambil
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
 components:
   securitySchemes:
     bearerAuth:
@@ -2490,7 +2845,75 @@ components:
         wallet:
           $ref: "#/components/schemas/WalletAccountResponse"
         idempotent:
-          type: boolean    CreateOwnerRequest:
+          type: boolean
+    CreateSubscriptionOrderRequest:
+      type: object
+      properties:
+        plan_id:
+          type: integer
+          format: int64
+          description: Wajib jika closing_id tidak dikirim; jika closing_id dikirim, plan diambil dari snapshot closing.
+          example: 1
+        outlet_id:
+          type: integer
+          format: int64
+          nullable: true
+          example: 5
+        promotion_id:
+          type: integer
+          format: int64
+          nullable: true
+          description: Harus eligible terhadap plan. Promo berbayar tidak dipilih otomatis.
+          example: 3
+        closing_id:
+          type: integer
+          format: int64
+          nullable: true
+          description: Jika dikirim, order otomatis dicoba reconcile ke closing tersebut dalam satu transaction.
+          example: 9
+        discount_amount:
+          type: string
+          pattern: "^[0-9]+(\\.[0-9]{1,2})?$"
+          example: "0.00"
+        idempotency_key:
+          type: string
+          example: subscription-order-owner-4-20260724-001
+          description: Wajib jika external_reference kosong.
+        external_reference:
+          type: string
+          example: ADMIN-DASHBOARD-SUB-20260724-001
+        purchased_at:
+          type: string
+          format: date-time
+          example: "2026-07-10T13:00:00Z"
+        subscription_start_date:
+          type: string
+          format: date
+          example: "2026-07-10"
+        note:
+          type: string
+          example: Pembelian paket dari saldo top-up April.
+    ManualReconcileRequest:
+      type: object
+      required: [action]
+      properties:
+        action:
+          type: string
+          enum: [CONFIRM, REJECT]
+          example: CONFIRM
+        closing_id:
+          type: integer
+          format: int64
+          nullable: true
+          description: Wajib untuk action CONFIRM jika order belum punya closing.
+          example: 9
+        note:
+          type: string
+          example: Cocok dengan closing Sales Juli.
+        reason:
+          type: string
+          example: Nominal atau owner tidak cocok.
+    CreateOwnerRequest:
       type: object
       required: [code, name]
       properties:
