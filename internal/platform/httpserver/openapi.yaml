@@ -1,8 +1,8 @@
 openapi: 3.0.3
 info:
   title: Backend CRM Piposmart
-  version: 0.2.0-sprint-2
-  description: Fondasi API CRM Piposmart dengan baseline migration dan seeder Sprint 2.
+  version: 0.3.0-sprint-3
+  description: API CRM Piposmart dengan authentication, RBAC, dan Sales Management Sprint 3.
 servers:
   - url: http://localhost:8080
 paths:
@@ -56,35 +56,324 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/auth/login:
+    post:
+      summary: Login user CRM
+      operationId: login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Login berhasil
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+        "401":
+          description: Credential salah
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+  /api/v1/auth/refresh:
+    post:
+      summary: Rotasi refresh token
+      operationId: refreshToken
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RefreshRequest"
+      responses:
+        "200":
+          description: Token baru berhasil dibuat
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/auth/logout:
+    post:
+      summary: Logout dan revoke refresh token
+      operationId: logout
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LogoutRequest"
+      responses:
+        "200":
+          description: Logout berhasil
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/auth/me:
+    get:
+      summary: Profil user login
+      operationId: getMe
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Profil user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/auth/change-password:
+    post:
+      summary: Ganti password user login
+      operationId: changePassword
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChangePasswordRequest"
+      responses:
+        "200":
+          description: Password berhasil diganti
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/sales:
+    get:
+      summary: List akun Sales
+      operationId: listSales
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [ACTIVE, INACTIVE]
+      responses:
+        "200":
+          description: List Sales
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+    post:
+      summary: Membuat akun Sales
+      operationId: createSales
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateSalesRequest"
+      responses:
+        "201":
+          description: Sales dibuat
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/sales/{id}:
+    get:
+      summary: Detail akun Sales
+      operationId: getSales
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: Detail Sales
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+    patch:
+      summary: Update akun Sales
+      operationId: updateSales
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateSalesRequest"
+      responses:
+        "200":
+          description: Sales diperbarui
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/sales/{id}/activate:
+    post:
+      summary: Aktivasi akun Sales
+      operationId: activateSales
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: Sales aktif
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/sales/{id}/deactivate:
+    post:
+      summary: Deaktivasi akun Sales
+      operationId: deactivateSales
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: Sales nonaktif
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/sales/{id}/reset-password:
+    post:
+      summary: Reset password Sales
+      operationId: resetSalesPassword
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ResetPasswordRequest"
+      responses:
+        "200":
+          description: Password Sales direset
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
 components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    ID:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
   schemas:
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          format: password
+    RefreshRequest:
+      type: object
+      required: [refresh_token]
+      properties:
+        refresh_token:
+          type: string
+    LogoutRequest:
+      type: object
+      properties:
+        refresh_token:
+          type: string
+    ChangePasswordRequest:
+      type: object
+      required: [current_password, new_password]
+      properties:
+        current_password:
+          type: string
+          format: password
+        new_password:
+          type: string
+          format: password
+          minLength: 8
+    CreateSalesRequest:
+      type: object
+      required: [name, email]
+      properties:
+        code:
+          type: string
+        name:
+          type: string
+        email:
+          type: string
+          format: email
+        phone:
+          type: string
+        password:
+          type: string
+          format: password
+          description: Optional; jika kosong sistem membuat temporary password.
+    UpdateSalesRequest:
+      type: object
+      properties:
+        code:
+          type: string
+        name:
+          type: string
+        email:
+          type: string
+          format: email
+        phone:
+          type: string
+    ResetPasswordRequest:
+      type: object
+      properties:
+        new_password:
+          type: string
+          format: password
+          description: Optional; jika kosong sistem membuat temporary password.
     SuccessEnvelope:
       type: object
-      required:
-        - data
-        - meta
+      required: [data, meta]
       properties:
         data:
           type: object
           additionalProperties: true
         meta:
           type: object
-          required:
-            - request_id
+          required: [request_id]
           properties:
             request_id:
               type: string
     ErrorEnvelope:
       type: object
-      required:
-        - error
+      required: [error]
       properties:
         error:
           type: object
-          required:
-            - code
-            - message
-            - request_id
+          required: [code, message, request_id]
           properties:
             code:
               type: string

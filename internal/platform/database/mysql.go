@@ -57,6 +57,10 @@ func (c *Connection) PingContext(ctx context.Context) error {
 	return c.SQL.PingContext(ctx)
 }
 
+func (c *Connection) SQLDB() *sql.DB {
+	return c.SQL
+}
+
 func (c *Connection) Close() error {
 	return c.SQL.Close()
 }

@@ -37,22 +37,28 @@ func TestBaselineMigrationContainsSprintTwoTables(t *testing.T) {
 	}
 }
 
-func TestOnlyBaselineSQLMigrationIsPresent(t *testing.T) {
+func TestExpectedSQLMigrationsArePresent(t *testing.T) {
 	root := repositoryRoot(t)
 	entries, err := os.ReadDir(filepath.Join(root, "migrations"))
 	if err != nil {
 		t.Fatalf("read migrations: %v", err)
 	}
 
-	var sqlFiles []string
+	sqlFiles := map[string]bool{}
 	for _, entry := range entries {
 		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".sql") {
-			sqlFiles = append(sqlFiles, entry.Name())
+			sqlFiles[entry.Name()] = true
 		}
 	}
 
-	if len(sqlFiles) != 1 || sqlFiles[0] != "20260723000100_baseline_crm_schema.sql" {
-		t.Fatalf("migration SQL = %v, want baseline tunggal", sqlFiles)
+	required := []string{
+		"20260723000100_baseline_crm_schema.sql",
+		"20260723000200_create_auth_sessions.sql",
+	}
+	for _, item := range required {
+		if !sqlFiles[item] {
+			t.Fatalf("migration SQL %q tidak ditemukan; files=%v", item, sqlFiles)
+		}
 	}
 }
 

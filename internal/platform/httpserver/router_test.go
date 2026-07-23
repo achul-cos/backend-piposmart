@@ -3,6 +3,7 @@ package httpserver
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -19,6 +20,10 @@ type readinessStub struct {
 
 func (s readinessStub) PingContext(context.Context) error {
 	return s.err
+}
+
+func (s readinessStub) SQLDB() *sql.DB {
+	return nil
 }
 
 func TestLiveHealthCheck(t *testing.T) {

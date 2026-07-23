@@ -72,6 +72,8 @@ func run(args []string) error {
 			return errors.New("perintah seed memerlukan mode: master atau demo")
 		}
 		return seeder.Run(ctx, cfg, args[1:], os.Stdout, logger)
+	case "bootstrap-admin":
+		return app.RunBootstrapAdmin(ctx, cfg, logger)
 	default:
 		return fmt.Errorf("command %q tidak dikenali\n\n%s", command, usage)
 	}
@@ -85,10 +87,11 @@ Usage:
   crm migrate <up|down|status|version>
   crm seed master
   crm seed demo --preset=minimal --seed=20260723 --as-of=2026-07-01
+  crm bootstrap-admin
   crm version
   crm help
 
-Command bootstrap-admin akan ditambahkan pada Sprint 3.`
+Jalankan bootstrap-admin setelah migration dan seed master.`
 
 func printUsage() {
 	fmt.Println(usage)

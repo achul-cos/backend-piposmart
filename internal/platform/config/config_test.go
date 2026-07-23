@@ -103,4 +103,5 @@ func setMinimumEnvironment(t *testing.T) {
 	t.Setenv("DB_NAME", "crm_test")
 	t.Setenv("DB_USER", "crm_test")
 	t.Setenv("DB_PASSWORD", "test-password")
+	t.Setenv("JWT_ACCESS_SECRET", "test-secret-that-has-at-least-32-byte")
 }

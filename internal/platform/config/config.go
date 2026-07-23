@@ -30,6 +30,8 @@ type Config struct {
 	Storage   StorageConfig
 	Worker    WorkerConfig
 	Migration MigrationConfig
+	Auth      AuthConfig
+	Bootstrap BootstrapConfig
 }
 
 type AppConfig struct {
@@ -115,6 +117,24 @@ type MigrationConfig struct {
 	Directory string
 }
 
+type AuthConfig struct {
+	Issuer         string
+	AccessSecret   string
+	AccessTTL      time.Duration
+	RefreshTTL     time.Duration
+	CookieName     string
+	CookieDomain   string
+	CookieSecure   bool
+	CookieSameSite string
+}
+
+type BootstrapConfig struct {
+	AdminName     string
+	AdminEmail    string
+	AdminPhone    string
+	AdminPassword string
+}
+
 func Load() (Config, error) {
 	if err := LoadDotEnv(".env"); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return Config{}, fmt.Errorf("load .env: %w", err)
@@ -181,6 +201,22 @@ func LoadFromEnvironment() (Config, error) {
 		},
 		Migration: MigrationConfig{
 			Directory: getEnv("MIGRATION_DIR", "./migrations"),
+		},
+		Auth: AuthConfig{
+			Issuer:         getEnv("JWT_ISSUER", "crm-piposmart"),
+			AccessSecret:   getEnv("JWT_ACCESS_SECRET", ""),
+			AccessTTL:      getDuration("JWT_ACCESS_TTL", 15*time.Minute),
+			RefreshTTL:     getDuration("JWT_REFRESH_TTL", 168*time.Hour),
+			CookieName:     getEnv("AUTH_COOKIE_NAME", "piposmart_refresh"),
+			CookieDomain:   getEnv("AUTH_COOKIE_DOMAIN", ""),
+			CookieSecure:   getBool("AUTH_COOKIE_SECURE", false),
+			CookieSameSite: strings.ToLower(getEnv("AUTH_COOKIE_SAME_SITE", "lax")),
+		},
+		Bootstrap: BootstrapConfig{
+			AdminName:     getEnv("BOOTSTRAP_ADMIN_NAME", "Initial Admin"),
+			AdminEmail:    getEnv("BOOTSTRAP_ADMIN_EMAIL", ""),
+			AdminPhone:    getEnv("BOOTSTRAP_ADMIN_PHONE", ""),
+			AdminPassword: getEnv("BOOTSTRAP_ADMIN_PASSWORD", ""),
 		},
 	}
 
@@ -277,6 +313,30 @@ func (c Config) Validate() error {
 	}
 	if strings.TrimSpace(c.Migration.Directory) == "" {
 		problems = append(problems, "MIGRATION_DIR wajib diisi")
+	}
+	if strings.TrimSpace(c.Auth.Issuer) == "" {
+		problems = append(problems, "JWT_ISSUER wajib diisi")
+	}
+	if len(c.Auth.AccessSecret) < 32 {
+		problems = append(problems, "JWT_ACCESS_SECRET minimal 32 karakter")
+	}
+	if c.Auth.AccessTTL <= 0 {
+		problems = append(problems, "JWT_ACCESS_TTL harus lebih besar dari 0")
+	}
+	if c.Auth.RefreshTTL <= c.Auth.AccessTTL {
+		problems = append(problems, "JWT_REFRESH_TTL harus lebih besar dari JWT_ACCESS_TTL")
+	}
+	validSameSite := map[string]bool{"lax": true, "strict": true, "none": true}
+	if !validSameSite[c.Auth.CookieSameSite] {
+		problems = append(problems, "AUTH_COOKIE_SAME_SITE harus lax, strict, atau none")
+	}
+	if c.App.IsProduction() {
+		if c.Auth.AccessSecret == "replace-with-minimum-32-byte-secret" {
+			problems = append(problems, "JWT_ACCESS_SECRET production tidak boleh memakai nilai contoh")
+		}
+		if !c.Auth.CookieSecure && c.Auth.CookieSameSite == "none" {
+			problems = append(problems, "AUTH_COOKIE_SECURE harus true ketika same-site none di production")
+		}
 	}
 
 	if len(problems) > 0 {

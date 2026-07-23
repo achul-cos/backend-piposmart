@@ -82,6 +82,7 @@ Jalankan migration dan API:
 ```powershell
 go run . migrate up
 go run . seed master
+go run . bootstrap-admin
 go run . seed demo --preset=minimal --seed=20260723 --as-of=2026-07-01
 go run . api
 ```
@@ -103,11 +104,47 @@ crm migrate status
 crm migrate version
 crm seed master
 crm seed demo --preset=minimal --seed=20260723 --as-of=2026-07-01
+crm bootstrap-admin
 crm version
 crm help
 ```
 
-Bootstrap Admin akan ditambahkan pada Sprint 3.
+`bootstrap-admin` membuat akun Admin awal berdasarkan variable
+`BOOTSTRAP_ADMIN_*` di `.env`. Seeder demo juga membuat akun berikut:
+
+```text
+admin.001@demo.piposmart.id / Password123!
+supervisor.001@demo.piposmart.id / Password123!
+sales.001@demo.piposmart.id / Password123!
+sales.002@demo.piposmart.id / Password123!
+```
+
+Contoh login dan memakai access token:
+
+```powershell
+$login = Invoke-RestMethod `
+  -Method Post `
+  -Uri http://localhost:8080/api/v1/auth/login `
+  -ContentType 'application/json' `
+  -Body '{"email":"admin.001@demo.piposmart.id","password":"Password123!"}'
+
+$token = $login.data.access_token
+Invoke-RestMethod `
+  -Method Get `
+  -Uri http://localhost:8080/api/v1/auth/me `
+  -Headers @{ Authorization = "Bearer $token" }
+```
+
+Contoh membuat Sales baru:
+
+```powershell
+Invoke-RestMethod `
+  -Method Post `
+  -Uri http://localhost:8080/api/v1/sales `
+  -Headers @{ Authorization = "Bearer $token" } `
+  -ContentType 'application/json' `
+  -Body '{"name":"Sales Baru","email":"sales.baru@demo.piposmart.id","phone":"6281212345678"}'
+```
 
 ## Konfigurasi
 
@@ -125,10 +162,71 @@ Production harus:
 
 ## Verifikasi
 
+Jalankan perintah berikut dari root backend:
+
 ```powershell
+cd C:\piposmart\backend_crm_piposmart
+```
+
+### `go test`
+
+`go test` menjalankan seluruh unit test dan integration test ringan pada semua
+package Go. Gunakan ini setiap selesai mengubah logic, migration helper,
+factory, seeder, handler, service, atau repository.
+
+```powershell
+go test ./...
+```
+
+Jika muncul error permission pada Go build cache di Windows, gunakan cache lokal
+di workspace:
+
+```powershell
+$env:GOCACHE='C:\piposmart\backend_crm_piposmart\.cache\go-build'
+go test ./...
+```
+
+### `go vet`
+
+`go vet` mengecek potensi bug statis yang sering tidak tertangkap compiler,
+misalnya format string salah, struct tag mencurigakan, atau penggunaan API yang
+rawan keliru. Jalankan sebelum commit atau sebelum laporan Sprint.
+
+```powershell
+go vet ./...
+```
+
+### `go build`
+
+`go build` memastikan aplikasi bisa dikompilasi menjadi binary. Karena
+entrypoint ada di root `main.go`, command build cukup:
+
+```powershell
+go build .
+```
+
+Di Windows, command ini menghasilkan file binary seperti
+`backend_crm_piposmart.exe`. File `.exe` sudah di-ignore oleh Git, jadi tidak
+perlu dikomit.
+
+Untuk menjalankan binary hasil build:
+
+```powershell
+.\backend_crm_piposmart.exe help
+.\backend_crm_piposmart.exe migrate status
+```
+
+### Quality gate harian
+
+Sebelum lanjut Sprint berikutnya atau sebelum commit besar, jalankan paket
+lengkap ini:
+
+```powershell
+$env:GOCACHE='C:\piposmart\backend_crm_piposmart\.cache\go-build'
 go test ./...
 go vet ./...
 go build .
+git diff --check
 ```
 
 Build container:

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"backend_crm_piposmart/internal/identity"
 	"backend_crm_piposmart/internal/platform/config"
 	"backend_crm_piposmart/internal/platform/database"
 	"backend_crm_piposmart/internal/platform/httpserver"
@@ -91,4 +92,25 @@ func RunWorker(ctx context.Context, cfg config.Config, logger *slog.Logger) erro
 			logger.Debug("worker heartbeat", slog.String("status", "ready"))
 		}
 	}
+}
+
+func RunBootstrapAdmin(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
+	connection, err := database.Open(ctx, cfg.Database, logger)
+	if err != nil {
+		return err
+	}
+	defer connection.Close()
+
+	repository := identity.NewRepository(connection.SQL)
+	service := identity.NewService(repository, cfg)
+	user, err := service.BootstrapAdmin(ctx)
+	if err != nil {
+		return err
+	}
+
+	logger.Info("bootstrap admin ready",
+		slog.Int64("user_id", user.ID),
+		slog.String("email", user.Email),
+	)
+	return nil
 }

@@ -6,19 +6,23 @@ import (
 	"net/http"
 	"time"
 
+	"backend_crm_piposmart/internal/identity"
 	"backend_crm_piposmart/internal/platform/config"
 	"backend_crm_piposmart/internal/platform/httpx"
+
+	"database/sql"
 
 	"github.com/gin-gonic/gin"
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
 )
 
-type ReadinessChecker interface {
+type Connection interface {
 	PingContext(context.Context) error
+	SQLDB() *sql.DB
 }
 
-func NewRouter(cfg config.Config, logger *slog.Logger, readiness ReadinessChecker) *gin.Engine {
+func NewRouter(cfg config.Config, logger *slog.Logger, connection Connection) *gin.Engine {
 	if cfg.App.IsProduction() {
 		gin.SetMode(gin.ReleaseMode)
 	} else {
@@ -50,7 +54,7 @@ func NewRouter(cfg config.Config, logger *slog.Logger, readiness ReadinessChecke
 		checkContext, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
 		defer cancel()
 
-		if err := readiness.PingContext(checkContext); err != nil {
+		if err := connection.PingContext(checkContext); err != nil {
 			logger.WarnContext(c.Request.Context(), "readiness check failed",
 				slog.String("request_id", httpx.RequestID(c)),
 				slog.String("dependency", "mysql"),
@@ -84,6 +88,12 @@ func NewRouter(cfg config.Config, logger *slog.Logger, readiness ReadinessChecke
 	api.GET("/status", func(c *gin.Context) {
 		httpx.Success(c, http.StatusOK, gin.H{"status": "online"})
 	})
+
+	if connection.SQLDB() != nil {
+		identityRepository := identity.NewRepository(connection.SQLDB())
+		identityService := identity.NewService(identityRepository, cfg)
+		identity.NewHandler(identityService).RegisterRoutes(api)
+	}
 
 	router.NoRoute(func(c *gin.Context) {
 		httpx.Error(c, http.StatusNotFound, "ROUTE_NOT_FOUND", "Route tidak ditemukan", nil)
