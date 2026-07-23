@@ -33,8 +33,7 @@ jobs:
         run: go vet ./...
 
       - name: Build application
-        run: go build ./cmd/crm
+        run: go build .
 
       - name: Build container
         run: docker build --tag crm-piposmart-backend:ci .
-

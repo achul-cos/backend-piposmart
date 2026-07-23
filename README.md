@@ -3,20 +3,17 @@
 Backend internal CRM PT Piposmart Digital Indonesia. Fondasi baru memakai Go,
 Gin, GORM, MySQL 8, Goose, dan OpenAPI.
 
-Sprint 1 menyediakan:
+Fondasi saat ini menyediakan:
 
-- entrypoint `cmd/crm`;
+- entrypoint root `main.go`, sehingga command lokal cukup `go run . ...`;
 - konfigurasi tervalidasi dari environment dan `.env`;
 - API dan worker dengan graceful shutdown;
 - structured logging, request ID, panic recovery, serta CORS eksplisit;
 - liveness dan readiness check;
 - migration command berbasis Goose;
+- baseline schema, factory, dan seeder awal;
 - Dockerfile multi-stage dan Docker Compose;
 - pipeline test, vet, build, dan container build.
-
-> Kode CRUD prototipe masih berada di repository untuk referensi sementara,
-> tetapi tidak digunakan entrypoint baru. Model dan migration domain baru akan
-> menggantikannya pada Sprint 2.
 
 ## Prasyarat
 
@@ -83,14 +80,16 @@ EXPORT_DIR=./storage/exports
 Jalankan migration dan API:
 
 ```powershell
-go run ./cmd/crm migrate up
-go run ./cmd/crm api
+go run . migrate up
+go run . seed master
+go run . seed demo --preset=minimal --seed=20260723 --as-of=2026-07-01
+go run . api
 ```
 
 Worker dijalankan pada terminal lain:
 
 ```powershell
-go run ./cmd/crm worker
+go run . worker
 ```
 
 Command yang tersedia:
@@ -102,11 +101,13 @@ crm migrate up
 crm migrate down
 crm migrate status
 crm migrate version
+crm seed master
+crm seed demo --preset=minimal --seed=20260723 --as-of=2026-07-01
 crm version
 crm help
 ```
 
-Seeder dan bootstrap Admin akan ditambahkan pada Sprint 2 dan Sprint 3.
+Bootstrap Admin akan ditambahkan pada Sprint 3.
 
 ## Konfigurasi
 
@@ -127,7 +128,7 @@ Production harus:
 ```powershell
 go test ./...
 go vet ./...
-go build ./cmd/crm
+go build .
 ```
 
 Build container:
@@ -139,13 +140,15 @@ docker build -t crm-piposmart-backend:local .
 ## Struktur Fondasi
 
 ```text
-cmd/crm/                       Entry point API, worker, dan migration
+main.go                        Entry point API, worker, migration, dan seeder
 internal/app/                  Lifecycle executable
 internal/platform/config/      Konfigurasi dan validasi environment
 internal/platform/database/    Koneksi dan pool MySQL
+internal/platform/factory/     Factory data dummy deterministik
 internal/platform/httpserver/  Router, middleware, health, OpenAPI
 internal/platform/httpx/       Response envelope API
 internal/platform/logging/     Structured logging
 internal/platform/migration/   Goose runner
+internal/platform/seeder/      Master dan demo seeder
 migrations/                    SQL migration
 ```

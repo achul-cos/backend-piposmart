@@ -14,7 +14,7 @@ Docker build tetap diwajibkan oleh CI.
 
 ## Deliverable
 
-- [x] Entry point `cmd/crm`.
+- [x] Entry point executable CRM.
 - [x] Config loader `.env` dan environment validation.
 - [x] Structured JSON/text logging.
 - [x] Explicit CORS, request ID, access log, dan panic recovery.
@@ -43,7 +43,7 @@ GET /swagger/index.html
 
 - [x] `go test ./...`
 - [x] `go vet ./...`
-- [x] `go build ./cmd/crm`
+- [x] Build executable CRM
 - [ ] Dockerfile build
 - [x] Compose YAML dan service validation melalui automated test
 

@@ -15,7 +15,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
     -trimpath \
     -ldflags="-s -w -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.buildTime=${BUILD_TIME}" \
     -o /out/crm \
-    ./cmd/crm
+    .
 
 FROM alpine:3.22
 
@@ -39,4 +39,3 @@ HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=3 \
 
 ENTRYPOINT ["/app/crm"]
 CMD ["api"]
-
