@@ -47,7 +47,7 @@ func (s *CustomerService) MenampilkanDataCustomer() ([]models.Customer, error) {
 }
 
 func (s *CustomerService) MengubahDataCustomer(customer *models.Customer) (*models.Customer, error) {
-	customerUpdated, err := s.customerRepository.Update(customer)
+	customerUpdated, err := s.customerRepository.UpdateCustomerWithHistories(customer)
 
 	if err != nil {
 		return nil, err

@@ -12,6 +12,7 @@ import (
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
 
+	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 )
 
@@ -61,6 +62,7 @@ func main() {
 func api() {
 	// Selanjutnya daftarkan route
 	router := gin.Default()
+	router.Use(cors.Default())
 
 	// Daftarkan Route Swagger
 	router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))

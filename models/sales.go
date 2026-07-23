@@ -5,10 +5,10 @@ import "backend_crm_piposmart/responses"
 type Sales struct {
 	BaseModel
 
-	NamaSales     string `json:"nama_sales"`
-	KontakSales   string `json:"kontak_sales"`
-	EmailSales    string `json:"email_sales"`
-	PasswordSales string `json:"password_sales"`
+	NamaSales     string `json:"nama_sales" gorm:"type:varchar(255)"`
+	KontakSales   string `json:"kontak_sales" gorm:"type:varchar(255)"`
+	EmailSales    string `json:"email_sales" gorm:"type:varchar(255)"`
+	PasswordSales string `json:"password_sales" gorm:"type:varchar(255)"`
 	IsSuperAdmin  bool   `json:"is_super_admin" gorm:"default:false"`
 }
 
