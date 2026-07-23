@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"backend_crm_piposmart/internal/customer"
 	"backend_crm_piposmart/internal/identity"
 	"backend_crm_piposmart/internal/platform/config"
 	"backend_crm_piposmart/internal/platform/httpx"
@@ -93,6 +94,12 @@ func NewRouter(cfg config.Config, logger *slog.Logger, connection Connection) *g
 		identityRepository := identity.NewRepository(connection.SQLDB())
 		identityService := identity.NewService(identityRepository, cfg)
 		identity.NewHandler(identityService).RegisterRoutes(api)
+
+		customerRepository := customer.NewRepository(connection.SQLDB())
+		customerService := customer.NewService(customerRepository)
+		customerRoutes := api.Group("")
+		customerRoutes.Use(identity.AuthMiddleware(identityService), identity.RequirePermission("owners.manage"))
+		customer.NewHandler(customerService).RegisterRoutes(customerRoutes)
 	}
 
 	router.NoRoute(func(c *gin.Context) {

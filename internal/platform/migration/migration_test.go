@@ -54,6 +54,7 @@ func TestExpectedSQLMigrationsArePresent(t *testing.T) {
 	required := []string{
 		"20260723000100_baseline_crm_schema.sql",
 		"20260723000200_create_auth_sessions.sql",
+		"20260723000300_owner_outlet_orphan_delete_policy.sql",
 	}
 	for _, item := range required {
 		if !sqlFiles[item] {

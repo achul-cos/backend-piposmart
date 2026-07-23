@@ -1,0 +1,385 @@
+package customer
+
+import (
+	"context"
+	"strings"
+)
+
+type Service struct {
+	repo *Repository
+}
+
+func NewService(repo *Repository) *Service {
+	return &Service{repo: repo}
+}
+
+func (s *Service) ListOwners(ctx context.Context, params ListParams) (OwnerListResponse, error) {
+	params = normalizeListParams(params)
+	if params.Phone != "" {
+		phone, err := NormalizePhone(params.Phone)
+		if err == nil {
+			params.Phone = phone
+		}
+	}
+	owners, total, err := s.repo.ListOwners(ctx, params)
+	if err != nil {
+		return OwnerListResponse{}, err
+	}
+	items := make([]OwnerResponse, 0, len(owners))
+	for _, owner := range owners {
+		items = append(items, NewOwnerResponse(owner))
+	}
+	return OwnerListResponse{
+		Items: items,
+		Pagination: PaginationMeta{
+			Page:  params.Page,
+			Limit: params.Limit,
+			Total: total,
+		},
+	}, nil
+}
+
+func (s *Service) CreateOwner(ctx context.Context, req CreateOwnerRequest) (OwnerResponse, error) {
+	phone, err := NormalizePhone(req.Phone)
+	if err != nil {
+		return OwnerResponse{}, err
+	}
+	owner, err := s.repo.CreateOwner(ctx, req, phone)
+	if err != nil {
+		return OwnerResponse{}, err
+	}
+	return NewOwnerResponse(owner), nil
+}
+
+func (s *Service) BulkCreateOwners(ctx context.Context, req BulkOwnerCreateRequest) (OwnerBulkResponse, error) {
+	if len(req.Items) == 0 {
+		return OwnerBulkResponse{}, ErrEmptyBulk
+	}
+	phones := make([]string, len(req.Items))
+	for index, item := range req.Items {
+		phone, err := NormalizePhone(item.Phone)
+		if err != nil {
+			return OwnerBulkResponse{}, err
+		}
+		phones[index] = phone
+	}
+	owners, err := s.repo.CreateOwners(ctx, req.Items, phones)
+	if err != nil {
+		return OwnerBulkResponse{}, err
+	}
+	return ownerBulkResponse(owners), nil
+}
+
+func (s *Service) GetOwner(ctx context.Context, id int64) (OwnerResponse, error) {
+	owner, err := s.repo.FindOwnerByID(ctx, id)
+	if err != nil {
+		return OwnerResponse{}, err
+	}
+	return NewOwnerResponse(owner), nil
+}
+
+func (s *Service) RestoreOwner(ctx context.Context, id int64) (OwnerResponse, error) {
+	owner, err := s.repo.RestoreOwner(ctx, id)
+	if err != nil {
+		return OwnerResponse{}, err
+	}
+	return NewOwnerResponse(owner), nil
+}
+
+func (s *Service) UpdateOwner(ctx context.Context, id int64, req UpdateOwnerRequest) (OwnerResponse, error) {
+	var phone *string
+	if req.Phone != nil {
+		normalized, err := NormalizePhone(*req.Phone)
+		if err != nil {
+			return OwnerResponse{}, err
+		}
+		phone = &normalized
+	}
+	owner, err := s.repo.UpdateOwner(ctx, id, req, phone)
+	if err != nil {
+		return OwnerResponse{}, err
+	}
+	return NewOwnerResponse(owner), nil
+}
+
+func (s *Service) BulkUpdateOwners(ctx context.Context, req BulkOwnerUpdateRequest) (OwnerBulkResponse, error) {
+	if len(req.Items) == 0 {
+		return OwnerBulkResponse{}, ErrEmptyBulk
+	}
+	updates := make([]OwnerUpdateInput, 0, len(req.Items))
+	for _, item := range req.Items {
+		var phone *string
+		if item.Phone != nil {
+			normalized, err := NormalizePhone(*item.Phone)
+			if err != nil {
+				return OwnerBulkResponse{}, err
+			}
+			phone = &normalized
+		}
+		updates = append(updates, OwnerUpdateInput{
+			ID: item.ID,
+			Request: UpdateOwnerRequest{
+				Code:      item.Code,
+				Name:      item.Name,
+				Phone:     item.Phone,
+				Email:     item.Email,
+				BrandName: item.BrandName,
+				Province:  item.Province,
+				City:      item.City,
+				Address:   item.Address,
+			},
+			NormalizedPhone: phone,
+		})
+	}
+	owners, err := s.repo.UpdateOwners(ctx, updates)
+	if err != nil {
+		return OwnerBulkResponse{}, err
+	}
+	return ownerBulkResponse(owners), nil
+}
+
+func (s *Service) DeleteOwner(ctx context.Context, id int64) error {
+	return s.repo.SoftDeleteOwner(ctx, id)
+}
+
+func (s *Service) ForceDeleteOwner(ctx context.Context, id int64) error {
+	return s.repo.ForceDeleteOwner(ctx, id)
+}
+
+func (s *Service) BulkDeleteOwners(ctx context.Context, ids []int64) (BulkActionResponse, error) {
+	ids, err := normalizeIDs(ids)
+	if err != nil {
+		return BulkActionResponse{}, err
+	}
+	affected, err := s.repo.SoftDeleteOwners(ctx, ids)
+	if err != nil {
+		return BulkActionResponse{}, err
+	}
+	return BulkActionResponse{IDs: ids, Affected: affected}, nil
+}
+
+func (s *Service) BulkForceDeleteOwners(ctx context.Context, ids []int64) (BulkActionResponse, error) {
+	ids, err := normalizeIDs(ids)
+	if err != nil {
+		return BulkActionResponse{}, err
+	}
+	affected, err := s.repo.ForceDeleteOwners(ctx, ids)
+	if err != nil {
+		return BulkActionResponse{}, err
+	}
+	return BulkActionResponse{IDs: ids, Affected: affected}, nil
+}
+
+func (s *Service) ListOutlets(ctx context.Context, ownerID int64, params ListParams) (OutletListResponse, error) {
+	params = normalizeListParams(params)
+	if params.Phone != "" {
+		phone, err := NormalizePhone(params.Phone)
+		if err == nil {
+			params.Phone = phone
+		}
+	}
+	outlets, total, err := s.repo.ListOutlets(ctx, ownerID, params)
+	if err != nil {
+		return OutletListResponse{}, err
+	}
+	items := make([]OutletResponse, 0, len(outlets))
+	for _, outlet := range outlets {
+		items = append(items, NewOutletResponse(outlet))
+	}
+	return OutletListResponse{
+		Items: items,
+		Pagination: PaginationMeta{
+			Page:  params.Page,
+			Limit: params.Limit,
+			Total: total,
+		},
+	}, nil
+}
+
+func (s *Service) CreateOutlet(ctx context.Context, ownerID int64, req CreateOutletRequest) (OutletResponse, error) {
+	phone, err := NormalizePhone(req.Phone)
+	if err != nil {
+		return OutletResponse{}, err
+	}
+	outlet, err := s.repo.CreateOutlet(ctx, ownerID, req, phone)
+	if err != nil {
+		return OutletResponse{}, err
+	}
+	return NewOutletResponse(outlet), nil
+}
+
+func (s *Service) BulkCreateOutlets(ctx context.Context, ownerID int64, req BulkOutletCreateRequest) (OutletBulkResponse, error) {
+	if len(req.Items) == 0 {
+		return OutletBulkResponse{}, ErrEmptyBulk
+	}
+	phones := make([]string, len(req.Items))
+	for index, item := range req.Items {
+		phone, err := NormalizePhone(item.Phone)
+		if err != nil {
+			return OutletBulkResponse{}, err
+		}
+		phones[index] = phone
+	}
+	outlets, err := s.repo.CreateOutlets(ctx, ownerID, req.Items, phones)
+	if err != nil {
+		return OutletBulkResponse{}, err
+	}
+	return outletBulkResponse(outlets), nil
+}
+
+func (s *Service) GetOutlet(ctx context.Context, ownerID, outletID int64) (OutletResponse, error) {
+	outlet, err := s.repo.FindOutletByID(ctx, ownerID, outletID)
+	if err != nil {
+		return OutletResponse{}, err
+	}
+	return NewOutletResponse(outlet), nil
+}
+
+func (s *Service) RestoreOutlet(ctx context.Context, ownerID, outletID int64) (OutletResponse, error) {
+	outlet, err := s.repo.RestoreOutlet(ctx, ownerID, outletID)
+	if err != nil {
+		return OutletResponse{}, err
+	}
+	return NewOutletResponse(outlet), nil
+}
+
+func (s *Service) UpdateOutlet(ctx context.Context, ownerID, outletID int64, req UpdateOutletRequest) (OutletResponse, error) {
+	var phone *string
+	if req.Phone != nil {
+		normalized, err := NormalizePhone(*req.Phone)
+		if err != nil {
+			return OutletResponse{}, err
+		}
+		phone = &normalized
+	}
+	outlet, err := s.repo.UpdateOutlet(ctx, ownerID, outletID, req, phone)
+	if err != nil {
+		return OutletResponse{}, err
+	}
+	return NewOutletResponse(outlet), nil
+}
+
+func (s *Service) BulkUpdateOutlets(ctx context.Context, ownerID int64, req BulkOutletUpdateRequest) (OutletBulkResponse, error) {
+	if len(req.Items) == 0 {
+		return OutletBulkResponse{}, ErrEmptyBulk
+	}
+	updates := make([]OutletUpdateInput, 0, len(req.Items))
+	for _, item := range req.Items {
+		var phone *string
+		if item.Phone != nil {
+			normalized, err := NormalizePhone(*item.Phone)
+			if err != nil {
+				return OutletBulkResponse{}, err
+			}
+			phone = &normalized
+		}
+		updates = append(updates, OutletUpdateInput{
+			ID: item.ID,
+			Request: UpdateOutletRequest{
+				Code:     item.Code,
+				Name:     item.Name,
+				Phone:    item.Phone,
+				Province: item.Province,
+				City:     item.City,
+				Address:  item.Address,
+			},
+			NormalizedPhone: phone,
+		})
+	}
+	outlets, err := s.repo.UpdateOutlets(ctx, ownerID, updates)
+	if err != nil {
+		return OutletBulkResponse{}, err
+	}
+	return outletBulkResponse(outlets), nil
+}
+
+func (s *Service) DeleteOutlet(ctx context.Context, ownerID, outletID int64) error {
+	return s.repo.SoftDeleteOutlet(ctx, ownerID, outletID)
+}
+
+func (s *Service) ForceDeleteOutlet(ctx context.Context, ownerID, outletID int64) error {
+	return s.repo.ForceDeleteOutlet(ctx, ownerID, outletID)
+}
+
+func (s *Service) BulkDeleteOutlets(ctx context.Context, ownerID int64, ids []int64) (BulkActionResponse, error) {
+	ids, err := normalizeIDs(ids)
+	if err != nil {
+		return BulkActionResponse{}, err
+	}
+	affected, err := s.repo.SoftDeleteOutlets(ctx, ownerID, ids)
+	if err != nil {
+		return BulkActionResponse{}, err
+	}
+	return BulkActionResponse{IDs: ids, Affected: affected}, nil
+}
+
+func (s *Service) BulkForceDeleteOutlets(ctx context.Context, ownerID int64, ids []int64) (BulkActionResponse, error) {
+	ids, err := normalizeIDs(ids)
+	if err != nil {
+		return BulkActionResponse{}, err
+	}
+	affected, err := s.repo.ForceDeleteOutlets(ctx, ownerID, ids)
+	if err != nil {
+		return BulkActionResponse{}, err
+	}
+	return BulkActionResponse{IDs: ids, Affected: affected}, nil
+}
+
+func normalizeListParams(params ListParams) ListParams {
+	if params.Page < 1 {
+		params.Page = 1
+	}
+	if params.Limit < 1 {
+		params.Limit = 10
+	}
+	if params.Limit > 100 {
+		params.Limit = 100
+	}
+	params.Query = strings.TrimSpace(params.Query)
+	params.Code = strings.TrimSpace(params.Code)
+	params.Name = strings.TrimSpace(params.Name)
+	params.Phone = strings.TrimSpace(params.Phone)
+	params.BrandName = strings.TrimSpace(params.BrandName)
+	params.Province = strings.TrimSpace(params.Province)
+	params.City = strings.TrimSpace(params.City)
+	params.Sort = strings.TrimSpace(params.Sort)
+	return params
+}
+
+func normalizeIDs(ids []int64) ([]int64, error) {
+	if len(ids) == 0 {
+		return nil, ErrEmptyBulk
+	}
+	seen := make(map[int64]struct{}, len(ids))
+	normalized := make([]int64, 0, len(ids))
+	for _, id := range ids {
+		if id < 1 {
+			return nil, ErrEmptyBulk
+		}
+		if _, exists := seen[id]; exists {
+			continue
+		}
+		seen[id] = struct{}{}
+		normalized = append(normalized, id)
+	}
+	if len(normalized) == 0 {
+		return nil, ErrEmptyBulk
+	}
+	return normalized, nil
+}
+
+func ownerBulkResponse(owners []Owner) OwnerBulkResponse {
+	items := make([]OwnerResponse, 0, len(owners))
+	for _, owner := range owners {
+		items = append(items, NewOwnerResponse(owner))
+	}
+	return OwnerBulkResponse{Items: items, Total: len(items)}
+}
+
+func outletBulkResponse(outlets []Outlet) OutletBulkResponse {
+	items := make([]OutletResponse, 0, len(outlets))
+	for _, outlet := range outlets {
+		items = append(items, NewOutletResponse(outlet))
+	}
+	return OutletBulkResponse{Items: items, Total: len(items)}
+}
