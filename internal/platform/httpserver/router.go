@@ -1,0 +1,96 @@
+package httpserver
+
+import (
+	"context"
+	"log/slog"
+	"net/http"
+	"time"
+
+	"backend_crm_piposmart/internal/platform/config"
+	"backend_crm_piposmart/internal/platform/httpx"
+
+	"github.com/gin-gonic/gin"
+	swaggerFiles "github.com/swaggo/files"
+	ginSwagger "github.com/swaggo/gin-swagger"
+)
+
+type ReadinessChecker interface {
+	PingContext(context.Context) error
+}
+
+func NewRouter(cfg config.Config, logger *slog.Logger, readiness ReadinessChecker) *gin.Engine {
+	if cfg.App.IsProduction() {
+		gin.SetMode(gin.ReleaseMode)
+	} else {
+		gin.SetMode(gin.DebugMode)
+	}
+
+	router := gin.New()
+	router.Use(
+		requestIDMiddleware(),
+		accessLogMiddleware(logger),
+		recoveryMiddleware(logger),
+		corsMiddleware(cfg.CORS),
+	)
+
+	router.GET("/openapi.yaml", serveOpenAPI)
+	router.GET(
+		"/swagger/*any",
+		ginSwagger.WrapHandler(swaggerFiles.Handler, ginSwagger.URL("/openapi.yaml")),
+	)
+
+	router.GET("/health/live", func(c *gin.Context) {
+		httpx.Success(c, http.StatusOK, gin.H{
+			"status":  "alive",
+			"service": cfg.App.Name,
+		})
+	})
+
+	router.GET("/health/ready", func(c *gin.Context) {
+		checkContext, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
+		defer cancel()
+
+		if err := readiness.PingContext(checkContext); err != nil {
+			logger.WarnContext(c.Request.Context(), "readiness check failed",
+				slog.String("request_id", httpx.RequestID(c)),
+				slog.String("dependency", "mysql"),
+				slog.String("error", err.Error()),
+			)
+			httpx.Error(
+				c,
+				http.StatusServiceUnavailable,
+				"SERVICE_NOT_READY",
+				"Service belum siap menerima request",
+				gin.H{"mysql": "unavailable"},
+			)
+			return
+		}
+
+		httpx.Success(c, http.StatusOK, gin.H{
+			"status": "ready",
+			"mysql":  "available",
+		})
+	})
+
+	router.GET("/", func(c *gin.Context) {
+		httpx.Success(c, http.StatusOK, gin.H{
+			"service":     cfg.App.Name,
+			"environment": cfg.App.Environment,
+			"status":      "online",
+		})
+	})
+
+	api := router.Group(cfg.App.BasePath)
+	api.GET("/status", func(c *gin.Context) {
+		httpx.Success(c, http.StatusOK, gin.H{"status": "online"})
+	})
+
+	router.NoRoute(func(c *gin.Context) {
+		httpx.Error(c, http.StatusNotFound, "ROUTE_NOT_FOUND", "Route tidak ditemukan", nil)
+	})
+	router.NoMethod(func(c *gin.Context) {
+		httpx.Error(c, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "HTTP method tidak didukung", nil)
+	})
+
+	return router
+}

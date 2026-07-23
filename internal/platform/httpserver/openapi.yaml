@@ -1,0 +1,96 @@
+openapi: 3.0.3
+info:
+  title: Backend CRM Piposmart
+  version: 0.2.0-sprint-2
+  description: Fondasi API CRM Piposmart dengan baseline migration dan seeder Sprint 2.
+servers:
+  - url: http://localhost:8080
+paths:
+  /:
+    get:
+      summary: Informasi service
+      operationId: getServiceInfo
+      responses:
+        "200":
+          description: Service berjalan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /health/live:
+    get:
+      summary: Liveness check
+      operationId: getLiveness
+      responses:
+        "200":
+          description: Process API hidup
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /health/ready:
+    get:
+      summary: Readiness check
+      operationId: getReadiness
+      responses:
+        "200":
+          description: API dan MySQL siap
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+        "503":
+          description: Dependency belum siap
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+  /api/v1/status:
+    get:
+      summary: Status API versi 1
+      operationId: getAPIStatus
+      responses:
+        "200":
+          description: API versi 1 berjalan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+components:
+  schemas:
+    SuccessEnvelope:
+      type: object
+      required:
+        - data
+        - meta
+      properties:
+        data:
+          type: object
+          additionalProperties: true
+        meta:
+          type: object
+          required:
+            - request_id
+          properties:
+            request_id:
+              type: string
+    ErrorEnvelope:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: object
+          required:
+            - code
+            - message
+            - request_id
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            details:
+              nullable: true
+            request_id:
+              type: string

@@ -1,0 +1,13 @@
+.git
+**/.git
+.github
+.env
+.env.*
+!.env.example
+*.exe
+bin
+.cache
+tmp
+uploads
+exports
+coverage.out

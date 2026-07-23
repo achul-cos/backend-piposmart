@@ -1,147 +1,151 @@
 # Backend CRM Piposmart
 
-Backend API untuk aplikasi frontend CRM Piposmart, dibangun menggunakan [Go](https://go.dev/) dengan framework [Gin](https://gin-gonic.com/), ORM [GORM](https://gorm.io/) (MySQL driver), migration database menggunakan [Goose](https://github.com/pressly/goose), dan dokumentasi API otomatis menggunakan [Swagger](https://github.com/swaggo/swag).
+Backend internal CRM PT Piposmart Digital Indonesia. Fondasi baru memakai Go,
+Gin, GORM, MySQL 8, Goose, dan OpenAPI.
 
-## Tech Stack
+Sprint 1 menyediakan:
 
-- **Language:** Go 1.26.4
-- **Web Framework:** [Gin](https://github.com/gin-gonic/gin)
-- **ORM:** [GORM](https://gorm.io/) + MySQL Driver
-- **Database Migration:** [Goose](https://github.com/pressly/goose)
-- **API Documentation:** [Swaggo (gin-swagger)](https://github.com/swaggo/gin-swagger)
-- **Fake Data Generator:** [gofakeit](https://github.com/brianvoe/gofakeit)
+- entrypoint `cmd/crm`;
+- konfigurasi tervalidasi dari environment dan `.env`;
+- API dan worker dengan graceful shutdown;
+- structured logging, request ID, panic recovery, serta CORS eksplisit;
+- liveness dan readiness check;
+- migration command berbasis Goose;
+- Dockerfile multi-stage dan Docker Compose;
+- pipeline test, vet, build, dan container build.
 
-## Struktur Folder
-
-```
-.
-├── cmd/            # Command tambahan (mis. db:seed)
-├── controllers/     # HTTP handler, tempat menerima request & mengembalikan response
-├── database/        # Koneksi database (GORM + MySQL)
-├── docs/             # File hasil generate Swagger (docs.go, swagger.json, swagger.yaml)
-├── migrations/       # File migration Goose (SQL) + panduan penggunaannya
-├── models/           # Struct model/entity GORM
-├── repositories/      # Layer akses data ke database
-├── requests/          # Struct untuk validasi & binding request body
-├── responses/         # Struct untuk format response API
-├── routes/            # Pendaftaran route/endpoint API
-├── seeders/           # Seeder untuk mengisi data dummy
-├── go.mod / go.sum
-└── main.go            # Entry point aplikasi
-```
-
-Alur request mengikuti pola berlapis:
-**Route → Controller → Service → Repository → Database (Model)**, dengan `requests` sebagai validasi input dan `responses` sebagai format output.
+> Kode CRUD prototipe masih berada di repository untuk referensi sementara,
+> tetapi tidak digunakan entrypoint baru. Model dan migration domain baru akan
+> menggantikannya pada Sprint 2.
 
 ## Prasyarat
 
-Sebelum menjalankan project, pastikan sudah terinstall:
+- Go sesuai versi pada `go.mod`;
+- MySQL 8 untuk menjalankan tanpa Docker; atau
+- Docker Engine dan Docker Compose v2 untuk environment container.
 
-- [Go](https://go.dev/dl/) versi 1.26.4 atau lebih baru
-- [MySQL Server](https://dev.mysql.com/downloads/) (lokal atau remote)
-- [Goose CLI](https://github.com/pressly/goose#install) untuk menjalankan migration
+## Menjalankan dengan Docker
 
-  ```bash
-  go install github.com/pressly/goose/v3/cmd/goose@latest
-  ```
+Salin konfigurasi contoh:
 
-## Instalasi & Menjalankan Project
-
-### 1. Clone repository & install dependencies
-
-```bash
-git clone <url-repository-ini>
-cd backend_crm_piposmart
-go mod tidy
+```powershell
+Copy-Item .env.example .env
 ```
 
-### 2. Konfigurasi Database
+Ganti minimal `DB_PASSWORD` dan `MYSQL_ROOT_PASSWORD` untuk kebutuhan lokal.
+Kemudian:
 
-Buat database MySQL bernama `crm_piposmart`, lalu sesuaikan koneksi database pada `database/mysql.go` jika diperlukan (default menggunakan user `root` tanpa password, host `localhost:3306`):
-
-```go
-dsn := "root:root@tcp(localhost:3306)/crm_piposmart?charset=utf8mb4&parseTime=True&loc=Local"
+```powershell
+docker compose up --build
 ```
 
-### 3. Menjalankan Migration
+Service yang dijalankan:
 
-Migration menggunakan Goose. Jalankan dari dalam folder `migrations`:
+- `mysql`: database MySQL 8;
+- `migrate`: menjalankan Goose sekali sebelum API;
+- `api`: HTTP API di `http://localhost:8080`;
+- `worker`: fondasi background worker.
 
-```bash
-cd migrations
-goose mysql "root:root@tcp(localhost:3306)/crm_piposmart?parseTime=true" up
+Endpoint demo:
+
+```text
+GET http://localhost:8080/
+GET http://localhost:8080/health/live
+GET http://localhost:8080/health/ready
+GET http://localhost:8080/api/v1/status
+GET http://localhost:8080/swagger/index.html
 ```
 
-> Panduan lengkap seputar migration (up, down, reset, membuat migration baru, contoh query SQL, dsb) tersedia di [`migrations/README.md`](./migrations/README.md).
+Menghentikan environment:
 
-### 4. Menjalankan Server API
-
-```bash
-go run main.go api
+```powershell
+docker compose down
 ```
 
-Server akan berjalan di `http://localhost:8080`.
+Data MySQL berada pada named volume. Gunakan `docker compose down --volumes`
+hanya ketika memang ingin menghapus seluruh data development.
 
-### 5. Menjalankan Seeder (opsional)
+## Menjalankan secara Lokal
 
-Untuk mengisi data dummy ke database:
+Salin `.env.example` menjadi `.env`, kemudian ubah:
 
-```bash
-# Seed semua data (sales + customer)
-go run main.go seed
-
-# Seed sales saja
-go run main.go seed sales
-
-# Seed customer saja (100 data)
-go run main.go seed customer
+```dotenv
+DB_HOST=127.0.0.1
+DB_PORT=3306
+DB_NAME=crm_piposmart
+DB_USER=crm_user
+DB_PASSWORD=your-local-password
+MIGRATION_DIR=./migrations
+UPLOAD_DIR=./storage/uploads
+EXPORT_DIR=./storage/exports
 ```
 
-## Dokumentasi API (Swagger)
+Jalankan migration dan API:
 
-Setelah server dijalankan, dokumentasi API dapat diakses melalui browser di:
-
-```
-http://localhost:8080/swagger/index.html
-```
-
-Jika terdapat perubahan pada anotasi Swagger di controller, generate ulang dokumentasi dengan [swag CLI](https://github.com/swaggo/swag):
-
-```bash
-go install github.com/swaggo/swag/cmd/swag@latest
-swag init
+```powershell
+go run ./cmd/crm migrate up
+go run ./cmd/crm api
 ```
 
-## Daftar Endpoint
+Worker dijalankan pada terminal lain:
 
-### Customer
+```powershell
+go run ./cmd/crm worker
+```
 
-| Method | Endpoint             | Deskripsi                              |
-|--------|-----------------------|------------------------------------------|
-| GET    | `/customer`            | Menampilkan data customer                |
-| POST   | `/customer`            | Membuat data customer baru                |
-| PATCH  | `/customer`            | Mengubah data customer                    |
-| DELETE | `/customer`            | Menghapus data customer (soft delete)     |
-| POST   | `/customer/restore`    | Mengembalikan data customer yang terhapus |
-| DELETE | `/customer/force`      | Menghapus data customer secara permanen   |
-| GET    | `/customer/all`        | Menampilkan seluruh data customer         |
-| GET    | `/customer/deleted`    | Menampilkan data customer yang terhapus   |
+Command yang tersedia:
 
-### Sales
+```text
+crm api
+crm worker
+crm migrate up
+crm migrate down
+crm migrate status
+crm migrate version
+crm version
+crm help
+```
 
-| Method | Endpoint            | Deskripsi                              |
-|--------|----------------------|------------------------------------------|
-| GET    | `/sales`              | Menampilkan data sales                    |
-| POST   | `/sales`              | Membuat data sales baru                    |
-| PATCH  | `/sales`              | Mengubah data sales                        |
-| DELETE | `/sales`              | Menghapus data sales (soft delete)         |
-| POST   | `/sales/restore`      | Mengembalikan data sales yang terhapus     |
-| DELETE | `/sales/force`        | Menghapus data sales secara permanen       |
-| GET    | `/sales/deleted`      | Menampilkan data sales yang terhapus       |
-| GET    | `/sales/all`          | Menampilkan seluruh data sales             |
+Seeder dan bootstrap Admin akan ditambahkan pada Sprint 2 dan Sprint 3.
 
-Detail lengkap request/response body untuk setiap endpoint dapat dilihat di halaman Swagger.
+## Konfigurasi
 
-## Author
+`.env.example` adalah kontrak konfigurasi. File `.env` tidak boleh dikomit.
+Environment yang diberikan oleh OS atau container selalu menang terhadap nilai
+dari `.env`.
 
-Achul
+Production harus:
+
+- menggunakan secret manager untuk database dan key autentikasi;
+- memakai origin CORS eksplisit;
+- memakai database user non-root;
+- menjalankan migration sebagai release job, bukan saat setiap replica API
+  dimulai.
+
+## Verifikasi
+
+```powershell
+go test ./...
+go vet ./...
+go build ./cmd/crm
+```
+
+Build container:
+
+```powershell
+docker build -t crm-piposmart-backend:local .
+```
+
+## Struktur Fondasi
+
+```text
+cmd/crm/                       Entry point API, worker, dan migration
+internal/app/                  Lifecycle executable
+internal/platform/config/      Konfigurasi dan validasi environment
+internal/platform/database/    Koneksi dan pool MySQL
+internal/platform/httpserver/  Router, middleware, health, OpenAPI
+internal/platform/httpx/       Response envelope API
+internal/platform/logging/     Structured logging
+internal/platform/migration/   Goose runner
+migrations/                    SQL migration
+```

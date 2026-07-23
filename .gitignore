@@ -1,0 +1,12 @@
+.env
+.env.local
+.env.*.local
+!.env.example
+
+bin/
+.cache/
+tmp/
+uploads/
+exports/
+coverage.out
+*.exe
