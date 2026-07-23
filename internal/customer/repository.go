@@ -22,11 +22,24 @@ func NewRepository(db *sql.DB) *Repository {
 	return &Repository{db: db}
 }
 
-func (r *Repository) CreateOwner(ctx context.Context, req CreateOwnerRequest, normalizedPhone string) (Owner, error) {
-	return r.createOwner(ctx, r.db, req, normalizedPhone)
+func (r *Repository) CreateOwner(ctx context.Context, actor Actor, req CreateOwnerRequest, normalizedPhone string) (Owner, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Owner{}, err
+	}
+	defer tx.Rollback()
+
+	owner, err := r.createOwner(ctx, tx, actor, req, normalizedPhone)
+	if err != nil {
+		return Owner{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Owner{}, err
+	}
+	return owner, nil
 }
 
-func (r *Repository) CreateOwners(ctx context.Context, requests []CreateOwnerRequest, normalizedPhones []string) ([]Owner, error) {
+func (r *Repository) CreateOwners(ctx context.Context, actor Actor, requests []CreateOwnerRequest, normalizedPhones []string) ([]Owner, error) {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
@@ -35,7 +48,7 @@ func (r *Repository) CreateOwners(ctx context.Context, requests []CreateOwnerReq
 
 	owners := make([]Owner, 0, len(requests))
 	for index, req := range requests {
-		owner, err := r.createOwner(ctx, tx, req, normalizedPhones[index])
+		owner, err := r.createOwner(ctx, tx, actor, req, normalizedPhones[index])
 		if err != nil {
 			return nil, err
 		}
@@ -47,7 +60,7 @@ func (r *Repository) CreateOwners(ctx context.Context, requests []CreateOwnerReq
 	return owners, nil
 }
 
-func (r *Repository) createOwner(ctx context.Context, q queryExecutor, req CreateOwnerRequest, normalizedPhone string) (Owner, error) {
+func (r *Repository) createOwner(ctx context.Context, q queryExecutor, actor Actor, req CreateOwnerRequest, normalizedPhone string) (Owner, error) {
 	result, err := q.ExecContext(ctx, `
 		INSERT INTO owners (code, name, phone, email, brand_name, province, city, address, status)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE')`,
@@ -67,10 +80,20 @@ func (r *Repository) createOwner(ctx context.Context, q queryExecutor, req Creat
 	if err != nil {
 		return Owner{}, err
 	}
+	if err := r.createLeadForOwner(ctx, q, id, actor); err != nil {
+		return Owner{}, err
+	}
 	return r.findOwnerByID(ctx, q, id, false)
 }
 
-func (r *Repository) FindOwnerByID(ctx context.Context, id int64) (Owner, error) {
+func (r *Repository) FindOwnerByID(ctx context.Context, actor Actor, id int64) (Owner, error) {
+	if actor.RoleCode == RoleAdmin {
+		return r.findOwnerByID(ctx, r.db, id, false)
+	}
+	return r.findOwnerByIDVisible(ctx, r.db, actor, id, false)
+}
+
+func (r *Repository) findOwnerByIDRaw(ctx context.Context, id int64) (Owner, error) {
 	return r.findOwnerByID(ctx, r.db, id, false)
 }
 
@@ -93,8 +116,32 @@ func (r *Repository) findOwnerByID(ctx context.Context, q queryExecutor, id int6
 	return owner, err
 }
 
-func (r *Repository) ListOwners(ctx context.Context, params ListParams) ([]Owner, int64, error) {
-	where, args := ownerWhere(params)
+func (r *Repository) findOwnerByIDVisible(ctx context.Context, q queryExecutor, actor Actor, id int64, includeDeleted bool) (Owner, error) {
+	where := []string{"o.id = ?"}
+	args := []any{id}
+	if !includeDeleted {
+		where = append(where, "o.deleted_at IS NULL")
+	}
+	visibility, visibilityArgs := ownerVisibilityWhere(actor)
+	where = append(where, visibility)
+	args = append(args, visibilityArgs...)
+
+	owner, err := scanOwner(q.QueryRowContext(ctx, `
+		SELECT
+			o.id, o.code, o.name, o.phone, o.email, o.brand_name, o.province, o.city,
+			o.address, o.status, COUNT(ot.id) AS outlet_count, o.created_at, o.updated_at
+		FROM owners o
+		LEFT JOIN outlets ot ON ot.owner_id = o.id AND ot.deleted_at IS NULL
+		WHERE `+strings.Join(where, " AND ")+`
+		GROUP BY o.id`, args...))
+	if err == sql.ErrNoRows {
+		return Owner{}, ErrNotFound
+	}
+	return owner, err
+}
+
+func (r *Repository) ListOwners(ctx context.Context, actor Actor, params ListParams) ([]Owner, int64, error) {
+	where, args := ownerWhere(actor, params)
 	countQuery := "SELECT COUNT(*) FROM owners o WHERE " + where
 	var total int64
 	if err := r.db.QueryRowContext(ctx, countQuery, args...).Scan(&total); err != nil {
@@ -228,7 +275,7 @@ func (r *Repository) RestoreOwner(ctx context.Context, id int64) (Owner, error) 
 	if err != nil {
 		return Owner{}, err
 	}
-	return r.FindOwnerByID(ctx, id)
+	return r.findOwnerByIDRaw(ctx, id)
 }
 
 func (r *Repository) SoftDeleteOwner(ctx context.Context, id int64) error {
@@ -271,7 +318,7 @@ func (r *Repository) ForceDeleteOwners(ctx context.Context, ids []int64) (int64,
 }
 
 func (r *Repository) CreateOutlet(ctx context.Context, ownerID int64, req CreateOutletRequest, normalizedPhone string) (Outlet, error) {
-	if _, err := r.FindOwnerByID(ctx, ownerID); err != nil {
+	if _, err := r.findOwnerByIDRaw(ctx, ownerID); err != nil {
 		return Outlet{}, err
 	}
 	return r.createOutlet(ctx, r.db, ownerID, req, normalizedPhone)
@@ -324,7 +371,10 @@ func (r *Repository) createOutlet(ctx context.Context, q queryExecutor, ownerID 
 	return r.findOutletByID(ctx, q, ownerID, id, false)
 }
 
-func (r *Repository) FindOutletByID(ctx context.Context, ownerID, outletID int64) (Outlet, error) {
+func (r *Repository) FindOutletByID(ctx context.Context, actor Actor, ownerID, outletID int64) (Outlet, error) {
+	if _, err := r.FindOwnerByID(ctx, actor, ownerID); err != nil {
+		return Outlet{}, err
+	}
 	return r.findOutletByID(ctx, r.db, ownerID, outletID, false)
 }
 
@@ -343,8 +393,8 @@ func (r *Repository) findOutletByID(ctx context.Context, q queryExecutor, ownerI
 	return outlet, err
 }
 
-func (r *Repository) ListOutlets(ctx context.Context, ownerID int64, params ListParams) ([]Outlet, int64, error) {
-	if _, err := r.FindOwnerByID(ctx, ownerID); err != nil {
+func (r *Repository) ListOutlets(ctx context.Context, actor Actor, ownerID int64, params ListParams) ([]Outlet, int64, error) {
+	if _, err := r.FindOwnerByID(ctx, actor, ownerID); err != nil {
 		return nil, 0, err
 	}
 	where, args := outletWhere(ownerID, params)
@@ -467,7 +517,7 @@ func (r *Repository) RestoreOutlet(ctx context.Context, ownerID, outletID int64)
 	if err != nil {
 		return Outlet{}, err
 	}
-	return r.FindOutletByID(ctx, ownerID, outletID)
+	return r.findOutletByID(ctx, r.db, ownerID, outletID, false)
 }
 
 func (r *Repository) SoftDeleteOutlet(ctx context.Context, ownerID, outletID int64) error {
@@ -512,6 +562,39 @@ func (r *Repository) ForceDeleteOutlets(ctx context.Context, ownerID int64, ids 
 	return result.RowsAffected()
 }
 
+func (r *Repository) createLeadForOwner(ctx context.Context, q queryExecutor, ownerID int64, actor Actor) error {
+	now := time.Now().UTC()
+	result, err := q.ExecContext(ctx, `
+		INSERT INTO customer_leads
+			(code, owner_id, source_type, source_reference, stage, status, current_score, current_owner_user_id, current_owner_role)
+		VALUES (?, ?, 'MANUAL', ?, 'NEW', 'OPEN', 1, ?, ?)`,
+		fmt.Sprintf("LEAD-%06d", ownerID),
+		ownerID,
+		fmt.Sprintf("owner:%d", ownerID),
+		actor.ID,
+		actor.RoleCode,
+	)
+	if err != nil {
+		return mapDuplicateError(err)
+	}
+	leadID, err := result.LastInsertId()
+	if err != nil {
+		return err
+	}
+	_, err = q.ExecContext(ctx, `
+		INSERT INTO lead_assignments
+			(lead_id, owner_id, to_user_id, to_role, assigned_by_user_id, action, score, active, started_at)
+		VALUES (?, ?, ?, ?, ?, 'CREATED_BY_ADMIN', 1, TRUE, ?)`,
+		leadID,
+		ownerID,
+		actor.ID,
+		actor.RoleCode,
+		actor.ID,
+		now,
+	)
+	return err
+}
+
 type scanner interface {
 	Scan(dest ...any) error
 }
@@ -554,9 +637,12 @@ func scanOutlet(row scanner) (Outlet, error) {
 	return outlet, err
 }
 
-func ownerWhere(params ListParams) (string, []any) {
+func ownerWhere(actor Actor, params ListParams) (string, []any) {
 	where := []string{"o.deleted_at IS NULL"}
 	var args []any
+	visibility, visibilityArgs := ownerVisibilityWhere(actor)
+	where = append(where, visibility)
+	args = append(args, visibilityArgs...)
 	if params.Query != "" {
 		pattern := like(params.Query)
 		where = append(where, "(o.code LIKE ? OR o.name LIKE ? OR o.phone LIKE ? OR o.brand_name LIKE ? OR o.city LIKE ? OR o.province LIKE ?)")
@@ -587,6 +673,32 @@ func ownerWhere(params ListParams) (string, []any) {
 		args = append(args, like(params.City))
 	}
 	return strings.Join(where, " AND "), args
+}
+
+func ownerVisibilityWhere(actor Actor) (string, []any) {
+	switch actor.RoleCode {
+	case RoleAdmin:
+		return "1 = 1", nil
+	case RoleSupervisor:
+		return `EXISTS (
+			SELECT 1
+			FROM customer_leads cl
+			WHERE cl.owner_id = o.id
+				AND cl.deleted_at IS NULL
+				AND (cl.current_owner_user_id = ? OR cl.supervisor_id = ?)
+		)`, []any{actor.ID, actor.ID}
+	case RoleSales:
+		return `EXISTS (
+			SELECT 1
+			FROM customer_leads cl
+			WHERE cl.owner_id = o.id
+				AND cl.deleted_at IS NULL
+				AND cl.current_owner_role = 'SALES'
+				AND cl.current_owner_user_id = ?
+		)`, []any{actor.ID}
+	default:
+		return "1 = 0", nil
+	}
 }
 
 func outletWhere(ownerID int64, params ListParams) (string, []any) {

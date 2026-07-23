@@ -208,27 +208,56 @@ func (f *Factory) CreateLead(ctx context.Context, tx *sql.Tx, ownerID, outletID 
 	if err != nil {
 		return 0, err
 	}
+	supervisorID, err := lookupFirstUserIDByRole(ctx, tx, "SUPERVISOR")
+	if err != nil {
+		return 0, err
+	}
+	score := scoreForStage(lead.Stage)
 
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO customer_leads
-			(code, owner_id, outlet_id, active_sales_id, source_type, source_reference, stage, status, next_follow_up_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+			(code, owner_id, outlet_id, active_sales_id, current_owner_user_id, current_owner_role, supervisor_id, source_type, source_reference, stage, status, current_score, next_follow_up_at)
+		VALUES (?, ?, ?, ?, ?, 'SALES', ?, ?, ?, ?, ?, ?, ?)
 		ON DUPLICATE KEY UPDATE
 			owner_id = VALUES(owner_id),
 			outlet_id = VALUES(outlet_id),
 			active_sales_id = VALUES(active_sales_id),
+			current_owner_user_id = VALUES(current_owner_user_id),
+			current_owner_role = VALUES(current_owner_role),
+			supervisor_id = VALUES(supervisor_id),
 			source_type = VALUES(source_type),
 			source_reference = VALUES(source_reference),
 			stage = VALUES(stage),
 			status = VALUES(status),
+			current_score = VALUES(current_score),
 			next_follow_up_at = VALUES(next_follow_up_at),
 			deleted_at = NULL`,
-		lead.Code, ownerID, outletID, salesID, lead.SourceType, lead.SourceReference, lead.Stage, lead.Status, lead.NextFollowUpAt,
+		lead.Code, ownerID, outletID, salesID, salesID, supervisorID, lead.SourceType, lead.SourceReference, lead.Stage, lead.Status, score, lead.NextFollowUpAt,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("seed lead %s: %w", lead.Code, err)
 	}
-	return lookupID(ctx, tx, "customer_leads", "code", lead.Code)
+	leadID, err := lookupID(ctx, tx, "customer_leads", "code", lead.Code)
+	if err != nil {
+		return 0, err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE lead_assignments
+		SET active = FALSE, ended_at = ?
+		WHERE lead_id = ? AND active = TRUE`,
+		f.asOf, leadID,
+	); err != nil {
+		return 0, fmt.Errorf("close active lead assignment %s: %w", lead.Code, err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO lead_assignments
+			(lead_id, owner_id, to_user_id, to_role, supervisor_id, assigned_by_user_id, action, score, active, started_at)
+		VALUES (?, ?, ?, 'SALES', ?, ?, 'DEMO_ASSIGNED_TO_SALES', ?, TRUE, ?)`,
+		leadID, ownerID, salesID, supervisorID, supervisorID, score, f.asOf,
+	); err != nil {
+		return 0, fmt.Errorf("seed lead assignment %s: %w", lead.Code, err)
+	}
+	return leadID, nil
 }
 
 func lookupID(ctx context.Context, tx *sql.Tx, table, column, value string) (int64, error) {
@@ -238,6 +267,34 @@ func lookupID(ctx context.Context, tx *sql.Tx, table, column, value string) (int
 		return 0, fmt.Errorf("lookup %s.%s=%s: %w", table, column, value, err)
 	}
 	return id, nil
+}
+
+func lookupFirstUserIDByRole(ctx context.Context, tx *sql.Tx, roleCode string) (int64, error) {
+	var id int64
+	err := tx.QueryRowContext(ctx, `
+		SELECT u.id
+		FROM users u
+		JOIN roles r ON r.id = u.role_id
+		WHERE r.code = ? AND u.deleted_at IS NULL
+		ORDER BY u.id
+		LIMIT 1`, roleCode).Scan(&id)
+	if err != nil {
+		return 0, fmt.Errorf("lookup first user role=%s: %w", roleCode, err)
+	}
+	return id, nil
+}
+
+func scoreForStage(stage string) int {
+	switch stage {
+	case "INVALID":
+		return 0
+	case "POTENTIAL":
+		return 2
+	case "CLOSING":
+		return 3
+	default:
+		return 1
+	}
 }
 
 func deterministicPasswordHash(email string) string {

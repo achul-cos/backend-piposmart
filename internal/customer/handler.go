@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"backend_crm_piposmart/internal/identity"
 	"backend_crm_piposmart/internal/platform/httpx"
 
 	"github.com/gin-gonic/gin"
@@ -46,7 +47,7 @@ func (h *Handler) RegisterRoutes(api *gin.RouterGroup) {
 }
 
 func (h *Handler) listOwners(c *gin.Context) {
-	response, err := h.service.ListOwners(c.Request.Context(), listParams(c))
+	response, err := h.service.ListOwners(c.Request.Context(), currentActor(c), listParams(c))
 	if err != nil {
 		writeError(c, err)
 		return
@@ -59,7 +60,7 @@ func (h *Handler) createOwner(c *gin.Context) {
 	if !bindJSON(c, &req) {
 		return
 	}
-	response, err := h.service.CreateOwner(c.Request.Context(), req)
+	response, err := h.service.CreateOwner(c.Request.Context(), currentActor(c), req)
 	if err != nil {
 		writeError(c, err)
 		return
@@ -72,7 +73,7 @@ func (h *Handler) bulkCreateOwners(c *gin.Context) {
 	if !bindJSON(c, &req) {
 		return
 	}
-	response, err := h.service.BulkCreateOwners(c.Request.Context(), req)
+	response, err := h.service.BulkCreateOwners(c.Request.Context(), currentActor(c), req)
 	if err != nil {
 		writeError(c, err)
 		return
@@ -85,7 +86,7 @@ func (h *Handler) getOwner(c *gin.Context) {
 	if !ok {
 		return
 	}
-	response, err := h.service.GetOwner(c.Request.Context(), ownerID)
+	response, err := h.service.GetOwner(c.Request.Context(), currentActor(c), ownerID)
 	if err != nil {
 		writeError(c, err)
 		return
@@ -98,7 +99,7 @@ func (h *Handler) restoreOwner(c *gin.Context) {
 	if !ok {
 		return
 	}
-	response, err := h.service.RestoreOwner(c.Request.Context(), ownerID)
+	response, err := h.service.RestoreOwner(c.Request.Context(), currentActor(c), ownerID)
 	if err != nil {
 		writeError(c, err)
 		return
@@ -115,7 +116,7 @@ func (h *Handler) updateOwner(c *gin.Context) {
 	if !bindJSON(c, &req) {
 		return
 	}
-	response, err := h.service.UpdateOwner(c.Request.Context(), ownerID, req)
+	response, err := h.service.UpdateOwner(c.Request.Context(), currentActor(c), ownerID, req)
 	if err != nil {
 		writeError(c, err)
 		return
@@ -128,7 +129,7 @@ func (h *Handler) bulkUpdateOwners(c *gin.Context) {
 	if !bindJSON(c, &req) {
 		return
 	}
-	response, err := h.service.BulkUpdateOwners(c.Request.Context(), req)
+	response, err := h.service.BulkUpdateOwners(c.Request.Context(), currentActor(c), req)
 	if err != nil {
 		writeError(c, err)
 		return
@@ -141,7 +142,7 @@ func (h *Handler) deleteOwner(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if err := h.service.DeleteOwner(c.Request.Context(), ownerID); err != nil {
+	if err := h.service.DeleteOwner(c.Request.Context(), currentActor(c), ownerID); err != nil {
 		writeError(c, err)
 		return
 	}
@@ -153,7 +154,7 @@ func (h *Handler) forceDeleteOwner(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if err := h.service.ForceDeleteOwner(c.Request.Context(), ownerID); err != nil {
+	if err := h.service.ForceDeleteOwner(c.Request.Context(), currentActor(c), ownerID); err != nil {
 		writeError(c, err)
 		return
 	}
@@ -165,7 +166,7 @@ func (h *Handler) bulkDeleteOwners(c *gin.Context) {
 	if !bindJSON(c, &req) {
 		return
 	}
-	response, err := h.service.BulkDeleteOwners(c.Request.Context(), req.IDs)
+	response, err := h.service.BulkDeleteOwners(c.Request.Context(), currentActor(c), req.IDs)
 	if err != nil {
 		writeError(c, err)
 		return
@@ -178,7 +179,7 @@ func (h *Handler) bulkForceDeleteOwners(c *gin.Context) {
 	if !bindJSON(c, &req) {
 		return
 	}
-	response, err := h.service.BulkForceDeleteOwners(c.Request.Context(), req.IDs)
+	response, err := h.service.BulkForceDeleteOwners(c.Request.Context(), currentActor(c), req.IDs)
 	if err != nil {
 		writeError(c, err)
 		return
@@ -191,7 +192,7 @@ func (h *Handler) listOutlets(c *gin.Context) {
 	if !ok {
 		return
 	}
-	response, err := h.service.ListOutlets(c.Request.Context(), ownerID, listParams(c))
+	response, err := h.service.ListOutlets(c.Request.Context(), currentActor(c), ownerID, listParams(c))
 	if err != nil {
 		writeError(c, err)
 		return
@@ -208,7 +209,7 @@ func (h *Handler) createOutlet(c *gin.Context) {
 	if !bindJSON(c, &req) {
 		return
 	}
-	response, err := h.service.CreateOutlet(c.Request.Context(), ownerID, req)
+	response, err := h.service.CreateOutlet(c.Request.Context(), currentActor(c), ownerID, req)
 	if err != nil {
 		writeError(c, err)
 		return
@@ -225,7 +226,7 @@ func (h *Handler) bulkCreateOutlets(c *gin.Context) {
 	if !bindJSON(c, &req) {
 		return
 	}
-	response, err := h.service.BulkCreateOutlets(c.Request.Context(), ownerID, req)
+	response, err := h.service.BulkCreateOutlets(c.Request.Context(), currentActor(c), ownerID, req)
 	if err != nil {
 		writeError(c, err)
 		return
@@ -238,7 +239,7 @@ func (h *Handler) getOutlet(c *gin.Context) {
 	if !ok {
 		return
 	}
-	response, err := h.service.GetOutlet(c.Request.Context(), ownerID, outletID)
+	response, err := h.service.GetOutlet(c.Request.Context(), currentActor(c), ownerID, outletID)
 	if err != nil {
 		writeError(c, err)
 		return
@@ -251,7 +252,7 @@ func (h *Handler) restoreOutlet(c *gin.Context) {
 	if !ok {
 		return
 	}
-	response, err := h.service.RestoreOutlet(c.Request.Context(), ownerID, outletID)
+	response, err := h.service.RestoreOutlet(c.Request.Context(), currentActor(c), ownerID, outletID)
 	if err != nil {
 		writeError(c, err)
 		return
@@ -268,7 +269,7 @@ func (h *Handler) updateOutlet(c *gin.Context) {
 	if !bindJSON(c, &req) {
 		return
 	}
-	response, err := h.service.UpdateOutlet(c.Request.Context(), ownerID, outletID, req)
+	response, err := h.service.UpdateOutlet(c.Request.Context(), currentActor(c), ownerID, outletID, req)
 	if err != nil {
 		writeError(c, err)
 		return
@@ -285,7 +286,7 @@ func (h *Handler) bulkUpdateOutlets(c *gin.Context) {
 	if !bindJSON(c, &req) {
 		return
 	}
-	response, err := h.service.BulkUpdateOutlets(c.Request.Context(), ownerID, req)
+	response, err := h.service.BulkUpdateOutlets(c.Request.Context(), currentActor(c), ownerID, req)
 	if err != nil {
 		writeError(c, err)
 		return
@@ -298,7 +299,7 @@ func (h *Handler) deleteOutlet(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if err := h.service.DeleteOutlet(c.Request.Context(), ownerID, outletID); err != nil {
+	if err := h.service.DeleteOutlet(c.Request.Context(), currentActor(c), ownerID, outletID); err != nil {
 		writeError(c, err)
 		return
 	}
@@ -310,7 +311,7 @@ func (h *Handler) forceDeleteOutlet(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if err := h.service.ForceDeleteOutlet(c.Request.Context(), ownerID, outletID); err != nil {
+	if err := h.service.ForceDeleteOutlet(c.Request.Context(), currentActor(c), ownerID, outletID); err != nil {
 		writeError(c, err)
 		return
 	}
@@ -326,7 +327,7 @@ func (h *Handler) bulkDeleteOutlets(c *gin.Context) {
 	if !bindJSON(c, &req) {
 		return
 	}
-	response, err := h.service.BulkDeleteOutlets(c.Request.Context(), ownerID, req.IDs)
+	response, err := h.service.BulkDeleteOutlets(c.Request.Context(), currentActor(c), ownerID, req.IDs)
 	if err != nil {
 		writeError(c, err)
 		return
@@ -343,7 +344,7 @@ func (h *Handler) bulkForceDeleteOutlets(c *gin.Context) {
 	if !bindJSON(c, &req) {
 		return
 	}
-	response, err := h.service.BulkForceDeleteOutlets(c.Request.Context(), ownerID, req.IDs)
+	response, err := h.service.BulkForceDeleteOutlets(c.Request.Context(), currentActor(c), ownerID, req.IDs)
 	if err != nil {
 		writeError(c, err)
 		return
@@ -397,6 +398,11 @@ func listParams(c *gin.Context) ListParams {
 	}
 }
 
+func currentActor(c *gin.Context) Actor {
+	user, _ := identity.CurrentUser(c)
+	return Actor{ID: user.ID, RoleCode: user.RoleCode}
+}
+
 func writeError(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, ErrNotFound):
@@ -409,6 +415,8 @@ func writeError(c *gin.Context, err error) {
 		httpx.Error(c, http.StatusBadRequest, "INVALID_SORT", err.Error(), nil)
 	case errors.Is(err, ErrEmptyBulk):
 		httpx.Error(c, http.StatusBadRequest, "EMPTY_BULK", err.Error(), nil)
+	case errors.Is(err, ErrForbidden):
+		httpx.Error(c, http.StatusForbidden, "FORBIDDEN", err.Error(), nil)
 	default:
 		httpx.Error(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Terjadi kesalahan pada server", nil)
 	}

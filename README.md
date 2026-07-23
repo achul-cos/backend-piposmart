@@ -1565,6 +1565,211 @@ Response `200 OK`:
 
 Request dan response sama seperti bulk soft delete, tetapi row outlet dihapus permanen.
 
+### Lead Management dan Ownership
+
+Mulai Sprint 5, visibility owner/customer dikendalikan oleh `customer_leads`.
+Aturannya:
+
+- Admin melihat semua owner/lead dan dapat assign ke Supervisor.
+- Supervisor melihat lead miliknya dan lead milik Sales di bawahnya.
+- Sales hanya melihat lead miliknya.
+- Jika Sales menandai invalid, lead kembali ke Supervisor dengan `score = 0`.
+
+| Nama Route | Method | Path | Fungsi |
+| --- | --- | --- | --- |
+| List Lead | GET | `/api/v1/leads` | Melihat list lead sesuai visibility actor. |
+| Create Lead | POST | `/api/v1/leads` | Membuat lead dari owner yang sudah ada. |
+| Detail Lead | GET | `/api/v1/leads/{lead_id}` | Melihat detail lead. |
+| Assignment History | GET | `/api/v1/leads/{lead_id}/assignment-history` | Melihat riwayat perpindahan ownership. |
+| Assign Supervisor | POST | `/api/v1/leads/{lead_id}/assign-supervisor` | Admin membagikan lead ke Supervisor. |
+| Assign Sales | POST | `/api/v1/leads/{lead_id}/assign-sales` | Supervisor membagikan/redistribusi lead ke Sales. |
+| Release Lead | POST | `/api/v1/leads/{lead_id}/release` | Mengembalikan lead ke Admin. |
+| Mark Invalid | POST | `/api/v1/leads/{lead_id}/mark-invalid` | Sales menandai lead invalid dan mengembalikan ke Supervisor. |
+| Bulk Assign Supervisor | POST | `/api/v1/leads/bulk/assign-supervisor` | Bulk assign lead ke Supervisor. |
+| Bulk Assign Sales | POST | `/api/v1/leads/bulk/assign-sales` | Bulk assign lead ke Sales. |
+| Bulk Release | POST | `/api/v1/leads/bulk/release` | Bulk release lead ke Admin. |
+
+#### GET `/api/v1/leads`
+
+Query params:
+
+| Param | Contoh | Fungsi |
+| --- | --- | --- |
+| `q` | `Laundry` | Search lead/owner. |
+| `ownership` | `SALES` | Filter current owner role: `ADMIN`, `SUPERVISOR`, `SALES`. |
+| `stage` | `POSSIBLE` | Filter stage. |
+| `status` | `OPEN` | Filter status. |
+| `score` | `0` | Filter score 0-3. |
+| `supervisor_id` | `2` | Filter Supervisor. |
+| `sales_id` | `3` | Filter Sales. |
+| `follow_up_from` | `2026-07-01` | Filter jadwal follow-up awal. |
+| `follow_up_to` | `2026-07-31` | Filter jadwal follow-up akhir. |
+| `page` | `1` | Nomor halaman. |
+| `limit` | `10` | Jumlah data per halaman. |
+
+Request:
+
+```http
+GET /api/v1/leads?q=Laundry&ownership=SALES&page=1&limit=10
+Authorization: Bearer {access_token}
+Accept: application/json
+```
+
+Response `200 OK`:
+
+```json
+{
+  "data": {
+    "items": [
+      {
+        "id": 10,
+        "code": "LEAD-000010",
+        "owner": {
+          "available": true,
+          "id": 20,
+          "code": "OWN-00020",
+          "name": "Owner Laundry"
+        },
+        "current_owner_role": "SALES",
+        "current_owner": {
+          "id": 3,
+          "name": "Sales Demo 001",
+          "role": "SALES"
+        },
+        "supervisor": {
+          "id": 2,
+          "name": "Supervisor Demo 001",
+          "role": "SUPERVISOR"
+        },
+        "stage": "POSSIBLE",
+        "status": "OPEN",
+        "current_score": 1
+      }
+    ],
+    "pagination": {
+      "page": 1,
+      "limit": 10,
+      "total": 1
+    }
+  },
+  "meta": {
+    "request_id": "generated-request-id"
+  }
+}
+```
+
+#### POST `/api/v1/leads/{lead_id}/assign-supervisor`
+
+Request:
+
+```http
+POST /api/v1/leads/10/assign-supervisor
+Authorization: Bearer {admin_access_token}
+Content-Type: application/json
+Accept: application/json
+```
+
+Body:
+
+```json
+{
+  "supervisor_id": 2,
+  "reason": "Distribusi dari Admin ke Supervisor"
+}
+```
+
+Response `200 OK`: lead berpindah ke `current_owner_role = SUPERVISOR`.
+
+#### POST `/api/v1/leads/{lead_id}/assign-sales`
+
+Request:
+
+```http
+POST /api/v1/leads/10/assign-sales
+Authorization: Bearer {supervisor_access_token}
+Content-Type: application/json
+Accept: application/json
+```
+
+Body:
+
+```json
+{
+  "sales_id": 3,
+  "reason": "Distribusi dari Supervisor ke Sales"
+}
+```
+
+Response `200 OK`: lead berpindah ke `current_owner_role = SALES`.
+
+#### POST `/api/v1/leads/{lead_id}/mark-invalid`
+
+Request:
+
+```http
+POST /api/v1/leads/10/mark-invalid
+Authorization: Bearer {sales_access_token}
+Content-Type: application/json
+Accept: application/json
+```
+
+Body:
+
+```json
+{
+  "reason": "Customer tidak potensial dari call terakhir"
+}
+```
+
+Response `200 OK`:
+
+```json
+{
+  "data": {
+    "id": 10,
+    "current_owner_role": "SUPERVISOR",
+    "stage": "INVALID",
+    "status": "INVALID",
+    "current_score": 0
+  },
+  "meta": {
+    "request_id": "generated-request-id"
+  }
+}
+```
+
+#### GET `/api/v1/leads/{lead_id}/assignment-history`
+
+Request:
+
+```http
+GET /api/v1/leads/10/assignment-history
+Authorization: Bearer {admin_or_supervisor_access_token}
+Accept: application/json
+```
+
+Response `200 OK`: daftar riwayat perpindahan ownership lead.
+
+Contoh error Sales lain membuka lead bukan miliknya:
+
+```http
+GET /api/v1/leads/10
+Authorization: Bearer {other_sales_access_token}
+Accept: application/json
+```
+
+Response `404 Not Found`:
+
+```json
+{
+  "error": {
+    "code": "NOT_FOUND",
+    "message": "data tidak ditemukan",
+    "request_id": "generated-request-id"
+  }
+}
+```
+
 ### Error Umum API
 
 | Kondisi | Status | Code |

@@ -8,7 +8,16 @@ import (
 const (
 	StatusActive  = "ACTIVE"
 	StatusDeleted = "DELETED"
+
+	RoleAdmin      = "ADMIN"
+	RoleSupervisor = "SUPERVISOR"
+	RoleSales      = "SALES"
 )
+
+type Actor struct {
+	ID       int64
+	RoleCode string
+}
 
 type Owner struct {
 	ID          int64

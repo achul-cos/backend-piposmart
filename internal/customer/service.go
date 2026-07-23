@@ -13,7 +13,7 @@ func NewService(repo *Repository) *Service {
 	return &Service{repo: repo}
 }
 
-func (s *Service) ListOwners(ctx context.Context, params ListParams) (OwnerListResponse, error) {
+func (s *Service) ListOwners(ctx context.Context, actor Actor, params ListParams) (OwnerListResponse, error) {
 	params = normalizeListParams(params)
 	if params.Phone != "" {
 		phone, err := NormalizePhone(params.Phone)
@@ -21,7 +21,7 @@ func (s *Service) ListOwners(ctx context.Context, params ListParams) (OwnerListR
 			params.Phone = phone
 		}
 	}
-	owners, total, err := s.repo.ListOwners(ctx, params)
+	owners, total, err := s.repo.ListOwners(ctx, actor, params)
 	if err != nil {
 		return OwnerListResponse{}, err
 	}
@@ -39,19 +39,25 @@ func (s *Service) ListOwners(ctx context.Context, params ListParams) (OwnerListR
 	}, nil
 }
 
-func (s *Service) CreateOwner(ctx context.Context, req CreateOwnerRequest) (OwnerResponse, error) {
+func (s *Service) CreateOwner(ctx context.Context, actor Actor, req CreateOwnerRequest) (OwnerResponse, error) {
+	if !actorCanManageOwners(actor) {
+		return OwnerResponse{}, ErrForbidden
+	}
 	phone, err := NormalizePhone(req.Phone)
 	if err != nil {
 		return OwnerResponse{}, err
 	}
-	owner, err := s.repo.CreateOwner(ctx, req, phone)
+	owner, err := s.repo.CreateOwner(ctx, actor, req, phone)
 	if err != nil {
 		return OwnerResponse{}, err
 	}
 	return NewOwnerResponse(owner), nil
 }
 
-func (s *Service) BulkCreateOwners(ctx context.Context, req BulkOwnerCreateRequest) (OwnerBulkResponse, error) {
+func (s *Service) BulkCreateOwners(ctx context.Context, actor Actor, req BulkOwnerCreateRequest) (OwnerBulkResponse, error) {
+	if !actorCanManageOwners(actor) {
+		return OwnerBulkResponse{}, ErrForbidden
+	}
 	if len(req.Items) == 0 {
 		return OwnerBulkResponse{}, ErrEmptyBulk
 	}
@@ -63,22 +69,25 @@ func (s *Service) BulkCreateOwners(ctx context.Context, req BulkOwnerCreateReque
 		}
 		phones[index] = phone
 	}
-	owners, err := s.repo.CreateOwners(ctx, req.Items, phones)
+	owners, err := s.repo.CreateOwners(ctx, actor, req.Items, phones)
 	if err != nil {
 		return OwnerBulkResponse{}, err
 	}
 	return ownerBulkResponse(owners), nil
 }
 
-func (s *Service) GetOwner(ctx context.Context, id int64) (OwnerResponse, error) {
-	owner, err := s.repo.FindOwnerByID(ctx, id)
+func (s *Service) GetOwner(ctx context.Context, actor Actor, id int64) (OwnerResponse, error) {
+	owner, err := s.repo.FindOwnerByID(ctx, actor, id)
 	if err != nil {
 		return OwnerResponse{}, err
 	}
 	return NewOwnerResponse(owner), nil
 }
 
-func (s *Service) RestoreOwner(ctx context.Context, id int64) (OwnerResponse, error) {
+func (s *Service) RestoreOwner(ctx context.Context, actor Actor, id int64) (OwnerResponse, error) {
+	if !actorCanManageOwners(actor) {
+		return OwnerResponse{}, ErrForbidden
+	}
 	owner, err := s.repo.RestoreOwner(ctx, id)
 	if err != nil {
 		return OwnerResponse{}, err
@@ -86,7 +95,10 @@ func (s *Service) RestoreOwner(ctx context.Context, id int64) (OwnerResponse, er
 	return NewOwnerResponse(owner), nil
 }
 
-func (s *Service) UpdateOwner(ctx context.Context, id int64, req UpdateOwnerRequest) (OwnerResponse, error) {
+func (s *Service) UpdateOwner(ctx context.Context, actor Actor, id int64, req UpdateOwnerRequest) (OwnerResponse, error) {
+	if !actorCanManageOwners(actor) {
+		return OwnerResponse{}, ErrForbidden
+	}
 	var phone *string
 	if req.Phone != nil {
 		normalized, err := NormalizePhone(*req.Phone)
@@ -102,7 +114,10 @@ func (s *Service) UpdateOwner(ctx context.Context, id int64, req UpdateOwnerRequ
 	return NewOwnerResponse(owner), nil
 }
 
-func (s *Service) BulkUpdateOwners(ctx context.Context, req BulkOwnerUpdateRequest) (OwnerBulkResponse, error) {
+func (s *Service) BulkUpdateOwners(ctx context.Context, actor Actor, req BulkOwnerUpdateRequest) (OwnerBulkResponse, error) {
+	if !actorCanManageOwners(actor) {
+		return OwnerBulkResponse{}, ErrForbidden
+	}
 	if len(req.Items) == 0 {
 		return OwnerBulkResponse{}, ErrEmptyBulk
 	}
@@ -138,15 +153,24 @@ func (s *Service) BulkUpdateOwners(ctx context.Context, req BulkOwnerUpdateReque
 	return ownerBulkResponse(owners), nil
 }
 
-func (s *Service) DeleteOwner(ctx context.Context, id int64) error {
+func (s *Service) DeleteOwner(ctx context.Context, actor Actor, id int64) error {
+	if !actorCanManageOwners(actor) {
+		return ErrForbidden
+	}
 	return s.repo.SoftDeleteOwner(ctx, id)
 }
 
-func (s *Service) ForceDeleteOwner(ctx context.Context, id int64) error {
+func (s *Service) ForceDeleteOwner(ctx context.Context, actor Actor, id int64) error {
+	if !actorCanManageOwners(actor) {
+		return ErrForbidden
+	}
 	return s.repo.ForceDeleteOwner(ctx, id)
 }
 
-func (s *Service) BulkDeleteOwners(ctx context.Context, ids []int64) (BulkActionResponse, error) {
+func (s *Service) BulkDeleteOwners(ctx context.Context, actor Actor, ids []int64) (BulkActionResponse, error) {
+	if !actorCanManageOwners(actor) {
+		return BulkActionResponse{}, ErrForbidden
+	}
 	ids, err := normalizeIDs(ids)
 	if err != nil {
 		return BulkActionResponse{}, err
@@ -158,7 +182,10 @@ func (s *Service) BulkDeleteOwners(ctx context.Context, ids []int64) (BulkAction
 	return BulkActionResponse{IDs: ids, Affected: affected}, nil
 }
 
-func (s *Service) BulkForceDeleteOwners(ctx context.Context, ids []int64) (BulkActionResponse, error) {
+func (s *Service) BulkForceDeleteOwners(ctx context.Context, actor Actor, ids []int64) (BulkActionResponse, error) {
+	if !actorCanManageOwners(actor) {
+		return BulkActionResponse{}, ErrForbidden
+	}
 	ids, err := normalizeIDs(ids)
 	if err != nil {
 		return BulkActionResponse{}, err
@@ -170,7 +197,7 @@ func (s *Service) BulkForceDeleteOwners(ctx context.Context, ids []int64) (BulkA
 	return BulkActionResponse{IDs: ids, Affected: affected}, nil
 }
 
-func (s *Service) ListOutlets(ctx context.Context, ownerID int64, params ListParams) (OutletListResponse, error) {
+func (s *Service) ListOutlets(ctx context.Context, actor Actor, ownerID int64, params ListParams) (OutletListResponse, error) {
 	params = normalizeListParams(params)
 	if params.Phone != "" {
 		phone, err := NormalizePhone(params.Phone)
@@ -178,7 +205,7 @@ func (s *Service) ListOutlets(ctx context.Context, ownerID int64, params ListPar
 			params.Phone = phone
 		}
 	}
-	outlets, total, err := s.repo.ListOutlets(ctx, ownerID, params)
+	outlets, total, err := s.repo.ListOutlets(ctx, actor, ownerID, params)
 	if err != nil {
 		return OutletListResponse{}, err
 	}
@@ -196,7 +223,10 @@ func (s *Service) ListOutlets(ctx context.Context, ownerID int64, params ListPar
 	}, nil
 }
 
-func (s *Service) CreateOutlet(ctx context.Context, ownerID int64, req CreateOutletRequest) (OutletResponse, error) {
+func (s *Service) CreateOutlet(ctx context.Context, actor Actor, ownerID int64, req CreateOutletRequest) (OutletResponse, error) {
+	if !actorCanManageOwners(actor) {
+		return OutletResponse{}, ErrForbidden
+	}
 	phone, err := NormalizePhone(req.Phone)
 	if err != nil {
 		return OutletResponse{}, err
@@ -208,7 +238,10 @@ func (s *Service) CreateOutlet(ctx context.Context, ownerID int64, req CreateOut
 	return NewOutletResponse(outlet), nil
 }
 
-func (s *Service) BulkCreateOutlets(ctx context.Context, ownerID int64, req BulkOutletCreateRequest) (OutletBulkResponse, error) {
+func (s *Service) BulkCreateOutlets(ctx context.Context, actor Actor, ownerID int64, req BulkOutletCreateRequest) (OutletBulkResponse, error) {
+	if !actorCanManageOwners(actor) {
+		return OutletBulkResponse{}, ErrForbidden
+	}
 	if len(req.Items) == 0 {
 		return OutletBulkResponse{}, ErrEmptyBulk
 	}
@@ -227,15 +260,18 @@ func (s *Service) BulkCreateOutlets(ctx context.Context, ownerID int64, req Bulk
 	return outletBulkResponse(outlets), nil
 }
 
-func (s *Service) GetOutlet(ctx context.Context, ownerID, outletID int64) (OutletResponse, error) {
-	outlet, err := s.repo.FindOutletByID(ctx, ownerID, outletID)
+func (s *Service) GetOutlet(ctx context.Context, actor Actor, ownerID, outletID int64) (OutletResponse, error) {
+	outlet, err := s.repo.FindOutletByID(ctx, actor, ownerID, outletID)
 	if err != nil {
 		return OutletResponse{}, err
 	}
 	return NewOutletResponse(outlet), nil
 }
 
-func (s *Service) RestoreOutlet(ctx context.Context, ownerID, outletID int64) (OutletResponse, error) {
+func (s *Service) RestoreOutlet(ctx context.Context, actor Actor, ownerID, outletID int64) (OutletResponse, error) {
+	if !actorCanManageOwners(actor) {
+		return OutletResponse{}, ErrForbidden
+	}
 	outlet, err := s.repo.RestoreOutlet(ctx, ownerID, outletID)
 	if err != nil {
 		return OutletResponse{}, err
@@ -243,7 +279,10 @@ func (s *Service) RestoreOutlet(ctx context.Context, ownerID, outletID int64) (O
 	return NewOutletResponse(outlet), nil
 }
 
-func (s *Service) UpdateOutlet(ctx context.Context, ownerID, outletID int64, req UpdateOutletRequest) (OutletResponse, error) {
+func (s *Service) UpdateOutlet(ctx context.Context, actor Actor, ownerID, outletID int64, req UpdateOutletRequest) (OutletResponse, error) {
+	if !actorCanManageOwners(actor) {
+		return OutletResponse{}, ErrForbidden
+	}
 	var phone *string
 	if req.Phone != nil {
 		normalized, err := NormalizePhone(*req.Phone)
@@ -259,7 +298,10 @@ func (s *Service) UpdateOutlet(ctx context.Context, ownerID, outletID int64, req
 	return NewOutletResponse(outlet), nil
 }
 
-func (s *Service) BulkUpdateOutlets(ctx context.Context, ownerID int64, req BulkOutletUpdateRequest) (OutletBulkResponse, error) {
+func (s *Service) BulkUpdateOutlets(ctx context.Context, actor Actor, ownerID int64, req BulkOutletUpdateRequest) (OutletBulkResponse, error) {
+	if !actorCanManageOwners(actor) {
+		return OutletBulkResponse{}, ErrForbidden
+	}
 	if len(req.Items) == 0 {
 		return OutletBulkResponse{}, ErrEmptyBulk
 	}
@@ -293,15 +335,24 @@ func (s *Service) BulkUpdateOutlets(ctx context.Context, ownerID int64, req Bulk
 	return outletBulkResponse(outlets), nil
 }
 
-func (s *Service) DeleteOutlet(ctx context.Context, ownerID, outletID int64) error {
+func (s *Service) DeleteOutlet(ctx context.Context, actor Actor, ownerID, outletID int64) error {
+	if !actorCanManageOwners(actor) {
+		return ErrForbidden
+	}
 	return s.repo.SoftDeleteOutlet(ctx, ownerID, outletID)
 }
 
-func (s *Service) ForceDeleteOutlet(ctx context.Context, ownerID, outletID int64) error {
+func (s *Service) ForceDeleteOutlet(ctx context.Context, actor Actor, ownerID, outletID int64) error {
+	if !actorCanManageOwners(actor) {
+		return ErrForbidden
+	}
 	return s.repo.ForceDeleteOutlet(ctx, ownerID, outletID)
 }
 
-func (s *Service) BulkDeleteOutlets(ctx context.Context, ownerID int64, ids []int64) (BulkActionResponse, error) {
+func (s *Service) BulkDeleteOutlets(ctx context.Context, actor Actor, ownerID int64, ids []int64) (BulkActionResponse, error) {
+	if !actorCanManageOwners(actor) {
+		return BulkActionResponse{}, ErrForbidden
+	}
 	ids, err := normalizeIDs(ids)
 	if err != nil {
 		return BulkActionResponse{}, err
@@ -313,7 +364,10 @@ func (s *Service) BulkDeleteOutlets(ctx context.Context, ownerID int64, ids []in
 	return BulkActionResponse{IDs: ids, Affected: affected}, nil
 }
 
-func (s *Service) BulkForceDeleteOutlets(ctx context.Context, ownerID int64, ids []int64) (BulkActionResponse, error) {
+func (s *Service) BulkForceDeleteOutlets(ctx context.Context, actor Actor, ownerID int64, ids []int64) (BulkActionResponse, error) {
+	if !actorCanManageOwners(actor) {
+		return BulkActionResponse{}, ErrForbidden
+	}
 	ids, err := normalizeIDs(ids)
 	if err != nil {
 		return BulkActionResponse{}, err
@@ -382,4 +436,8 @@ func outletBulkResponse(outlets []Outlet) OutletBulkResponse {
 		items = append(items, NewOutletResponse(outlet))
 	}
 	return OutletBulkResponse{Items: items, Total: len(items)}
+}
+
+func actorCanManageOwners(actor Actor) bool {
+	return actor.RoleCode == RoleAdmin
 }
