@@ -1969,6 +1969,93 @@ Response `400 Bad Request`:
 }
 ```
 
+### Catalog Package, Plan, Promotion, dan Benefit
+
+Mulai Sprint 7, catalog digunakan untuk mengelola paket langganan, tenor/plan,
+harga, promo, benefit promo, dan eligibility promo.
+
+Aturan utama:
+
+- Admin dan Supervisor dapat membuat/mengubah catalog.
+- Sales hanya dapat membaca catalog.
+- `duration_days` plan selalu dihitung dari `tenure_months x 30`.
+- Nilai uang dikirim sebagai decimal string, contoh `1698600.00`, bukan float.
+- Promo `FREE` diprioritaskan sebagai `recommended_promotion`.
+- Promo `PAID` tetap tampil sebagai opsi, tetapi tidak otomatis dipilih.
+- Filter `as_of=YYYY-MM-DD` digunakan untuk effective date.
+
+| Nama Route | Method | Path | Fungsi |
+| --- | --- | --- | --- |
+| List Package | GET | `/api/v1/catalog/packages` | List paket. |
+| Create Package | POST | `/api/v1/catalog/packages` | Membuat paket. |
+| Detail Package | GET | `/api/v1/catalog/packages/{package_id}` | Detail paket. |
+| Update Package | PATCH | `/api/v1/catalog/packages/{package_id}` | Update paket. |
+| Delete/Restore/Force Package | DELETE/PATCH/DELETE | `/api/v1/catalog/packages/{package_id}` | Soft delete, restore, hard delete paket. |
+| List Plan | GET | `/api/v1/catalog/plans` | List plan/tenor. |
+| Create Plan | POST | `/api/v1/catalog/plans` | Membuat plan. |
+| Eligible Promotions | GET | `/api/v1/catalog/plans/{plan_id}/eligible-promotions` | Promo eligible per plan. |
+| List Promotion | GET | `/api/v1/catalog/promotions` | List promo. |
+| Create Promotion | POST | `/api/v1/catalog/promotions` | Membuat promo. |
+| Promotion Benefits | GET/POST | `/api/v1/catalog/promotions/{promotion_id}/benefits` | List/tambah benefit. |
+| Set Eligible Plans | PUT | `/api/v1/catalog/promotions/{promotion_id}/eligible-plans` | Set plan yang eligible untuk promo. |
+
+Contoh create plan:
+
+```http
+POST /api/v1/catalog/plans
+Authorization: Bearer {admin_access_token}
+Content-Type: application/json
+Accept: application/json
+```
+
+```json
+{
+  "package_id": 2,
+  "code": "BUSINESS_12_MONTHS_TEST",
+  "name": "Business 12 Bulan Test",
+  "tenure_months": 12,
+  "price": "1698600.00",
+  "currency": "IDR",
+  "effective_from": "2026-07-01"
+}
+```
+
+Response penting: `duration_days` akan bernilai `360`.
+
+Contoh eligible promo:
+
+```http
+GET /api/v1/catalog/plans/2/eligible-promotions?as_of=2026-07-23
+Authorization: Bearer {access_token}
+Accept: application/json
+```
+
+Response memiliki `recommended_promotion` hanya dari promo `FREE`.
+
+Contoh error harga decimal tidak valid:
+
+```json
+{
+  "package_id": 2,
+  "code": "BAD_PRICE",
+  "name": "Bad Price",
+  "tenure_months": 12,
+  "price": "12.345",
+  "effective_from": "2026-07-01"
+}
+```
+
+Response `400 Bad Request`:
+
+```json
+{
+  "error": {
+    "code": "INVALID_DECIMAL",
+    "message": "nilai uang harus decimal valid",
+    "request_id": "generated-request-id"
+  }
+}
+```
 ### Error Umum API
 
 | Kondisi | Status | Code |

@@ -1,8 +1,8 @@
 openapi: 3.0.3
 info:
   title: Backend CRM Piposmart
-  version: 0.6.0-sprint-6
-  description: API CRM Piposmart dengan Owner/Outlet, Lead Ownership, Call/Chat Customer, Follow-up, Stage History, dan Training Sprint 6.
+  version: 0.7.0-sprint-7
+  description: API CRM Piposmart dengan Owner/Outlet, Lead Ownership, Activity, Training, dan Catalog Package/Plan/Promotion Sprint 7.
 servers:
   - url: http://localhost:8080
 paths:
@@ -1219,6 +1219,326 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/catalog/packages:
+    get:
+      summary: List subscription package
+      operationId: listCatalogPackages
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/SearchQuery"
+        - name: active
+          in: query
+          schema:
+            type: boolean
+        - $ref: "#/components/parameters/PageQuery"
+        - $ref: "#/components/parameters/LimitQuery"
+      responses:
+        "200":
+          description: List package
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+    post:
+      summary: Membuat subscription package
+      operationId: createCatalogPackage
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePackageRequest"
+      responses:
+        "201":
+          description: Package dibuat
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/catalog/packages/{package_id}:
+    get:
+      summary: Detail subscription package
+      operationId: getCatalogPackage
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PackageID"
+      responses:
+        "200":
+          description: Detail package
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+    patch:
+      summary: Update subscription package
+      operationId: updateCatalogPackage
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PackageID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdatePackageRequest"
+      responses:
+        "200":
+          description: Package diupdate
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/catalog/plans:
+    get:
+      summary: List subscription plan
+      operationId: listCatalogPlans
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/SearchQuery"
+        - name: package_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: as_of
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: active
+          in: query
+          schema:
+            type: boolean
+        - $ref: "#/components/parameters/PageQuery"
+        - $ref: "#/components/parameters/LimitQuery"
+      responses:
+        "200":
+          description: List plan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+    post:
+      summary: Membuat subscription plan
+      operationId: createCatalogPlan
+      description: duration_days otomatis dihitung tenure_months x 30 hari.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePlanRequest"
+      responses:
+        "201":
+          description: Plan dibuat
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/catalog/plans/{plan_id}:
+    get:
+      summary: Detail subscription plan
+      operationId: getCatalogPlan
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PlanID"
+      responses:
+        "200":
+          description: Detail plan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+    patch:
+      summary: Update subscription plan
+      operationId: updateCatalogPlan
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PlanID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdatePlanRequest"
+      responses:
+        "200":
+          description: Plan diupdate
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/catalog/plans/{plan_id}/eligible-promotions:
+    get:
+      summary: Promo eligible untuk plan
+      operationId: listEligiblePromotions
+      description: Promo FREE diprioritaskan sebagai recommended_promotion; promo PAID tetap tampil sebagai opsi namun tidak otomatis dipilih.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PlanID"
+        - name: as_of
+          in: query
+          schema:
+            type: string
+            format: date
+      responses:
+        "200":
+          description: List promo eligible
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/catalog/promotions:
+    get:
+      summary: List promotion
+      operationId: listCatalogPromotions
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/SearchQuery"
+        - name: charge_type
+          in: query
+          schema:
+            type: string
+            enum: [FREE, PAID]
+        - name: as_of
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: active
+          in: query
+          schema:
+            type: boolean
+        - $ref: "#/components/parameters/PageQuery"
+        - $ref: "#/components/parameters/LimitQuery"
+      responses:
+        "200":
+          description: List promo
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+    post:
+      summary: Membuat promotion
+      operationId: createCatalogPromotion
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePromotionRequest"
+      responses:
+        "201":
+          description: Promotion dibuat
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/catalog/promotions/{promotion_id}:
+    get:
+      summary: Detail promotion
+      operationId: getCatalogPromotion
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PromotionID"
+      responses:
+        "200":
+          description: Detail promo
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+    patch:
+      summary: Update promotion
+      operationId: updateCatalogPromotion
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PromotionID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdatePromotionRequest"
+      responses:
+        "200":
+          description: Promotion diupdate
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/catalog/promotions/{promotion_id}/benefits:
+    get:
+      summary: List benefit promotion
+      operationId: listPromotionBenefits
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PromotionID"
+      responses:
+        "200":
+          description: List benefit
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+    post:
+      summary: Membuat benefit promotion
+      operationId: createPromotionBenefit
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PromotionID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateBenefitRequest"
+      responses:
+        "201":
+          description: Benefit dibuat
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/catalog/promotions/{promotion_id}/eligible-plans:
+    put:
+      summary: Set eligible plan untuk promotion
+      operationId: setPromotionEligiblePlans
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PromotionID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetEligibilityRequest"
+      responses:
+        "200":
+          description: Eligibility diperbarui
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
 components:
   securitySchemes:
     bearerAuth:
@@ -1735,7 +2055,183 @@ components:
         cancel_reason:
           type: string
           example: Customer meminta pembatalan jadwal.
-    SuccessEnvelope:
+    CreatePackageRequest:
+      type: object
+      required: [code, name, level_order]
+      properties:
+        code:
+          type: string
+          example: BASIC
+        name:
+          type: string
+          example: Basic
+        level_order:
+          type: integer
+          example: 1
+        description:
+          type: string
+        active:
+          type: boolean
+    UpdatePackageRequest:
+      type: object
+      properties:
+        code:
+          type: string
+        name:
+          type: string
+        level_order:
+          type: integer
+        description:
+          type: string
+        active:
+          type: boolean
+    CreatePlanRequest:
+      type: object
+      required: [package_id, code, name, tenure_months, price, effective_from]
+      properties:
+        package_id:
+          type: integer
+          format: int64
+        code:
+          type: string
+          example: BUSINESS_12_MONTHS
+        name:
+          type: string
+          example: Business 12 Bulan
+        tenure_months:
+          type: integer
+          example: 12
+        price:
+          type: string
+          example: "1698600.00"
+        currency:
+          type: string
+          example: IDR
+        effective_from:
+          type: string
+          format: date
+        effective_to:
+          type: string
+          format: date
+          nullable: true
+        active:
+          type: boolean
+    UpdatePlanRequest:
+      type: object
+      properties:
+        package_id:
+          type: integer
+          format: int64
+        code:
+          type: string
+        name:
+          type: string
+        tenure_months:
+          type: integer
+        price:
+          type: string
+        currency:
+          type: string
+        effective_from:
+          type: string
+          format: date
+        effective_to:
+          type: string
+          format: date
+          nullable: true
+        active:
+          type: boolean
+    CreatePromotionRequest:
+      type: object
+      required: [code, name, promotion_type, charge_type, effective_from]
+      properties:
+        code:
+          type: string
+          example: FREE_1_MONTH_BUSINESS_12
+        name:
+          type: string
+        promotion_type:
+          type: string
+          example: FREE_DURATION
+        charge_type:
+          type: string
+          enum: [FREE, PAID]
+        additional_charge:
+          type: string
+          example: "0.00"
+        priority:
+          type: integer
+          example: 10
+        description:
+          type: string
+        effective_from:
+          type: string
+          format: date
+        effective_to:
+          type: string
+          format: date
+          nullable: true
+        active:
+          type: boolean
+    UpdatePromotionRequest:
+      type: object
+      properties:
+        code:
+          type: string
+        name:
+          type: string
+        promotion_type:
+          type: string
+        charge_type:
+          type: string
+          enum: [FREE, PAID]
+        additional_charge:
+          type: string
+        priority:
+          type: integer
+        description:
+          type: string
+        effective_from:
+          type: string
+          format: date
+        effective_to:
+          type: string
+          format: date
+          nullable: true
+        active:
+          type: boolean
+    CreateBenefitRequest:
+      type: object
+      required: [benefit_type]
+      properties:
+        benefit_type:
+          type: string
+          example: FREE_DURATION
+        package_id:
+          type: integer
+          format: int64
+          nullable: true
+        duration_days:
+          type: integer
+          nullable: true
+        quantity:
+          type: integer
+          nullable: true
+        description:
+          type: string
+        metadata_json:
+          type: object
+          additionalProperties: true
+    SetEligibilityRequest:
+      type: object
+      required: [plan_ids]
+      properties:
+        plan_ids:
+          type: array
+          minItems: 1
+          items:
+            type: integer
+            format: int64    SuccessEnvelope:
       type: object
       required: [data, meta]
       properties:

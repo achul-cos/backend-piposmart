@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"backend_crm_piposmart/internal/activity"
+	"backend_crm_piposmart/internal/catalog"
 	"backend_crm_piposmart/internal/customer"
 	"backend_crm_piposmart/internal/identity"
 	"backend_crm_piposmart/internal/lead"
@@ -114,6 +115,12 @@ func NewRouter(cfg config.Config, logger *slog.Logger, connection Connection) *g
 		activityRoutes := api.Group("")
 		activityRoutes.Use(identity.AuthMiddleware(identityService))
 		activity.NewHandler(activityService).RegisterRoutes(activityRoutes)
+
+		catalogRepository := catalog.NewRepository(connection.SQLDB())
+		catalogService := catalog.NewService(catalogRepository)
+		catalogRoutes := api.Group("")
+		catalogRoutes.Use(identity.AuthMiddleware(identityService))
+		catalog.NewHandler(catalogService).RegisterRoutes(catalogRoutes)
 	}
 
 	router.NoRoute(func(c *gin.Context) {
