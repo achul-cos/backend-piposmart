@@ -79,6 +79,9 @@ func (r *Repository) CreateInteraction(ctx context.Context, actor identity.User,
 		if err != nil {
 			return CustomerInteraction{}, err
 		}
+		if remarkReason.Score == 3 {
+			return CustomerInteraction{}, ErrInvalidTransition
+		}
 		if remarkReason.Score == 0 && actor.RoleCode != RoleSales {
 			return CustomerInteraction{}, ErrForbidden
 		}

@@ -1,8 +1,8 @@
 openapi: 3.0.3
 info:
   title: Backend CRM Piposmart
-  version: 0.7.0-sprint-7
-  description: API CRM Piposmart dengan Owner/Outlet, Lead Ownership, Activity, Training, dan Catalog Package/Plan/Promotion Sprint 7.
+  version: 0.9.0-sprint-9
+  description: API CRM Piposmart dengan Owner/Outlet, Lead Ownership, Activity, Training, Catalog, Closing, serta Payment dan Wallet Ledger Sprint 9.
 servers:
   - url: http://localhost:8080
 paths:
@@ -1539,6 +1539,569 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/closings:
+    get:
+      summary: List closing penjualan
+      operationId: listSalesClosings
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/SearchQuery"
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [PENDING_RECONCILIATION, CONFIRMED, REJECTED]
+        - name: sales_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: supervisor_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: closed_from
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: closed_to
+          in: query
+          schema:
+            type: string
+            format: date
+        - $ref: "#/components/parameters/PageQuery"
+        - $ref: "#/components/parameters/LimitQuery"
+      responses:
+        "200":
+          description: List closing
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/leads/{lead_id}/closings:
+    post:
+      summary: Membuat closing untuk lead Sales
+      operationId: createLeadClosing
+      description: Membuat sales closing, snapshot catalog, dan remark score 3 dalam satu transaksi database.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/LeadID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateClosingRequest"
+      responses:
+        "201":
+          description: Closing dibuat
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+        "409":
+          description: Lead sudah memiliki closing pending/confirmed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+  /api/v1/closings/{closing_id}:
+    get:
+      summary: Detail closing
+      operationId: getSalesClosing
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ClosingID"
+      responses:
+        "200":
+          description: Detail closing
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+    delete:
+      summary: Soft delete closing
+      operationId: deleteSalesClosing
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ClosingID"
+      responses:
+        "200":
+          description: Closing soft deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/closings/{closing_id}/confirm:
+    post:
+      summary: Confirm closing
+      operationId: confirmSalesClosing
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ClosingID"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateClosingStatusRequest"
+      responses:
+        "200":
+          description: Closing confirmed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/closings/{closing_id}/reject:
+    post:
+      summary: Reject closing
+      operationId: rejectSalesClosing
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ClosingID"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateClosingStatusRequest"
+      responses:
+        "200":
+          description: Closing rejected
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/closings/{closing_id}/restore:
+    patch:
+      summary: Restore closing soft-deleted
+      operationId: restoreSalesClosing
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ClosingID"
+      responses:
+        "200":
+          description: Closing restored
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/closings/{closing_id}/force:
+    delete:
+      summary: Hard delete closing
+      operationId: forceDeleteSalesClosing
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ClosingID"
+      responses:
+        "200":
+          description: Closing hard deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/closings/bulk:
+    delete:
+      summary: Bulk soft delete closing
+      operationId: bulkDeleteSalesClosing
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BulkIDRequest"
+      responses:
+        "200":
+          description: Bulk soft delete result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/closings/bulk/restore:
+    patch:
+      summary: Bulk restore closing
+      operationId: bulkRestoreSalesClosing
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BulkIDRequest"
+      responses:
+        "200":
+          description: Bulk restore result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/closings/bulk/force:
+    delete:
+      summary: Bulk hard delete closing
+      operationId: bulkForceDeleteSalesClosing
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BulkIDRequest"
+      responses:
+        "200":
+          description: Bulk hard delete result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/wallets:
+    get:
+      tags: [Wallet]
+      summary: List wallet owner
+      operationId: listWallets
+      description: Admin melihat seluruh wallet. Supervisor dan Sales hanya melihat wallet owner yang berada dalam cakupan ownership lead mereka.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/SearchQuery"
+        - name: owner_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [ACTIVE]
+        - name: sort
+          in: query
+          schema:
+            type: string
+            example: -balance
+          description: Field yang didukung yaitu created_at, updated_at, balance, code. Gunakan prefix minus untuk descending.
+        - $ref: "#/components/parameters/PageQuery"
+        - $ref: "#/components/parameters/LimitQuery"
+      responses:
+        "200":
+          description: List wallet berhasil diambil
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/wallet-payments:
+    get:
+      tags: [Wallet]
+      summary: List payment/top-up owner
+      operationId: listWalletPayments
+      description: Digunakan Admin untuk rekapan revenue top-up berdasarkan paid_at tanpa mencampurnya dengan closing revenue.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/SearchQuery"
+        - name: owner_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: payment_type
+          in: query
+          schema:
+            type: string
+            enum: [TOPUP]
+        - name: channel
+          in: query
+          schema:
+            type: string
+            example: MIDTRANS
+        - name: paid_from
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: paid_to
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: sort
+          in: query
+          schema:
+            type: string
+            example: -paid_at
+          description: Field yang didukung yaitu paid_at, created_at, amount, code.
+        - $ref: "#/components/parameters/PageQuery"
+        - $ref: "#/components/parameters/LimitQuery"
+      responses:
+        "200":
+          description: List payment berhasil diambil
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/wallet-payments/{payment_id}:
+    get:
+      tags: [Wallet]
+      summary: Detail payment/top-up owner
+      operationId: getWalletPayment
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PaymentID"
+      responses:
+        "200":
+          description: Detail payment berhasil diambil
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+        "404":
+          description: Payment tidak ditemukan atau tidak dapat diakses user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+  /api/v1/wallet-transactions:
+    get:
+      tags: [Wallet]
+      summary: List wallet ledger transaction
+      operationId: listWalletTransactions
+      description: Ledger append-only untuk credit, debit, adjustment, dan refund.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/SearchQuery"
+        - name: owner_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: direction
+          in: query
+          schema:
+            type: string
+            enum: [CREDIT, DEBIT]
+        - name: type
+          in: query
+          schema:
+            type: string
+            enum: [CREDIT, DEBIT, ADJUSTMENT, REFUND]
+        - name: occurred_from
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: occurred_to
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: sort
+          in: query
+          schema:
+            type: string
+            example: -occurred_at
+          description: Field yang didukung yaitu occurred_at, created_at, amount, code.
+        - $ref: "#/components/parameters/PageQuery"
+        - $ref: "#/components/parameters/LimitQuery"
+      responses:
+        "200":
+          description: List ledger berhasil diambil
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/owners/{owner_id}/wallet:
+    get:
+      tags: [Wallet]
+      summary: Detail wallet berdasarkan owner
+      operationId: getOwnerWallet
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OwnerID"
+      responses:
+        "200":
+          description: Wallet owner berhasil diambil
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+        "404":
+          description: Wallet owner tidak ditemukan atau tidak dapat diakses user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+  /api/v1/owners/{owner_id}/wallet/transactions:
+    get:
+      tags: [Wallet]
+      summary: List ledger milik satu owner
+      operationId: listOwnerWalletTransactions
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OwnerID"
+        - name: direction
+          in: query
+          schema:
+            type: string
+            enum: [CREDIT, DEBIT]
+        - name: type
+          in: query
+          schema:
+            type: string
+            enum: [CREDIT, DEBIT, ADJUSTMENT, REFUND]
+        - $ref: "#/components/parameters/PageQuery"
+        - $ref: "#/components/parameters/LimitQuery"
+      responses:
+        "200":
+          description: List ledger owner berhasil diambil
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/owners/{owner_id}/wallet/topups:
+    post:
+      tags: [Wallet]
+      summary: Mencatat top-up owner
+      operationId: createOwnerWalletTopup
+      description: Admin-only. Membuat wallet jika belum ada, mencatat payment TOPUP PAID, membuat ledger CREDIT, dan menaikkan balance secara atomic. Wajib mengirim idempotency_key atau external_reference.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OwnerID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTopupRequest"
+      responses:
+        "201":
+          description: Top-up berhasil dicatat
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+        "400":
+          description: Decimal invalid atau idempotency key tidak dikirim
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "403":
+          description: User bukan Admin
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "404":
+          description: Owner tidak ditemukan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+  /api/v1/owners/{owner_id}/wallet/debits:
+    post:
+      tags: [Wallet]
+      summary: Mencatat debit manual wallet
+      operationId: createOwnerWalletDebit
+      description: Admin-only. Dipakai untuk mencatat saldo terpakai sebelum modul subscription order Sprint 10. Saldo tidak boleh negatif.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OwnerID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateWalletTransactionRequest"
+      responses:
+        "201":
+          description: Debit berhasil dicatat
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+        "400":
+          description: Payload invalid, idempotency kosong, atau saldo tidak cukup
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+  /api/v1/owners/{owner_id}/wallet/adjustments:
+    post:
+      tags: [Wallet]
+      summary: Mencatat adjustment wallet
+      operationId: createOwnerWalletAdjustment
+      description: Admin-only. Adjustment dapat CREDIT atau DEBIT melalui field direction. Debit tetap tidak boleh membuat saldo negatif.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OwnerID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateWalletTransactionRequest"
+      responses:
+        "201":
+          description: Adjustment berhasil dicatat
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+        "400":
+          description: Direction invalid, decimal invalid, idempotency kosong, atau saldo tidak cukup
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+  /api/v1/owners/{owner_id}/wallet/refunds:
+    post:
+      tags: [Wallet]
+      summary: Mencatat refund wallet
+      operationId: createOwnerWalletRefund
+      description: Admin-only. Refund diperlakukan sebagai DEBIT ledger karena saldo dikembalikan keluar dari wallet owner.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OwnerID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateWalletTransactionRequest"
+      responses:
+        "201":
+          description: Refund berhasil dicatat
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+        "400":
+          description: Payload invalid, idempotency kosong, atau saldo tidak cukup
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
 components:
   securitySchemes:
     bearerAuth:
@@ -1576,6 +2139,20 @@ components:
         format: int64
     TrainingID:
       name: training_id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+    ClosingID:
+      name: closing_id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+    PaymentID:
+      name: payment_id
       in: path
       required: true
       schema:
@@ -1710,7 +2287,210 @@ components:
           type: string
           format: password
           description: Optional; jika kosong sistem membuat temporary password.
-    CreateOwnerRequest:
+    CreateTopupRequest:
+      type: object
+      required: [amount]
+      properties:
+        amount:
+          type: string
+          pattern: "^[0-9]+(\\.[0-9]{1,2})?$"
+          example: "1000000.00"
+          description: Decimal string; tidak boleh float JSON agar presisi uang aman.
+        payment_channel:
+          type: string
+          example: MIDTRANS
+        external_reference:
+          type: string
+          example: MIDTRANS-TRX-20260723-001
+        idempotency_key:
+          type: string
+          example: topup-owner-1-20260723
+          description: Wajib jika external_reference kosong. Digunakan agar payment yang sama tidak diproses dua kali.
+        paid_at:
+          type: string
+          format: date-time
+          example: "2026-07-23T10:30:00Z"
+        note:
+          type: string
+          example: Top-up via transfer BCA.
+    CreateWalletTransactionRequest:
+      type: object
+      required: [amount]
+      properties:
+        amount:
+          type: string
+          pattern: "^[0-9]+(\\.[0-9]{1,2})?$"
+          example: "250000.00"
+        direction:
+          type: string
+          enum: [CREDIT, DEBIT]
+          description: Wajib untuk adjustment; diabaikan oleh debit/refund karena debit/refund selalu DEBIT.
+        source_reference:
+          type: string
+          example: MANUAL-CORRECTION-001
+        external_reference:
+          type: string
+          example: EXT-LEDGER-001
+        idempotency_key:
+          type: string
+          example: wallet-ledger-owner-1-001
+        occurred_at:
+          type: string
+          format: date-time
+          example: "2026-07-23T11:00:00Z"
+        note:
+          type: string
+          example: Koreksi saldo manual oleh Admin.
+    OwnerRef:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        code:
+          type: string
+        name:
+          type: string
+    UserBrief:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        role:
+          type: string
+    WalletAccountResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        owner:
+          $ref: "#/components/schemas/OwnerRef"
+        account_code:
+          type: string
+          example: WALLET-OWNER-000001
+        currency:
+          type: string
+          example: IDR
+        balance:
+          type: string
+          example: "1500000.00"
+        ledger_balance:
+          type: string
+          example: "1500000.00"
+        status:
+          type: string
+          enum: [ACTIVE]
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    WalletPaymentResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        code:
+          type: string
+        owner:
+          $ref: "#/components/schemas/OwnerRef"
+        wallet_account_id:
+          type: integer
+          format: int64
+        payment_type:
+          type: string
+          enum: [TOPUP]
+        payment_channel:
+          type: string
+        external_reference:
+          type: string
+        idempotency_key:
+          type: string
+        amount:
+          type: string
+        currency:
+          type: string
+        status:
+          type: string
+          enum: [PAID]
+        paid_at:
+          type: string
+          format: date-time
+        note:
+          type: string
+        created_by:
+          $ref: "#/components/schemas/UserBrief"
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    WalletTransactionResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        code:
+          type: string
+        wallet_account_id:
+          type: integer
+          format: int64
+        owner:
+          $ref: "#/components/schemas/OwnerRef"
+        payment_id:
+          type: integer
+          format: int64
+        transaction_type:
+          type: string
+          enum: [CREDIT, DEBIT, ADJUSTMENT, REFUND]
+        direction:
+          type: string
+          enum: [CREDIT, DEBIT]
+        amount:
+          type: string
+        balance_before:
+          type: string
+        balance_after:
+          type: string
+        currency:
+          type: string
+        source_type:
+          type: string
+        source_reference:
+          type: string
+        external_reference:
+          type: string
+        idempotency_key:
+          type: string
+        occurred_at:
+          type: string
+          format: date-time
+        note:
+          type: string
+        created_by:
+          $ref: "#/components/schemas/UserBrief"
+        created_at:
+          type: string
+          format: date-time
+    TopupResponse:
+      type: object
+      properties:
+        payment:
+          $ref: "#/components/schemas/WalletPaymentResponse"
+        transaction:
+          $ref: "#/components/schemas/WalletTransactionResponse"
+        wallet:
+          $ref: "#/components/schemas/WalletAccountResponse"
+        idempotent:
+          type: boolean    CreateOwnerRequest:
       type: object
       required: [code, name]
       properties:
@@ -2231,7 +3011,47 @@ components:
           minItems: 1
           items:
             type: integer
-            format: int64    SuccessEnvelope:
+            format: int64
+    CreateClosingRequest:
+      type: object
+      required: [plan_id]
+      properties:
+        plan_id:
+          type: integer
+          format: int64
+        promotion_id:
+          type: integer
+          format: int64
+          nullable: true
+        discount_amount:
+          type: string
+          example: "0.00"
+        unique_transfer_code:
+          type: integer
+          minimum: 0
+          maximum: 999
+        closed_at:
+          type: string
+          format: date-time
+        interaction_type:
+          type: string
+          enum: [CALL, CHAT]
+        contact_name:
+          type: string
+        contact_phone:
+          type: string
+        customer_response:
+          type: string
+        note:
+          type: string
+    UpdateClosingStatusRequest:
+      type: object
+      properties:
+        note:
+          type: string
+        reason:
+          type: string
+    SuccessEnvelope:
       type: object
       required: [data, meta]
       properties:

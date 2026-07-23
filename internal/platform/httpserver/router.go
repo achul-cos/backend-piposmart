@@ -8,11 +8,13 @@ import (
 
 	"backend_crm_piposmart/internal/activity"
 	"backend_crm_piposmart/internal/catalog"
+	"backend_crm_piposmart/internal/closing"
 	"backend_crm_piposmart/internal/customer"
 	"backend_crm_piposmart/internal/identity"
 	"backend_crm_piposmart/internal/lead"
 	"backend_crm_piposmart/internal/platform/config"
 	"backend_crm_piposmart/internal/platform/httpx"
+	"backend_crm_piposmart/internal/wallet"
 
 	"database/sql"
 
@@ -121,6 +123,18 @@ func NewRouter(cfg config.Config, logger *slog.Logger, connection Connection) *g
 		catalogRoutes := api.Group("")
 		catalogRoutes.Use(identity.AuthMiddleware(identityService))
 		catalog.NewHandler(catalogService).RegisterRoutes(catalogRoutes)
+
+		closingRepository := closing.NewRepository(connection.SQLDB())
+		closingService := closing.NewService(closingRepository)
+		closingRoutes := api.Group("")
+		closingRoutes.Use(identity.AuthMiddleware(identityService))
+		closing.NewHandler(closingService).RegisterRoutes(closingRoutes)
+
+		walletRepository := wallet.NewRepository(connection.SQLDB())
+		walletService := wallet.NewService(walletRepository)
+		walletRoutes := api.Group("")
+		walletRoutes.Use(identity.AuthMiddleware(identityService))
+		wallet.NewHandler(walletService).RegisterRoutes(walletRoutes)
 	}
 
 	router.NoRoute(func(c *gin.Context) {

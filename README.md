@@ -2056,6 +2056,446 @@ Response `400 Bad Request`:
   }
 }
 ```
+### Closing dan Laporan Penjualan
+
+Mulai Sprint 8, closing penjualan dipisahkan dari activity biasa. Sales membuat
+closing dari lead miliknya melalui endpoint khusus. Endpoint ini menyimpan:
+
+- snapshot package, plan/tenor, harga, dan promo;
+- perhitungan `base_price`, `discount_amount`, `additional_charge`,
+  `unique_transfer_code`, dan `final_amount`;
+- status awal `PENDING_RECONCILIATION`;
+- interaction remark score `3` dan stage history `CLOSING` dalam satu transaksi.
+
+Aturan utama:
+
+- Sales hanya dapat membuat closing untuk lead yang sedang menjadi miliknya.
+- Remark score `3` tidak boleh dibuat langsung melalui endpoint interaction.
+- Jika create closing gagal, remark `3` juga batal karena berada dalam satu
+  database transaction.
+- Promo berbayar tidak dipilih otomatis; frontend harus mengirim
+  `promotion_id` jika customer memilih promo tersebut.
+- Snapshot closing tidak berubah walaupun master package/plan/promo diedit.
+- Pending closing belum dianggap confirmed KPI/revenue closing.
+
+Header wajib:
+
+```http
+Authorization: Bearer {access_token}
+Content-Type: application/json
+Accept: application/json
+```
+
+| Nama Route | Method | Path | Fungsi |
+| --- | --- | --- | --- |
+| List Closing | GET | `/api/v1/closings` | List closing sesuai role actor. |
+| Detail Closing | GET | `/api/v1/closings/{closing_id}` | Detail closing dan snapshot transaksi. |
+| Create Lead Closing | POST | `/api/v1/leads/{lead_id}/closings` | Sales membuat closing untuk lead miliknya. |
+| Confirm Closing | POST | `/api/v1/closings/{closing_id}/confirm` | Admin/Supervisor confirm closing pending. |
+| Reject Closing | POST | `/api/v1/closings/{closing_id}/reject` | Admin/Supervisor reject closing pending. |
+| Soft Delete Closing | DELETE | `/api/v1/closings/{closing_id}` | Soft delete closing. |
+| Restore Closing | PATCH | `/api/v1/closings/{closing_id}/restore` | Restore closing soft-deleted. |
+| Force Delete Closing | DELETE | `/api/v1/closings/{closing_id}/force` | Hard delete closing permanen. |
+| Bulk Soft Delete | DELETE | `/api/v1/closings/bulk` | Bulk soft delete closing. |
+| Bulk Restore | PATCH | `/api/v1/closings/bulk/restore` | Bulk restore closing. |
+| Bulk Force Delete | DELETE | `/api/v1/closings/bulk/force` | Bulk hard delete closing. |
+
+Query list closing:
+
+| Parameter | Contoh | Fungsi |
+| --- | --- | --- |
+| `q` | `Laundry Cerah` | Search kode closing, kode lead, atau nama owner. |
+| `status` | `PENDING_RECONCILIATION` | Filter status closing. |
+| `sales_id` | `3` | Filter Sales. |
+| `supervisor_id` | `2` | Filter Supervisor. |
+| `lead_id` | `10` | Filter lead. |
+| `owner_id` | `15` | Filter owner. |
+| `plan_id` | `8` | Filter plan. |
+| `closed_from` | `2026-07-01` | Batas awal tanggal closing. |
+| `closed_to` | `2026-07-31` | Batas akhir tanggal closing. |
+| `page` | `1` | Halaman list. |
+| `limit` | `10` | Maksimal 100. |
+| `sort` | `-closed_at` | Sort: `closed_at`, `created_at`, `updated_at`, `status`, `final_amount`, `code`. |
+
+#### POST `/api/v1/leads/{lead_id}/closings`
+
+```http
+POST /api/v1/leads/10/closings
+Authorization: Bearer {sales_access_token}
+Content-Type: application/json
+Accept: application/json
+```
+
+```json
+{
+  "plan_id": 8,
+  "promotion_id": 1,
+  "discount_amount": "0.00",
+  "unique_transfer_code": 123,
+  "closed_at": "2026-07-23T10:00:00+07:00",
+  "interaction_type": "CALL",
+  "contact_name": "Owner Laundry",
+  "contact_phone": "6281234567890",
+  "customer_response": "Customer setuju ambil paket Business 12 bulan",
+  "note": "Closing Business 12 + promo free 1 bulan"
+}
+```
+
+Response `201 Created`:
+
+```json
+{
+  "data": {
+    "id": 1,
+    "code": "CLS-20260723-000010-123456",
+    "status": "PENDING_RECONCILIATION",
+    "tenure_months": 12,
+    "duration_days": 360,
+    "base_price": "1698600.00",
+    "discount_amount": "0.00",
+    "additional_charge": "0.00",
+    "unique_transfer_code": 123,
+    "final_amount": "1698723.00",
+    "currency": "IDR",
+    "plan_snapshot": {
+      "code": "BUSINESS_12_MONTHS",
+      "tenure_months": 12,
+      "duration_days": 360,
+      "price": "1698600.00"
+    },
+    "promotion_snapshot": {
+      "code": "FREE_1_MONTH_BUSINESS_12",
+      "charge_type": "FREE"
+    }
+  },
+  "meta": {
+    "request_id": "generated-request-id"
+  }
+}
+```
+
+#### POST `/api/v1/closings/{closing_id}/confirm`
+
+```http
+POST /api/v1/closings/1/confirm
+Authorization: Bearer {admin_or_supervisor_access_token}
+Content-Type: application/json
+```
+
+```json
+{
+  "note": "Sudah cocok dengan laporan pembayaran manual"
+}
+```
+
+Response `200 OK` mengembalikan status `CONFIRMED`.
+
+#### Contoh error closing
+
+Sales membuat closing untuk lead milik Sales lain:
+
+```json
+{
+  "error": {
+    "code": "FORBIDDEN",
+    "message": "akses ditolak",
+    "request_id": "generated-request-id"
+  }
+}
+```
+
+Discount membuat final amount negatif:
+
+```json
+{
+  "plan_id": 8,
+  "discount_amount": "999999999.00"
+}
+```
+
+Response `400 Bad Request`:
+
+```json
+{
+  "error": {
+    "code": "FINAL_AMOUNT_NEGATIVE",
+    "message": "final amount tidak boleh negatif",
+    "request_id": "generated-request-id"
+  }
+}
+```
+
+Promo tidak eligible untuk plan:
+
+```json
+{
+  "error": {
+    "code": "INVALID_PROMOTION",
+    "message": "promo tidak eligible untuk plan yang dipilih",
+    "request_id": "generated-request-id"
+  }
+}
+```
+### Payment, Top-up, dan Wallet Ledger
+
+Mulai Sprint 9, wallet owner dipakai untuk mencatat saldo internal aplikasi Piposmart. Top-up dianggap revenue perusahaan berdasarkan `paid_at`, sedangkan debit/penggunaan saldo dicatat di ledger agar tidak terjadi double counting dengan closing.
+
+Aturan penting:
+
+- Admin dapat mencatat top-up, debit, adjustment, dan refund.
+- Supervisor dan Sales hanya dapat membaca wallet/payment/ledger sesuai cakupan owner yang dapat mereka akses.
+- Top-up membuat `wallet_payments` dan ledger `CREDIT` dalam satu transaksi database.
+- Debit, adjustment debit, dan refund tidak boleh membuat saldo negatif.
+- `idempotency_key` atau `external_reference` wajib dikirim agar transaksi yang sama tidak diproses dua kali.
+- Nilai uang dikirim sebagai string decimal, contoh `"1000000.00"`, bukan JSON number/float.
+
+| Nama Route | Method | Path | Fungsi |
+| --- | --- | --- | --- |
+| List Wallet | GET | `/api/v1/wallets` | Melihat wallet owner sesuai role user. |
+| Detail Owner Wallet | GET | `/api/v1/owners/{owner_id}/wallet` | Melihat saldo wallet satu owner. |
+| List Payment | GET | `/api/v1/wallet-payments` | Rekap payment/top-up owner berdasarkan `paid_at`. |
+| Detail Payment | GET | `/api/v1/wallet-payments/{payment_id}` | Detail top-up/payment. |
+| List Ledger | GET | `/api/v1/wallet-transactions` | Melihat semua transaksi ledger sesuai role. |
+| List Owner Ledger | GET | `/api/v1/owners/{owner_id}/wallet/transactions` | Melihat ledger untuk satu owner. |
+| Create Top-up | POST | `/api/v1/owners/{owner_id}/wallet/topups` | Admin mencatat top-up owner. |
+| Create Debit | POST | `/api/v1/owners/{owner_id}/wallet/debits` | Admin mencatat saldo terpakai/manual debit. |
+| Create Adjustment | POST | `/api/v1/owners/{owner_id}/wallet/adjustments` | Admin mencatat koreksi saldo credit/debit. |
+| Create Refund | POST | `/api/v1/owners/{owner_id}/wallet/refunds` | Admin mencatat saldo keluar karena refund. |
+
+Query list wallet:
+
+| Query | Contoh | Fungsi |
+| --- | --- | --- |
+| `q` | `Laundry Cerah` | Search account code, kode owner, atau nama owner. |
+| `owner_id` | `1` | Filter wallet milik owner tertentu. |
+| `status` | `ACTIVE` | Filter status wallet. |
+| `sort` | `-balance` | Sort by `created_at`, `updated_at`, `balance`, atau `code`. Prefix `-` berarti descending. |
+| `page` | `1` | Halaman data. |
+| `limit` | `10` | Jumlah data per halaman, maksimal 100. |
+
+Query list payment/top-up:
+
+| Query | Contoh | Fungsi |
+| --- | --- | --- |
+| `q` | `MIDTRANS` | Search kode payment, external reference, atau nama owner. |
+| `owner_id` | `1` | Filter payment owner tertentu. |
+| `payment_type` | `TOPUP` | Filter jenis payment. Saat ini tersedia `TOPUP`. |
+| `channel` | `MIDTRANS` | Filter channel payment. |
+| `paid_from` | `2026-07-01` | Batas awal tanggal top-up/revenue. |
+| `paid_to` | `2026-07-31` | Batas akhir tanggal top-up/revenue. |
+| `sort` | `-paid_at` | Sort by `paid_at`, `created_at`, `amount`, atau `code`. |
+| `page`, `limit` | `1`, `10` | Pagination. |
+
+Query list ledger:
+
+| Query | Contoh | Fungsi |
+| --- | --- | --- |
+| `q` | `DEMO-TOPUP` | Search kode ledger, source reference, external reference, atau nama owner. |
+| `owner_id` | `1` | Filter ledger owner tertentu. |
+| `direction` | `CREDIT` | Filter arah ledger: `CREDIT` atau `DEBIT`. |
+| `type` | `CREDIT` | Filter tipe transaksi: `CREDIT`, `DEBIT`, `ADJUSTMENT`, `REFUND`. |
+| `occurred_from` | `2026-07-01` | Batas awal tanggal ledger. |
+| `occurred_to` | `2026-07-31` | Batas akhir tanggal ledger. |
+| `sort` | `-occurred_at` | Sort by `occurred_at`, `created_at`, `amount`, atau `code`. |
+| `page`, `limit` | `1`, `10` | Pagination. |
+
+#### POST `/api/v1/owners/{owner_id}/wallet/topups`
+
+Contoh request:
+
+```http
+POST /api/v1/owners/1/wallet/topups
+Authorization: Bearer {admin_access_token}
+Accept: application/json
+Content-Type: application/json
+```
+
+```json
+{
+  "amount": "1000000.00",
+  "payment_channel": "MIDTRANS",
+  "external_reference": "MIDTRANS-TRX-20260723-001",
+  "idempotency_key": "topup-owner-1-20260723-001",
+  "paid_at": "2026-07-23T10:30:00Z",
+  "note": "Top-up dari aplikasi Piposmart"
+}
+```
+
+Contoh response `201 Created`:
+
+```json
+{
+  "data": {
+    "payment": {
+      "id": 1,
+      "code": "PAY-20260723103000-000001-000000",
+      "payment_type": "TOPUP",
+      "payment_channel": "MIDTRANS",
+      "amount": "1000000.00",
+      "currency": "IDR",
+      "status": "PAID"
+    },
+    "transaction": {
+      "id": 1,
+      "transaction_type": "CREDIT",
+      "direction": "CREDIT",
+      "amount": "1000000.00",
+      "balance_before": "0.00",
+      "balance_after": "1000000.00"
+    },
+    "wallet": {
+      "id": 1,
+      "account_code": "WALLET-OWNER-000001",
+      "balance": "1000000.00",
+      "ledger_balance": "1000000.00",
+      "currency": "IDR",
+      "status": "ACTIVE"
+    },
+    "idempotent": false
+  },
+  "meta": {
+    "request_id": "generated-request-id"
+  }
+}
+```
+
+Jika request yang sama dikirim ulang dengan `idempotency_key` yang sama, API mengembalikan data existing dengan `idempotent: true` dan saldo tidak bertambah dua kali.
+
+#### POST `/api/v1/owners/{owner_id}/wallet/debits`
+
+Contoh request:
+
+```http
+POST /api/v1/owners/1/wallet/debits
+Authorization: Bearer {admin_access_token}
+Accept: application/json
+Content-Type: application/json
+```
+
+```json
+{
+  "amount": "250000.00",
+  "source_reference": "MANUAL-USAGE-001",
+  "external_reference": "CRM-DEBIT-20260723-001",
+  "idempotency_key": "debit-owner-1-20260723-001",
+  "occurred_at": "2026-07-23T11:00:00Z",
+  "note": "Saldo digunakan untuk pembelian paket, sebelum modul order Sprint 10"
+}
+```
+
+Contoh response `201 Created`:
+
+```json
+{
+  "data": {
+    "id": 2,
+    "transaction_type": "DEBIT",
+    "direction": "DEBIT",
+    "amount": "250000.00",
+    "balance_before": "1000000.00",
+    "balance_after": "750000.00",
+    "source_type": "MANUAL_DEBIT"
+  },
+  "meta": {
+    "request_id": "generated-request-id"
+  }
+}
+```
+
+#### POST `/api/v1/owners/{owner_id}/wallet/adjustments`
+
+Adjustment membutuhkan `direction` karena bisa menambah atau mengurangi saldo.
+
+```json
+{
+  "amount": "50000.00",
+  "direction": "CREDIT",
+  "source_reference": "ADJ-ADMIN-001",
+  "idempotency_key": "adjustment-owner-1-001",
+  "note": "Koreksi saldo manual"
+}
+```
+
+#### Contoh error wallet
+
+Top-up tanpa `idempotency_key` dan tanpa `external_reference`:
+
+```http
+POST /api/v1/owners/1/wallet/topups
+Authorization: Bearer {admin_access_token}
+Content-Type: application/json
+```
+
+```json
+{
+  "amount": "100000.00",
+  "payment_channel": "MANUAL"
+}
+```
+
+Response `400 Bad Request`:
+
+```json
+{
+  "error": {
+    "code": "IDEMPOTENCY_REQUIRED",
+    "message": "idempotency_key atau external_reference wajib dikirim",
+    "details": null,
+    "request_id": "generated-request-id"
+  }
+}
+```
+
+Debit melebihi saldo:
+
+```json
+{
+  "amount": "999999999.00",
+  "idempotency_key": "debit-over-balance-owner-1"
+}
+```
+
+Response `400 Bad Request`:
+
+```json
+{
+  "error": {
+    "code": "INSUFFICIENT_BALANCE",
+    "message": "saldo wallet tidak mencukupi",
+    "details": null,
+    "request_id": "generated-request-id"
+  }
+}
+```
+
+Sales mencoba membuat adjustment:
+
+```http
+POST /api/v1/owners/1/wallet/adjustments
+Authorization: Bearer {sales_access_token}
+Content-Type: application/json
+```
+
+Response `403 Forbidden`:
+
+```json
+{
+  "error": {
+    "code": "FORBIDDEN",
+    "message": "akses ditolak",
+    "details": null,
+    "request_id": "generated-request-id"
+  }
+}
+```
+
+List payment revenue top-up bulan Juli:
+
+```http
+GET /api/v1/wallet-payments?paid_from=2026-07-01&paid_to=2026-07-31&sort=-paid_at&page=1&limit=10
+Authorization: Bearer {admin_access_token}
+Accept: application/json
+```
 ### Error Umum API
 
 | Kondisi | Status | Code |

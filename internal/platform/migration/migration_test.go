@@ -57,6 +57,8 @@ func TestExpectedSQLMigrationsArePresent(t *testing.T) {
 		"20260723000300_owner_outlet_orphan_delete_policy.sql",
 		"20260723000400_lead_ownership_assignment.sql",
 		"20260723000500_customer_interactions_training.sql",
+		"20260723000600_sales_closings.sql",
+		"20260723000700_wallet_payment_ledger.sql",
 	}
 	for _, item := range required {
 		if !sqlFiles[item] {

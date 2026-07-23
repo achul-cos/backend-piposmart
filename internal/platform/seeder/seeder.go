@@ -583,12 +583,15 @@ func seedDemoMinimal(ctx context.Context, tx *sql.Tx, options Options) error {
 		}
 	}
 
+	leadIDs := []int64{}
+	ownerIDs := []int64{}
 	for ownerIndex := 1; ownerIndex <= 4; ownerIndex++ {
 		owner := fake.BuildOwner(ownerIndex)
 		ownerID, err := fake.CreateOwner(ctx, tx, owner)
 		if err != nil {
 			return err
 		}
+		ownerIDs = append(ownerIDs, ownerID)
 
 		outletCount := 1
 		if ownerIndex == 2 {
@@ -615,6 +618,7 @@ func seedDemoMinimal(ctx context.Context, tx *sql.Tx, options Options) error {
 		if err != nil {
 			return err
 		}
+		leadIDs = append(leadIDs, leadID)
 		remarkScore := ownerIndex - 1
 		interaction := fake.BuildInteraction(ownerIndex, remarkScore)
 		if _, err := fake.CreateInteraction(ctx, tx, leadID, interaction); err != nil {
@@ -627,9 +631,44 @@ func seedDemoMinimal(ctx context.Context, tx *sql.Tx, options Options) error {
 			}
 		}
 	}
+
+	closingScenarios := []factory.Closing{
+		fake.BuildClosing(1, "BASIC_01_MONTHS", "", "PENDING_RECONCILIATION"),
+		fake.BuildClosing(2, "BUSINESS_12_MONTHS", "FREE_1_MONTH_BUSINESS_12", "CONFIRMED"),
+		fake.BuildClosing(3, "PRO_12_MONTHS", "PRO_12_ANDROID_POS_BUNDLE", "PENDING_RECONCILIATION"),
+	}
+	for index, closing := range closingScenarios {
+		if index >= len(leadIDs) {
+			break
+		}
+		if _, err := fake.CreateClosing(ctx, tx, leadIDs[index], closing); err != nil {
+			return err
+		}
+	}
+
+	if len(ownerIDs) >= 2 {
+		usedTopup := fake.BuildWalletTopup(1, "2000000.00")
+		usedTopup.ExternalReference = "DEMO-TOPUP-USED-OWNER-001"
+		usedTopup.IdempotencyKey = "demo:topup:used-owner-001"
+		if _, err := fake.CreateWalletTopup(ctx, tx, ownerIDs[0], usedTopup); err != nil {
+			return err
+		}
+		usedDebit := fake.BuildWalletDebit(1, "500000.00")
+		usedDebit.ExternalReference = "DEMO-DEBIT-USED-OWNER-001"
+		usedDebit.IdempotencyKey = "demo:debit:used-owner-001"
+		if _, err := fake.CreateWalletDebit(ctx, tx, ownerIDs[0], usedDebit); err != nil {
+			return err
+		}
+
+		unusedTopup := fake.BuildWalletTopup(2, "1250000.00")
+		unusedTopup.ExternalReference = "DEMO-TOPUP-UNUSED-OWNER-002"
+		unusedTopup.IdempotencyKey = "demo:topup:unused-owner-002"
+		if _, err := fake.CreateWalletTopup(ctx, tx, ownerIDs[1], unusedTopup); err != nil {
+			return err
+		}
+	}
 	return nil
 }
-
 func lookupID(ctx context.Context, tx *sql.Tx, table, column, value string) (int64, error) {
 	query := fmt.Sprintf("SELECT id FROM %s WHERE %s = ?", table, column)
 	var id int64

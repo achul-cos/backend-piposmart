@@ -119,6 +119,9 @@ func validateInteractionRequest(req CreateInteractionRequest) error {
 	if req.RemarkScore != nil && (*req.RemarkScore < 0 || *req.RemarkScore > 3) {
 		return ErrInvalidScore
 	}
+	if req.RemarkScore != nil && *req.RemarkScore == 3 {
+		return ErrInvalidTransition
+	}
 	if req.DurationSeconds != nil && *req.DurationSeconds < 0 {
 		return ErrInvalidTransition
 	}
