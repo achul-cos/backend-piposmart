@@ -54,6 +54,13 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 
 			partnerGroup.GET("/referrals", h.ListReferrals)
 			partnerGroup.POST("/referrals", h.CreateReferral)
+
+			partnerGroup.POST("/commissions/sync", h.SyncCommissions)
+			partnerGroup.GET("/commissions", h.ListCommissions)
+			partnerGroup.GET("/commissions/:commissionID", h.GetCommission)
+			partnerGroup.PATCH("/commissions/:commissionID/approve", h.ApproveCommission)
+			partnerGroup.PATCH("/commissions/:commissionID/pay", h.PayCommission)
+			partnerGroup.PATCH("/commissions/:commissionID/cancel", h.CancelCommission)
 		}
 	}
 }
@@ -82,6 +89,8 @@ func (h *Handler) CreatePartnerType(c *gin.Context) {
 		switch err {
 		case ErrDuplicateType:
 			httpx.Error(c, http.StatusConflict, "PARTNER_TYPE_CODE_EXISTS", "partner type code already exists", nil)
+		case ErrInvalidCommissionRate, ErrInvalidMoney, ErrInvalidCommissionMode:
+			httpx.Error(c, http.StatusBadRequest, "INVALID_COMMISSION_VALUE", err.Error(), nil)
 		default:
 			httpx.Error(c, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to create partner type", nil)
 		}
@@ -167,9 +176,12 @@ func (h *Handler) UpdatePartnerType(c *gin.Context) {
 	}
 	resp, err := h.service.UpdatePartnerType(c.Request.Context(), id, req)
 	if err != nil {
-		if err == ErrNotFound {
+		switch err {
+		case ErrNotFound:
 			httpx.Error(c, http.StatusNotFound, "NOT_FOUND", "partner type not found", nil)
-		} else {
+		case ErrInvalidCommissionRate, ErrInvalidMoney, ErrInvalidCommissionMode:
+			httpx.Error(c, http.StatusBadRequest, "INVALID_COMMISSION_VALUE", err.Error(), nil)
+		default:
 			httpx.Error(c, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to update partner type", nil)
 		}
 		return
@@ -631,4 +643,218 @@ func (h *Handler) ListReferrals(c *gin.Context) {
 			Total: int64(len(list)),
 		},
 	})
+}
+
+/* ---------- PartnerCommission ---------- */
+
+// SyncCommissions godoc
+// @Summary Sync commissions from confirmed closings
+// @Description Scan confirmed closings tied to this partner's referrals and create PENDING commission records for any not yet synced (ADMIN/SUPERVISOR only, idempotent)
+// @Tags partner-commissions
+// @Accept json
+// @Produce json
+// @Param partnerID path int64 true "Partner ID"
+// @Success 200 {object} SyncCommissionsResponse
+// @Failure 403 {object} httpx.ErrorEnvelope
+// @Failure 404 {object} httpx.ErrorEnvelope
+// @Router /partners/{partnerID}/commissions/sync [post]
+func (h *Handler) SyncCommissions(c *gin.Context) {
+	partnerID, err := strconv.ParseInt(c.Param("partnerID"), 10, 64)
+	if err != nil {
+		httpx.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", "invalid partner ID", nil)
+		return
+	}
+	actor, _ := identity.CurrentUser(c)
+	resp, err := h.service.SyncCommissions(c.Request.Context(), actor, partnerID)
+	if err != nil {
+		writeCommissionError(c, err)
+		return
+	}
+	httpx.Success(c, http.StatusOK, resp)
+}
+
+// ListCommissions godoc
+// @Summary List partner commissions
+// @Description Get a paginated list of commissions earned by a partner, optionally filtered by status
+// @Tags partner-commissions
+// @Accept json
+// @Produce json
+// @Param partnerID path int64 true "Partner ID"
+// @Param status query string false "Filter by status (PENDING, APPROVED, PAID, CANCELLED)"
+// @Param page query int false "Page number (default 1)"
+// @Param limit query int false "Page size (default 10)"
+// @Success 200 {object} PartnerCommissionListResponse
+// @Router /partners/{partnerID}/commissions [get]
+func (h *Handler) ListCommissions(c *gin.Context) {
+	partnerID, err := strconv.ParseInt(c.Param("partnerID"), 10, 64)
+	if err != nil {
+		httpx.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", "invalid partner ID", nil)
+		return
+	}
+	status := c.DefaultQuery("status", "")
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))
+	resp, err := h.service.ListCommissions(c.Request.Context(), partnerID, status, page, limit)
+	if err != nil {
+		writeCommissionError(c, err)
+		return
+	}
+	httpx.Success(c, http.StatusOK, resp)
+}
+
+// GetCommission godoc
+// @Summary Get partner commission detail
+// @Description Retrieve a single commission by ID, scoped to the given partner
+// @Tags partner-commissions
+// @Accept json
+// @Produce json
+// @Param partnerID path int64 true "Partner ID"
+// @Param commissionID path int64 true "Commission ID"
+// @Success 200 {object} PartnerCommissionResponse
+// @Failure 404 {object} httpx.ErrorEnvelope
+// @Router /partners/{partnerID}/commissions/{commissionID} [get]
+func (h *Handler) GetCommission(c *gin.Context) {
+	partnerID, commissionID, ok := h.parsePartnerCommissionIDs(c)
+	if !ok {
+		return
+	}
+	resp, err := h.service.GetCommission(c.Request.Context(), commissionID)
+	if err != nil {
+		writeCommissionError(c, err)
+		return
+	}
+	if resp.PartnerID != partnerID {
+		httpx.Error(c, http.StatusNotFound, "NOT_FOUND", "commission not found for this partner", nil)
+		return
+	}
+	httpx.Success(c, http.StatusOK, resp)
+}
+
+// ApproveCommission godoc
+// @Summary Approve a pending commission
+// @Description Move a PENDING commission to APPROVED, marking it ready for payout (ADMIN/SUPERVISOR only)
+// @Tags partner-commissions
+// @Accept json
+// @Produce json
+// @Param partnerID path int64 true "Partner ID"
+// @Param commissionID path int64 true "Commission ID"
+// @Success 200 {object} PartnerCommissionResponse
+// @Failure 400 {object} httpx.ErrorEnvelope
+// @Failure 403 {object} httpx.ErrorEnvelope
+// @Failure 404 {object} httpx.ErrorEnvelope
+// @Router /partners/{partnerID}/commissions/{commissionID}/approve [patch]
+func (h *Handler) ApproveCommission(c *gin.Context) {
+	partnerID, commissionID, ok := h.parsePartnerCommissionIDs(c)
+	if !ok {
+		return
+	}
+	actor, _ := identity.CurrentUser(c)
+	resp, err := h.service.ApproveCommission(c.Request.Context(), actor, commissionID)
+	if err != nil {
+		writeCommissionError(c, err)
+		return
+	}
+	if resp.PartnerID != partnerID {
+		httpx.Error(c, http.StatusNotFound, "NOT_FOUND", "commission not found for this partner", nil)
+		return
+	}
+	httpx.Success(c, http.StatusOK, resp)
+}
+
+// PayCommission godoc
+// @Summary Mark a commission as paid
+// @Description Move an APPROVED commission to PAID (ADMIN only)
+// @Tags partner-commissions
+// @Accept json
+// @Produce json
+// @Param partnerID path int64 true "Partner ID"
+// @Param commissionID path int64 true "Commission ID"
+// @Success 200 {object} PartnerCommissionResponse
+// @Failure 400 {object} httpx.ErrorEnvelope
+// @Failure 403 {object} httpx.ErrorEnvelope
+// @Failure 404 {object} httpx.ErrorEnvelope
+// @Router /partners/{partnerID}/commissions/{commissionID}/pay [patch]
+func (h *Handler) PayCommission(c *gin.Context) {
+	partnerID, commissionID, ok := h.parsePartnerCommissionIDs(c)
+	if !ok {
+		return
+	}
+	actor, _ := identity.CurrentUser(c)
+	resp, err := h.service.PayCommission(c.Request.Context(), actor, commissionID)
+	if err != nil {
+		writeCommissionError(c, err)
+		return
+	}
+	if resp.PartnerID != partnerID {
+		httpx.Error(c, http.StatusNotFound, "NOT_FOUND", "commission not found for this partner", nil)
+		return
+	}
+	httpx.Success(c, http.StatusOK, resp)
+}
+
+// CancelCommission godoc
+// @Summary Cancel a commission
+// @Description Void a PENDING or APPROVED commission, e.g. when the underlying closing is later reversed (ADMIN/SUPERVISOR only)
+// @Tags partner-commissions
+// @Accept json
+// @Produce json
+// @Param partnerID path int64 true "Partner ID"
+// @Param commissionID path int64 true "Commission ID"
+// @Param request body CommissionActionRequest false "Cancellation note"
+// @Success 200 {object} PartnerCommissionResponse
+// @Failure 400 {object} httpx.ErrorEnvelope
+// @Failure 403 {object} httpx.ErrorEnvelope
+// @Failure 404 {object} httpx.ErrorEnvelope
+// @Router /partners/{partnerID}/commissions/{commissionID}/cancel [patch]
+func (h *Handler) CancelCommission(c *gin.Context) {
+	partnerID, commissionID, ok := h.parsePartnerCommissionIDs(c)
+	if !ok {
+		return
+	}
+	var req CommissionActionRequest
+	_ = c.ShouldBindJSON(&req) // note is optional; ignore empty/absent body
+	actor, _ := identity.CurrentUser(c)
+	resp, err := h.service.CancelCommission(c.Request.Context(), actor, commissionID, req.Note)
+	if err != nil {
+		writeCommissionError(c, err)
+		return
+	}
+	if resp.PartnerID != partnerID {
+		httpx.Error(c, http.StatusNotFound, "NOT_FOUND", "commission not found for this partner", nil)
+		return
+	}
+	httpx.Success(c, http.StatusOK, resp)
+}
+
+func (h *Handler) parsePartnerCommissionIDs(c *gin.Context) (partnerID int64, commissionID int64, ok bool) {
+	partnerID, err := strconv.ParseInt(c.Param("partnerID"), 10, 64)
+	if err != nil {
+		httpx.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", "invalid partner ID", nil)
+		return 0, 0, false
+	}
+	commissionID, err = strconv.ParseInt(c.Param("commissionID"), 10, 64)
+	if err != nil {
+		httpx.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", "invalid commission ID", nil)
+		return 0, 0, false
+	}
+	return partnerID, commissionID, true
+}
+
+func writeCommissionError(c *gin.Context, err error) {
+	switch err {
+	case ErrNotFound:
+		httpx.Error(c, http.StatusNotFound, "NOT_FOUND", "partner or commission not found", nil)
+	case ErrForbidden:
+		httpx.Error(c, http.StatusForbidden, "FORBIDDEN", "not allowed to perform this action", nil)
+	case ErrInvalidCommissionRate:
+		httpx.Error(c, http.StatusBadRequest, "INVALID_COMMISSION_RATE", err.Error(), nil)
+	case ErrInvalidCommissionStatus:
+		httpx.Error(c, http.StatusBadRequest, "INVALID_STATUS", err.Error(), nil)
+	case ErrInvalidMoney:
+		httpx.Error(c, http.StatusBadRequest, "INVALID_DECIMAL", err.Error(), nil)
+	case ErrCommissionAlreadyExists:
+		httpx.Error(c, http.StatusConflict, "COMMISSION_ALREADY_EXISTS", err.Error(), nil)
+	default:
+		httpx.Error(c, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to process commission request", nil)
+	}
 }

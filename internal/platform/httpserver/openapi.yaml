@@ -1,8 +1,8 @@
 openapi: 3.0.3
 info:
   title: Backend CRM Piposmart
-  version: 0.11.0-sprint-11
-  description: API CRM Piposmart dengan Partner Type, Partner (Encrypted & Masked Bank Account), PIC Assignment, Call Interactions, Lead Referrals, Subscription Order, dan Reconciliation Sprint 11.
+  version: 0.12.0-sprint-12
+  description: API CRM Piposmart dengan Partner Type, Partner (Encrypted & Masked Bank Account), PIC Assignment, Call Interactions, Lead Referrals, Subscription Order, Reconciliation Sprint 11, dan Partner Commission Sprint 12.
 servers:
   - url: http://localhost:8080
 paths:
@@ -2983,6 +2983,256 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/partners/{partnerID}/commissions/sync:
+    post:
+      tags: [Partner Commissions]
+      summary: Sync komisi dari confirmed closings
+      operationId: syncCommissions
+      description: Memindai confirmed closings yang terhubung ke referral partner ini dan membuat commission record berstatus PENDING untuk closing yang belum tersinkron. Idempotent, aman dipanggil berulang. Hanya ADMIN dan SUPERVISOR.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: partnerID
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: Sync selesai
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+        "403":
+          description: Akses ditolak (bukan ADMIN/SUPERVISOR)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "404":
+          description: Partner tidak ditemukan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+  /api/v1/partners/{partnerID}/commissions:
+    get:
+      tags: [Partner Commissions]
+      summary: List komisi partner
+      operationId: listCommissions
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: partnerID
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [PENDING, APPROVED, PAID, CANCELLED]
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 1
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 10
+      responses:
+        "200":
+          description: List komisi partner
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/partners/{partnerID}/commissions/{commissionID}:
+    get:
+      tags: [Partner Commissions]
+      summary: Detail komisi partner
+      operationId: getCommission
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: partnerID
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+        - name: commissionID
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: Detail komisi
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+        "404":
+          description: Komisi tidak ditemukan untuk partner ini
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+  /api/v1/partners/{partnerID}/commissions/{commissionID}/approve:
+    patch:
+      tags: [Partner Commissions]
+      summary: Approve komisi
+      operationId: approveCommission
+      description: Memindahkan commission dari PENDING ke APPROVED, menandakan siap dibayarkan. Hanya ADMIN dan SUPERVISOR.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: partnerID
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+        - name: commissionID
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: Komisi berhasil diapprove
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+        "400":
+          description: Status komisi tidak valid untuk transisi ini (harus PENDING)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "403":
+          description: Akses ditolak (bukan ADMIN/SUPERVISOR)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "404":
+          description: Komisi tidak ditemukan untuk partner ini
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+  /api/v1/partners/{partnerID}/commissions/{commissionID}/pay:
+    patch:
+      tags: [Partner Commissions]
+      summary: Tandai komisi sudah dibayar
+      operationId: payCommission
+      description: Memindahkan commission dari APPROVED ke PAID. Hanya ADMIN (uang benar-benar keluar dari bisnis).
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: partnerID
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+        - name: commissionID
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: Komisi berhasil ditandai sebagai PAID
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+        "400":
+          description: Status komisi tidak valid untuk transisi ini (harus APPROVED)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "403":
+          description: Akses ditolak (bukan ADMIN)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "404":
+          description: Komisi tidak ditemukan untuk partner ini
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+  /api/v1/partners/{partnerID}/commissions/{commissionID}/cancel:
+    patch:
+      tags: [Partner Commissions]
+      summary: Batalkan komisi
+      operationId: cancelCommission
+      description: Membatalkan commission berstatus PENDING atau APPROVED, misal karena closing terkait direversal. Hanya ADMIN dan SUPERVISOR.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: partnerID
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+        - name: commissionID
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CommissionActionRequest"
+      responses:
+        "200":
+          description: Komisi berhasil dibatalkan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+        "400":
+          description: Status komisi tidak valid untuk transisi ini (PAID/CANCELLED tidak bisa dibatalkan)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "403":
+          description: Akses ditolak (bukan ADMIN/SUPERVISOR)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "404":
+          description: Komisi tidak ditemukan untuk partner ini
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
 components:
   securitySchemes:
     bearerAuth:
@@ -4039,6 +4289,14 @@ components:
           type: string
         name:
           type: string
+        commission_mode:
+          type: string
+          enum: [PERCENTAGE, FIXED]
+          description: PERCENTAGE menerapkan commission_value sebagai persentase final_amount closing; FIXED membayar commission_value flat berapa pun besar closing-nya
+        commission_value:
+          type: string
+          description: Untuk PERCENTAGE berupa persentase (0-100); untuk FIXED berupa nominal flat
+          example: "5.00"
         description:
           type: string
         created_at:
@@ -4167,7 +4425,7 @@ components:
           format: date-time
     CreatePartnerTypeRequest:
       type: object
-      required: [code, name]
+      required: [code, name, commission_mode, commission_value]
       properties:
         code:
           type: string
@@ -4177,6 +4435,14 @@ components:
           type: string
           minLength: 3
           example: Supplier
+        commission_mode:
+          type: string
+          enum: [PERCENTAGE, FIXED]
+          example: PERCENTAGE
+        commission_value:
+          type: string
+          description: Untuk PERCENTAGE berupa persentase (0-100); untuk FIXED berupa nominal flat (>= 0)
+          example: "5.00"
         description:
           type: string
           example: Partner sebagai supplier produk
@@ -4186,6 +4452,12 @@ components:
         name:
           type: string
           example: Supplier Produk
+        commission_mode:
+          type: string
+          enum: [PERCENTAGE, FIXED]
+        commission_value:
+          type: string
+          example: "7.50"
         description:
           type: string
           example: Partner sebagai supplier produk berkualitas
@@ -4302,3 +4574,118 @@ components:
           type: string
           nullable: true
           example: Lead direkomendasikan oleh partner karena relasi bisnis
+    PartnerCommissionResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        code:
+          type: string
+          example: "COM-20260724-000004-000001"
+        partner_id:
+          type: integer
+          format: int64
+        partner_code:
+          type: string
+          nullable: true
+        partner_name:
+          type: string
+          nullable: true
+        referral_id:
+          type: integer
+          format: int64
+        closing_id:
+          type: integer
+          format: int64
+        closing_code:
+          type: string
+          nullable: true
+        commission_mode:
+          type: string
+          enum: [PERCENTAGE, FIXED]
+          description: Snapshot commission_mode partner_type saat komisi dihitung
+        commission_value:
+          type: string
+          description: Snapshot commission_value partner_type saat komisi dihitung
+          example: "5.00"
+        base_amount:
+          type: string
+          description: Snapshot final_amount closing saat komisi dihitung
+          example: "1000000.00"
+        commission_amount:
+          type: string
+          example: "50000.00"
+        currency:
+          type: string
+          example: IDR
+        status:
+          type: string
+          enum: [PENDING, APPROVED, PAID, CANCELLED]
+        note:
+          type: string
+          nullable: true
+        approved_by:
+          $ref: "#/components/schemas/PartnerCommissionUserBrief"
+        approved_at:
+          type: string
+          format: date-time
+          nullable: true
+        paid_by:
+          $ref: "#/components/schemas/PartnerCommissionUserBrief"
+        paid_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    PartnerCommissionUserBrief:
+      type: object
+      nullable: true
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        role:
+          type: string
+    PartnerCommissionListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/PartnerCommissionResponse"
+        pagination:
+          type: object
+          properties:
+            page:
+              type: integer
+            limit:
+              type: integer
+            total:
+              type: integer
+              format: int64
+    SyncCommissionsResponse:
+      type: object
+      properties:
+        created:
+          type: integer
+          format: int64
+          description: Jumlah commission record baru yang dibuat pada pemanggilan ini
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/PartnerCommissionResponse"
+    CommissionActionRequest:
+      type: object
+      properties:
+        note:
+          type: string
+          nullable: true
+          example: Closing dibatalkan, komisi tidak jadi dibayarkan

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // Repository defines the data access layer for partner entities.
@@ -28,9 +29,9 @@ type queryExecutor interface {
 
 func (r *Repository) CreatePartnerType(ctx context.Context, pt PartnerType) (int64, error) {
 	query := `
-		INSERT INTO partner_types (code, name, description, created_at, updated_at)
-		VALUES (?, ?, ?, NOW(), NOW())`
-	result, err := r.db.ExecContext(ctx, query, pt.Code, pt.Name, pt.Description)
+		INSERT INTO partner_types (code, name, commission_mode, commission_value, description, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, NOW(), NOW())`
+	result, err := r.db.ExecContext(ctx, query, pt.Code, pt.Name, pt.CommissionMode, pt.CommissionValue, pt.Description)
 	if err != nil {
 		return 0, mapDuplicateError(err, "uq_partner_types_code")
 	}
@@ -43,12 +44,12 @@ func (r *Repository) CreatePartnerType(ctx context.Context, pt PartnerType) (int
 
 func (r *Repository) GetPartnerTypeByID(ctx context.Context, id int64) (*PartnerType, error) {
 	query := `
-		SELECT id, code, name, description, created_at, updated_at
+		SELECT id, code, name, commission_mode, commission_value, description, created_at, updated_at
 		FROM partner_types
 		WHERE id = ?`
 	var pt PartnerType
 	err := r.db.QueryRowContext(ctx, query, id).Scan(
-		&pt.ID, &pt.Code, &pt.Name, &pt.Description, &pt.CreatedAt, &pt.UpdatedAt)
+		&pt.ID, &pt.Code, &pt.Name, &pt.CommissionMode, &pt.CommissionValue, &pt.Description, &pt.CreatedAt, &pt.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
@@ -60,7 +61,7 @@ func (r *Repository) GetPartnerTypeByID(ctx context.Context, id int64) (*Partner
 
 func (r *Repository) ListPartnerTypes(ctx context.Context) ([]PartnerType, error) {
 	query := `
-		SELECT id, code, name, description, created_at, updated_at
+		SELECT id, code, name, commission_mode, commission_value, description, created_at, updated_at
 		FROM partner_types
 		ORDER BY name`
 	rows, err := r.db.QueryContext(ctx, query)
@@ -72,7 +73,7 @@ func (r *Repository) ListPartnerTypes(ctx context.Context) ([]PartnerType, error
 	for rows.Next() {
 		var pt PartnerType
 		if err := rows.Scan(
-			&pt.ID, &pt.Code, &pt.Name, &pt.Description, &pt.CreatedAt, &pt.UpdatedAt); err != nil {
+			&pt.ID, &pt.Code, &pt.Name, &pt.CommissionMode, &pt.CommissionValue, &pt.Description, &pt.CreatedAt, &pt.UpdatedAt); err != nil {
 			return nil, err
 		}
 		list = append(list, pt)
@@ -86,9 +87,9 @@ func (r *Repository) ListPartnerTypes(ctx context.Context) ([]PartnerType, error
 func (r *Repository) UpdatePartnerType(ctx context.Context, id int64, pt PartnerType) error {
 	query := `
 		UPDATE partner_types
-		SET name = ?, description = ?, updated_at = NOW()
+		SET name = ?, commission_mode = ?, commission_value = ?, description = ?, updated_at = NOW()
 		WHERE id = ?`
-	result, err := r.db.ExecContext(ctx, query, pt.Name, pt.Description, id)
+	result, err := r.db.ExecContext(ctx, query, pt.Name, pt.CommissionMode, pt.CommissionValue, pt.Description, id)
 	if err != nil {
 		return err
 	}
@@ -446,6 +447,270 @@ func (r *Repository) GetReferralByPartnerLead(ctx context.Context, partnerID int
 	return &pr, nil
 }
 
+/* ---------- PartnerCommission ---------- */
+
+type commissionSyncCandidate struct {
+	ReferralID      int64
+	ClosingID       int64
+	FinalAmount     string
+	Currency        string
+	CommissionMode  string
+	CommissionValue string
+}
+
+// findSyncableClosings finds CONFIRMED closings tied to this partner's referrals
+// (matched by lead_id) that do not yet have a commission row. The commission rate is
+// read from the partner's partner_type (commission_mode/commission_value), not from the
+// partner itself.
+func (r *Repository) findSyncableClosings(ctx context.Context, tx *sql.Tx, partnerID int64) ([]commissionSyncCandidate, error) {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT pr.id, sc.id, CAST(sc.final_amount AS CHAR), sc.currency, pt.commission_mode, CAST(pt.commission_value AS CHAR)
+		FROM partner_referrals pr
+		JOIN sales_closings sc ON sc.lead_id = pr.lead_id AND sc.status = 'CONFIRMED' AND sc.deleted_at IS NULL
+		JOIN partners p ON p.id = pr.partner_id
+		JOIN partner_types pt ON pt.id = p.partner_type_id
+		LEFT JOIN partner_commissions pc ON pc.closing_id = sc.id
+		WHERE pr.partner_id = ? AND pc.id IS NULL`, partnerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var list []commissionSyncCandidate
+	for rows.Next() {
+		var c commissionSyncCandidate
+		if err := rows.Scan(&c.ReferralID, &c.ClosingID, &c.FinalAmount, &c.Currency, &c.CommissionMode, &c.CommissionValue); err != nil {
+			return nil, err
+		}
+		list = append(list, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return list, nil
+}
+
+// SyncCommissions scans confirmed closings tied to partnerID's referrals that don't
+// have a commission record yet and creates PENDING rows for them. Idempotent: closings
+// already synced (unique on closing_id) are skipped on subsequent calls.
+func (r *Repository) SyncCommissions(ctx context.Context, partnerID int64) ([]PartnerCommission, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	candidates, err := r.findSyncableClosings(ctx, tx, partnerID)
+	if err != nil {
+		return nil, err
+	}
+
+	createdIDs := make([]int64, 0, len(candidates))
+	for _, cand := range candidates {
+		baseCents, err := parseMoneyToCents(cand.FinalAmount)
+		if err != nil {
+			return nil, err
+		}
+		commissionCents, err := calculateCommissionAmountCents(cand.CommissionMode, cand.CommissionValue, baseCents)
+		if err != nil {
+			return nil, err
+		}
+		now := time.Now().UTC()
+		code := fmt.Sprintf("COM-%s-%06d-%06d", now.Format("20060102"), cand.ClosingID, now.Nanosecond()/1000)
+		result, err := tx.ExecContext(ctx, `
+			INSERT INTO partner_commissions (
+				code, partner_id, referral_id, closing_id, commission_mode, commission_value,
+				base_amount, commission_amount, currency, status, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+			code, partnerID, cand.ReferralID, cand.ClosingID, cand.CommissionMode, cand.CommissionValue,
+			formatCents(baseCents), formatCents(commissionCents), cand.Currency, CommissionStatusPending)
+		if err != nil {
+			return nil, mapDuplicateError(err, "uq_partner_commissions_closing")
+		}
+		id, err := result.LastInsertId()
+		if err != nil {
+			return nil, err
+		}
+		createdIDs = append(createdIDs, id)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+
+	created := make([]PartnerCommission, 0, len(createdIDs))
+	for _, id := range createdIDs {
+		pc, err := r.GetPartnerCommissionByID(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		created = append(created, *pc)
+	}
+	return created, nil
+}
+
+const commissionSelectColumns = `
+		pc.id, pc.code, pc.partner_id, p.code, p.name, pc.referral_id, pc.closing_id, sc.code,
+		pc.commission_mode, pc.commission_value, pc.base_amount, pc.commission_amount, pc.currency, pc.status, pc.note,
+		pc.approved_by_user_id, au.name, pc.approved_at,
+		pc.paid_by_user_id, pu.name, pc.paid_at,
+		pc.created_at, pc.updated_at`
+
+const commissionFromJoin = `
+		FROM partner_commissions pc
+		JOIN partners p ON p.id = pc.partner_id
+		JOIN sales_closings sc ON sc.id = pc.closing_id
+		LEFT JOIN users au ON au.id = pc.approved_by_user_id
+		LEFT JOIN users pu ON pu.id = pc.paid_by_user_id`
+
+func scanCommission(scanner interface {
+	Scan(dest ...any) error
+}) (PartnerCommission, error) {
+	var c PartnerCommission
+	err := scanner.Scan(
+		&c.ID, &c.Code, &c.PartnerID, &c.PartnerCode, &c.PartnerName, &c.ReferralID, &c.ClosingID, &c.ClosingCode,
+		&c.CommissionMode, &c.CommissionValue, &c.BaseAmount, &c.CommissionAmount, &c.Currency, &c.Status, &c.Note,
+		&c.ApprovedByUserID, &c.ApprovedByName, &c.ApprovedAt,
+		&c.PaidByUserID, &c.PaidByName, &c.PaidAt,
+		&c.CreatedAt, &c.UpdatedAt)
+	return c, err
+}
+
+func (r *Repository) GetPartnerCommissionByID(ctx context.Context, id int64) (*PartnerCommission, error) {
+	query := "SELECT " + commissionSelectColumns + commissionFromJoin + " WHERE pc.id = ?"
+	c, err := scanCommission(r.db.QueryRowContext(ctx, query, id))
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	return &c, nil
+}
+
+func (r *Repository) ListPartnerCommissions(ctx context.Context, partnerID int64, status string, limit int, offset int) ([]PartnerCommission, int64, error) {
+	args := []any{partnerID}
+	where := "WHERE pc.partner_id = ?"
+	if status != "" {
+		where += " AND pc.status = ?"
+		args = append(args, status)
+	}
+	var total int64
+	countQuery := "SELECT COUNT(*) FROM partner_commissions pc " + where
+	if err := r.db.QueryRowContext(ctx, countQuery, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	query := "SELECT " + commissionSelectColumns + commissionFromJoin + " " + where + " ORDER BY pc.created_at DESC LIMIT ? OFFSET ?"
+	dataArgs := append(args, limit, offset)
+	rows, err := r.db.QueryContext(ctx, query, dataArgs...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	var list []PartnerCommission
+	for rows.Next() {
+		c, err := scanCommission(rows)
+		if err != nil {
+			return nil, 0, err
+		}
+		list = append(list, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	return list, total, nil
+}
+
+func (r *Repository) lockCommissionStatus(ctx context.Context, tx *sql.Tx, id int64) (string, error) {
+	var status string
+	err := tx.QueryRowContext(ctx, `SELECT status FROM partner_commissions WHERE id = ? FOR UPDATE`, id).Scan(&status)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", ErrNotFound
+		}
+		return "", err
+	}
+	return status, nil
+}
+
+func (r *Repository) ApproveCommission(ctx context.Context, id int64, approvedByID int64) (*PartnerCommission, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	status, err := r.lockCommissionStatus(ctx, tx, id)
+	if err != nil {
+		return nil, err
+	}
+	if status != CommissionStatusPending {
+		return nil, ErrInvalidCommissionStatus
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE partner_commissions
+		SET status = ?, approved_by_user_id = ?, approved_at = NOW(), updated_at = NOW()
+		WHERE id = ?`, CommissionStatusApproved, approvedByID, id); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return r.GetPartnerCommissionByID(ctx, id)
+}
+
+func (r *Repository) MarkCommissionPaid(ctx context.Context, id int64, paidByID int64) (*PartnerCommission, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	status, err := r.lockCommissionStatus(ctx, tx, id)
+	if err != nil {
+		return nil, err
+	}
+	if status != CommissionStatusApproved {
+		return nil, ErrInvalidCommissionStatus
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE partner_commissions
+		SET status = ?, paid_by_user_id = ?, paid_at = NOW(), updated_at = NOW()
+		WHERE id = ?`, CommissionStatusPaid, paidByID, id); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return r.GetPartnerCommissionByID(ctx, id)
+}
+
+func (r *Repository) CancelCommission(ctx context.Context, id int64, note string) (*PartnerCommission, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	status, err := r.lockCommissionStatus(ctx, tx, id)
+	if err != nil {
+		return nil, err
+	}
+	if status == CommissionStatusPaid || status == CommissionStatusCancelled {
+		return nil, ErrInvalidCommissionStatus
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE partner_commissions
+		SET status = ?, note = ?, updated_at = NOW()
+		WHERE id = ?`, CommissionStatusCancelled, nullableString(note), id); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return r.GetPartnerCommissionByID(ctx, id)
+}
+
 /* ---------- Helper functions ---------- */
 
 func mapDuplicateError(err error, uniqueKey string) error {
@@ -458,6 +723,8 @@ func mapDuplicateError(err error, uniqueKey string) error {
 			return ErrDuplicatePartner
 		case "uq_partner_referrals_partner_lead":
 			return ErrDuplicateReferral
+		case "uq_partner_commissions_closing":
+			return ErrCommissionAlreadyExists
 		}
 	}
 	return fmt.Errorf("database partner: %w", err)

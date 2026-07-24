@@ -68,6 +68,81 @@ func TestEncryptionServiceInitialization(t *testing.T) {
 	}
 }
 
+func TestNewPartnerCommissionResponse(t *testing.T) {
+	now := time.Now()
+	approvedAt := now.Add(time.Hour)
+
+	pc := partner.PartnerCommission{
+		ID:               1,
+		Code:             "COM-20260724-000001-000001",
+		PartnerID:        2,
+		PartnerCode:      sql.NullString{String: "REF-001", Valid: true},
+		PartnerName:      sql.NullString{String: "Mitra Referral 001", Valid: true},
+		ReferralID:       3,
+		ClosingID:        4,
+		ClosingCode:      sql.NullString{String: "CLS-20260724-000004-000001", Valid: true},
+		CommissionMode:   partner.CommissionModePercentage,
+		CommissionValue:  "5.00",
+		BaseAmount:       "1000000.00",
+		CommissionAmount: "50000.00",
+		Currency:         "IDR",
+		Status:           partner.CommissionStatusPending,
+		Note:             sql.NullString{},
+		ApprovedByUserID: sql.NullInt64{},
+		ApprovedAt:       sql.NullTime{},
+		PaidByUserID:     sql.NullInt64{},
+		PaidAt:           sql.NullTime{},
+		CreatedAt:        now,
+		UpdatedAt:        now,
+	}
+
+	resp := partner.NewPartnerCommissionResponse(pc)
+	if resp.PartnerCode == nil || *resp.PartnerCode != "REF-001" {
+		t.Errorf("expected partner code REF-001, got %v", resp.PartnerCode)
+	}
+	if resp.CommissionMode != partner.CommissionModePercentage || resp.CommissionValue != "5.00" {
+		t.Errorf("expected mode=PERCENTAGE value=5.00, got mode=%s value=%s", resp.CommissionMode, resp.CommissionValue)
+	}
+	if resp.ApprovedBy != nil {
+		t.Errorf("expected nil ApprovedBy for unapproved commission, got %v", resp.ApprovedBy)
+	}
+	if resp.Status != partner.CommissionStatusPending {
+		t.Errorf("expected status PENDING, got %s", resp.Status)
+	}
+
+	pc.ApprovedByUserID = sql.NullInt64{Int64: 9, Valid: true}
+	pc.ApprovedByName = sql.NullString{String: "Admin Utama", Valid: true}
+	pc.ApprovedAt = sql.NullTime{Time: approvedAt, Valid: true}
+	pc.Status = partner.CommissionStatusApproved
+
+	resp = partner.NewPartnerCommissionResponse(pc)
+	if resp.ApprovedBy == nil || resp.ApprovedBy.ID != 9 || resp.ApprovedBy.Name != "Admin Utama" {
+		t.Errorf("expected ApprovedBy {9, Admin Utama}, got %v", resp.ApprovedBy)
+	}
+	if resp.ApprovedAt == nil || !resp.ApprovedAt.Equal(approvedAt) {
+		t.Errorf("expected ApprovedAt %v, got %v", approvedAt, resp.ApprovedAt)
+	}
+}
+
+func TestNewPartnerTypeResponse(t *testing.T) {
+	pt := partner.PartnerType{
+		ID:              1,
+		Code:            "AGENT",
+		Name:            "Agent Regional",
+		CommissionMode:  partner.CommissionModeFixed,
+		CommissionValue: "150000.00",
+		CreatedAt:       time.Now(),
+		UpdatedAt:       time.Now(),
+	}
+	resp := partner.NewPartnerTypeResponse(pt)
+	if resp.CommissionMode != partner.CommissionModeFixed {
+		t.Errorf("expected commission mode FIXED, got %s", resp.CommissionMode)
+	}
+	if resp.CommissionValue != "150000.00" {
+		t.Errorf("expected commission value 150000.00, got %s", resp.CommissionValue)
+	}
+}
+
 func ptr(s string) *string {
 	return &s
 }

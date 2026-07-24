@@ -24,9 +24,19 @@ func TestParseDemoOptions(t *testing.T) {
 }
 
 func TestParseRejectsUnknownPreset(t *testing.T) {
-	_, err := Parse([]string{"demo", "--preset=large"})
+	_, err := Parse([]string{"demo", "--preset=huge"})
 	if err == nil || !strings.Contains(err.Error(), "minimal") {
 		t.Fatalf("expected preset error, got %v", err)
+	}
+}
+
+func TestParseAcceptsLargePreset(t *testing.T) {
+	options, err := Parse([]string{"demo", "--preset=large"})
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if options.Preset != "large" {
+		t.Fatalf("options tidak sesuai: %+v", options)
 	}
 }
 

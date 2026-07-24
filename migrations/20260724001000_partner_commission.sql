@@ -1,14 +1,16 @@
 -- +goose Up
-ALTER TABLE partners
-    ADD COLUMN commission_rate_percent DECIMAL(5,2) NOT NULL DEFAULT 0.00 AFTER status;
-
+-- Commission rate itself already lives on partner_types (commission_mode, commission_value,
+-- since the Sprint 1 baseline schema). This migration adds the ledger that tracks commission
+-- actually earned per confirmed closing, snapshotting the partner_type's mode/value at the
+-- time of calculation so later rate changes don't retroactively alter historical commissions.
 CREATE TABLE partner_commissions (
     id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     code VARCHAR(60) NOT NULL,
     partner_id BIGINT UNSIGNED NOT NULL,
     referral_id BIGINT UNSIGNED NOT NULL,
     closing_id BIGINT UNSIGNED NOT NULL,
-    commission_rate_percent DECIMAL(5,2) NOT NULL,
+    commission_mode VARCHAR(30) NOT NULL,
+    commission_value DECIMAL(18,2) NOT NULL,
     base_amount DECIMAL(18,2) NOT NULL,
     commission_amount DECIMAL(18,2) NOT NULL,
     currency VARCHAR(3) NOT NULL DEFAULT 'IDR',
@@ -36,10 +38,11 @@ CREATE TABLE partner_commissions (
         FOREIGN KEY (paid_by_user_id) REFERENCES users(id) ON DELETE SET NULL,
     CONSTRAINT chk_partner_commissions_status
         CHECK (status IN ('PENDING', 'APPROVED', 'PAID', 'CANCELLED')),
+    CONSTRAINT chk_partner_commissions_mode
+        CHECK (commission_mode IN ('PERCENTAGE', 'FIXED')),
     CONSTRAINT chk_partner_commissions_non_negative
-        CHECK (base_amount >= 0 AND commission_amount >= 0 AND commission_rate_percent >= 0)
+        CHECK (base_amount >= 0 AND commission_amount >= 0 AND commission_value >= 0)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- +goose Down
 DROP TABLE IF EXISTS partner_commissions;
-ALTER TABLE partners DROP COLUMN commission_rate_percent;

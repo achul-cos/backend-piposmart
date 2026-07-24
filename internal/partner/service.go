@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"backend_crm_piposmart/internal/identity"
 	"backend_crm_piposmart/internal/platform/config"
 
 	"database/sql"
@@ -19,8 +20,8 @@ import (
 
 // Service encapsulates business logic for partner management.
 type Service struct {
-	repo      *Repository
-	cfg       config.Config
+	repo          *Repository
+	cfg           config.Config
 	encryptionKey []byte // AES key (must be 16, 24, or 32 bytes)
 }
 
@@ -41,9 +42,9 @@ func NewService(repo *Repository, cfg config.Config) *Service {
 		key = []byte("0123456789abcdef") // 16 bytes
 	}
 	return &Service{
-		repo:           repo,
-		cfg:            cfg,
-		encryptionKey:  key,
+		repo:          repo,
+		cfg:           cfg,
+		encryptionKey: key,
 	}
 }
 
@@ -122,13 +123,30 @@ func nullStringToPtr(ns sql.NullString) *string {
 	return &s
 }
 
+// attachPartnerType copies the fetched partner_type's denormalized fields onto p, so
+// NewPartnerResponse can build a complete nested partner_type object.
+func attachPartnerType(p *Partner, pt *PartnerType) {
+	if pt == nil {
+		return
+	}
+	p.PartnerTypeCode = sql.NullString{String: pt.Code, Valid: true}
+	p.PartnerTypeName = sql.NullString{String: pt.Name, Valid: true}
+	p.PartnerTypeCommissionMode = sql.NullString{String: pt.CommissionMode, Valid: true}
+	p.PartnerTypeCommissionValue = sql.NullString{String: pt.CommissionValue, Valid: true}
+}
+
 /* ---------- PartnerType ---------- */
 
 func (s *Service) CreatePartnerType(ctx context.Context, req CreatePartnerTypeRequest) (*PartnerTypeResponse, error) {
+	if err := validateCommissionValue(req.CommissionMode, req.CommissionValue); err != nil {
+		return nil, err
+	}
 	pt := PartnerType{
-		Code:        req.Code,
-		Name:        req.Name,
-		Description: req.Description,
+		Code:            req.Code,
+		Name:            req.Name,
+		CommissionMode:  req.CommissionMode,
+		CommissionValue: req.CommissionValue,
+		Description:     req.Description,
 	}
 	id, err := s.repo.CreatePartnerType(ctx, pt)
 	if err != nil {
@@ -137,14 +155,8 @@ func (s *Service) CreatePartnerType(ctx context.Context, req CreatePartnerTypeRe
 	pt.ID = id
 	pt.CreatedAt = time.Now()
 	pt.UpdatedAt = time.Now()
-	return &PartnerTypeResponse{
-		ID:          pt.ID,
-		Code:        pt.Code,
-		Name:        pt.Name,
-		Description: pt.Description,
-		CreatedAt:   pt.CreatedAt,
-		UpdatedAt:   pt.UpdatedAt,
-	}, nil
+	resp := NewPartnerTypeResponse(pt)
+	return &resp, nil
 }
 
 func (s *Service) GetPartnerTypeByID(ctx context.Context, id int64) (*PartnerTypeResponse, error) {
@@ -152,14 +164,8 @@ func (s *Service) GetPartnerTypeByID(ctx context.Context, id int64) (*PartnerTyp
 	if err != nil {
 		return nil, err
 	}
-	return &PartnerTypeResponse{
-		ID:          pt.ID,
-		Code:        pt.Code,
-		Name:        pt.Name,
-		Description: pt.Description,
-		CreatedAt:   pt.CreatedAt,
-		UpdatedAt:   pt.UpdatedAt,
-	}, nil
+	resp := NewPartnerTypeResponse(*pt)
+	return &resp, nil
 }
 
 func (s *Service) ListPartnerTypes(ctx context.Context) ([]PartnerTypeResponse, error) {
@@ -169,14 +175,7 @@ func (s *Service) ListPartnerTypes(ctx context.Context) ([]PartnerTypeResponse, 
 	}
 	resp := make([]PartnerTypeResponse, len(pts))
 	for i, pt := range pts {
-		resp[i] = PartnerTypeResponse{
-			ID:          pt.ID,
-			Code:        pt.Code,
-			Name:        pt.Name,
-			Description: pt.Description,
-			CreatedAt:   pt.CreatedAt,
-			UpdatedAt:   pt.UpdatedAt,
-		}
+		resp[i] = NewPartnerTypeResponse(pt)
 	}
 	return resp, nil
 }
@@ -192,18 +191,27 @@ func (s *Service) UpdatePartnerType(ctx context.Context, id int64, req UpdatePar
 	if req.Description != "" {
 		pt.Description = req.Description
 	}
+	mode := pt.CommissionMode
+	if req.CommissionMode != "" {
+		mode = req.CommissionMode
+	}
+	value := pt.CommissionValue
+	if req.CommissionValue != "" {
+		value = req.CommissionValue
+	}
+	if mode != pt.CommissionMode || value != pt.CommissionValue {
+		if err := validateCommissionValue(mode, value); err != nil {
+			return nil, err
+		}
+		pt.CommissionMode = mode
+		pt.CommissionValue = value
+	}
 	if err := s.repo.UpdatePartnerType(ctx, id, *pt); err != nil {
 		return nil, err
 	}
 	pt.UpdatedAt = time.Now()
-	return &PartnerTypeResponse{
-		ID:          pt.ID,
-		Code:        pt.Code,
-		Name:        pt.Name,
-		Description: pt.Description,
-		CreatedAt:   pt.CreatedAt,
-		UpdatedAt:   pt.UpdatedAt,
-	}, nil
+	resp := NewPartnerTypeResponse(*pt)
+	return &resp, nil
 }
 
 /* ---------- Partner ---------- */
@@ -231,15 +239,15 @@ func (s *Service) CreatePartner(ctx context.Context, req CreatePartnerRequest) (
 	}
 
 	p := Partner{
-		PartnerTypeID:      req.PartnerTypeID,
-		Code:               req.Code,
-		Name:               req.Name,
-		Phone:              ptrToSqlNullString(req.Phone),
-		Email:              ptrToSqlNullString(req.Email),
-		Address:            ptrToSqlNullString(req.Address),
+		PartnerTypeID:        req.PartnerTypeID,
+		Code:                 req.Code,
+		Name:                 req.Name,
+		Phone:                ptrToSqlNullString(req.Phone),
+		Email:                ptrToSqlNullString(req.Email),
+		Address:              ptrToSqlNullString(req.Address),
 		BankAccountEncrypted: encrypted,
-		BankAccountLast4:   last4,
-		Status:             req.Status,
+		BankAccountLast4:     last4,
+		Status:               req.Status,
 	}
 	if p.Status == "" {
 		p.Status = StatusActive
@@ -254,10 +262,7 @@ func (s *Service) CreatePartner(ctx context.Context, req CreatePartnerRequest) (
 	p.UpdatedAt = time.Now()
 
 	pt, _ := s.repo.GetPartnerTypeByID(ctx, p.PartnerTypeID)
-	if pt != nil {
-		p.PartnerTypeCode = sql.NullString{String: pt.Code, Valid: true}
-		p.PartnerTypeName = sql.NullString{String: pt.Name, Valid: true}
-	}
+	attachPartnerType(&p, pt)
 	resp := NewPartnerResponse(p)
 	return &resp, nil
 }
@@ -268,10 +273,7 @@ func (s *Service) GetPartnerByID(ctx context.Context, id int64) (*PartnerRespons
 		return nil, err
 	}
 	pt, _ := s.repo.GetPartnerTypeByID(ctx, p.PartnerTypeID)
-	if pt != nil {
-		p.PartnerTypeCode = sql.NullString{String: pt.Code, Valid: true}
-		p.PartnerTypeName = sql.NullString{String: pt.Name, Valid: true}
-	}
+	attachPartnerType(p, pt)
 	resp := NewPartnerResponse(*p)
 	return &resp, nil
 }
@@ -282,10 +284,7 @@ func (s *Service) GetPartnerByCode(ctx context.Context, code string) (*PartnerRe
 		return nil, err
 	}
 	pt, _ := s.repo.GetPartnerTypeByID(ctx, p.PartnerTypeID)
-	if pt != nil {
-		p.PartnerTypeCode = sql.NullString{String: pt.Code, Valid: true}
-		p.PartnerTypeName = sql.NullString{String: pt.Name, Valid: true}
-	}
+	attachPartnerType(p, pt)
 	resp := NewPartnerResponse(*p)
 	return &resp, nil
 }
@@ -298,10 +297,7 @@ func (s *Service) ListPartners(ctx context.Context, limit int, offset int, searc
 	resp := make([]PartnerResponse, len(parts))
 	for i, p := range parts {
 		pt, _ := s.repo.GetPartnerTypeByID(ctx, p.PartnerTypeID)
-		if pt != nil {
-			p.PartnerTypeCode = sql.NullString{String: pt.Code, Valid: true}
-			p.PartnerTypeName = sql.NullString{String: pt.Name, Valid: true}
-		}
+		attachPartnerType(&p, pt)
 		resp[i] = NewPartnerResponse(p)
 	}
 	return resp, total, nil
@@ -355,10 +351,7 @@ func (s *Service) UpdatePartner(ctx context.Context, id int64, req UpdatePartner
 		return nil, err
 	}
 	pt, _ := s.repo.GetPartnerTypeByID(ctx, updatedP.PartnerTypeID)
-	if pt != nil {
-		updatedP.PartnerTypeCode = sql.NullString{String: pt.Code, Valid: true}
-		updatedP.PartnerTypeName = sql.NullString{String: pt.Name, Valid: true}
-	}
+	attachPartnerType(updatedP, pt)
 	resp := NewPartnerResponse(*updatedP)
 	return &resp, nil
 }
@@ -387,11 +380,11 @@ func (s *Service) AssignPIC(ctx context.Context, partnerID int64, userID int64, 
 		}
 	}
 	a := PartnerAssignment{
-		PartnerID:   partnerID,
-		UserID:      userID,
+		PartnerID:    partnerID,
+		UserID:       userID,
 		AssignedByID: ptrToInt64(assignedByID),
-		AssignedAt:  time.Now(),
-		Active:      true,
+		AssignedAt:   time.Now(),
+		Active:       true,
 	}
 	id, err := s.repo.CreatePartnerAssignment(ctx, a)
 	if err != nil {
@@ -446,10 +439,10 @@ func (s *Service) RecordInteraction(ctx context.Context, partnerID int64, itype 
 		return nil, err
 	}
 	i := PartnerInteraction{
-		PartnerID:      partnerID,
+		PartnerID:       partnerID,
 		InteractionType: itype,
-		InteractionAt:  time.Now(),
-		Note:           ptrToSqlNullString(note),
+		InteractionAt:   time.Now(),
+		Note:            ptrToSqlNullString(note),
 	}
 	if iTime != nil {
 		i.InteractionAt = *iTime
@@ -521,6 +514,104 @@ func (s *Service) ListReferrals(ctx context.Context, partnerID int64) ([]Partner
 		resp[i] = NewPartnerReferralResponse(r)
 	}
 	return resp, nil
+}
+
+/* ---------- PartnerCommission ---------- */
+
+// SyncCommissions scans confirmed closings tied to the partner's referrals and creates
+// PENDING commission records for any that don't have one yet. Safe to call repeatedly.
+func (s *Service) SyncCommissions(ctx context.Context, actor identity.User, partnerID int64) (*SyncCommissionsResponse, error) {
+	if actor.RoleCode != RoleAdmin && actor.RoleCode != RoleSupervisor {
+		return nil, ErrForbidden
+	}
+	if _, err := s.repo.GetPartnerByID(ctx, partnerID); err != nil {
+		return nil, err
+	}
+	created, err := s.repo.SyncCommissions(ctx, partnerID)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]PartnerCommissionResponse, len(created))
+	for i, c := range created {
+		items[i] = NewPartnerCommissionResponse(c)
+	}
+	return &SyncCommissionsResponse{Created: int64(len(created)), Items: items}, nil
+}
+
+func (s *Service) ListCommissions(ctx context.Context, partnerID int64, status string, page int, limit int) (PartnerCommissionListResponse, error) {
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 {
+		limit = 10
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	offset := (page - 1) * limit
+	list, total, err := s.repo.ListPartnerCommissions(ctx, partnerID, status, limit, offset)
+	if err != nil {
+		return PartnerCommissionListResponse{}, err
+	}
+	items := make([]PartnerCommissionResponse, len(list))
+	for i, c := range list {
+		items[i] = NewPartnerCommissionResponse(c)
+	}
+	return PartnerCommissionListResponse{
+		Items:      items,
+		Pagination: PaginationMeta{Page: page, Limit: limit, Total: total},
+	}, nil
+}
+
+func (s *Service) GetCommission(ctx context.Context, commissionID int64) (*PartnerCommissionResponse, error) {
+	c, err := s.repo.GetPartnerCommissionByID(ctx, commissionID)
+	if err != nil {
+		return nil, err
+	}
+	resp := NewPartnerCommissionResponse(*c)
+	return &resp, nil
+}
+
+// ApproveCommission moves a PENDING commission to APPROVED, confirming it is ready to
+// be paid out. ADMIN and SUPERVISOR may approve.
+func (s *Service) ApproveCommission(ctx context.Context, actor identity.User, commissionID int64) (*PartnerCommissionResponse, error) {
+	if actor.RoleCode != RoleAdmin && actor.RoleCode != RoleSupervisor {
+		return nil, ErrForbidden
+	}
+	c, err := s.repo.ApproveCommission(ctx, commissionID, actor.ID)
+	if err != nil {
+		return nil, err
+	}
+	resp := NewPartnerCommissionResponse(*c)
+	return &resp, nil
+}
+
+// PayCommission moves an APPROVED commission to PAID. Restricted to ADMIN since it
+// represents money actually leaving the business.
+func (s *Service) PayCommission(ctx context.Context, actor identity.User, commissionID int64) (*PartnerCommissionResponse, error) {
+	if actor.RoleCode != RoleAdmin {
+		return nil, ErrForbidden
+	}
+	c, err := s.repo.MarkCommissionPaid(ctx, commissionID, actor.ID)
+	if err != nil {
+		return nil, err
+	}
+	resp := NewPartnerCommissionResponse(*c)
+	return &resp, nil
+}
+
+// CancelCommission voids a PENDING or APPROVED commission (e.g. the closing was later
+// rejected/reversed). PAID and already-CANCELLED commissions cannot be cancelled again.
+func (s *Service) CancelCommission(ctx context.Context, actor identity.User, commissionID int64, note string) (*PartnerCommissionResponse, error) {
+	if actor.RoleCode != RoleAdmin && actor.RoleCode != RoleSupervisor {
+		return nil, ErrForbidden
+	}
+	c, err := s.repo.CancelCommission(ctx, commissionID, note)
+	if err != nil {
+		return nil, err
+	}
+	resp := NewPartnerCommissionResponse(*c)
+	return &resp, nil
 }
 
 /* Helper functions */
