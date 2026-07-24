@@ -73,8 +73,8 @@ func Parse(args []string) (Options, error) {
 				return Options{}, fmt.Errorf("argumen seed demo tidak dikenal: %s", key)
 			}
 		}
-		if options.Preset != "minimal" {
-			return Options{}, fmt.Errorf("preset demo %q belum tersedia; gunakan minimal", options.Preset)
+		if options.Preset != "minimal" && options.Preset != "large" {
+			return Options{}, fmt.Errorf("preset demo %q belum tersedia; gunakan minimal atau large", options.Preset)
 		}
 	default:
 		return Options{}, fmt.Errorf("mode seed %q tidak dikenal\n\n%s", options.Mode, seedUsage)
@@ -145,8 +145,14 @@ func runWithTransaction(ctx context.Context, db *sql.DB, options Options) error 
 		return err
 	}
 	if options.Mode == ModeDemo {
-		if err := seedDemoMinimal(ctx, tx, options); err != nil {
-			return err
+		if options.Preset == "large" {
+			if err := seedDemoLarge(ctx, tx, options); err != nil {
+				return err
+			}
+		} else {
+			if err := seedDemoMinimal(ctx, tx, options); err != nil {
+				return err
+			}
 		}
 	}
 

@@ -44,6 +44,7 @@ type Owner struct {
 	Province  string
 	City      string
 	Address   string
+	CreatedAt time.Time
 }
 
 type Outlet struct {
@@ -168,7 +169,7 @@ func (f *Factory) BuildInteraction(index int, score int) Interaction {
 		Type:             interactionType,
 		InteractionAt:    f.asOf.Add(time.Duration(index) * time.Hour),
 		RemarkScore:      score,
-		Note:             fmt.Sprintf("Demo Sprint 06 remark %d", score),
+		Note:             fmt.Sprintf("Demo Sprint 06 remark %d-%d", score, index),
 		CustomerResponse: fmt.Sprintf("Response customer demo untuk remark %d", score),
 		FollowUpAt:       f.asOf.AddDate(0, 0, 3+index),
 		FollowUpNote:     "Follow-up demo dari factory",
@@ -223,9 +224,13 @@ func (f *Factory) CreateUser(ctx context.Context, tx *sql.Tx, user User) (int64,
 }
 
 func (f *Factory) CreateOwner(ctx context.Context, tx *sql.Tx, owner Owner) (int64, error) {
+	createdAt := owner.CreatedAt
+	if createdAt.IsZero() {
+		createdAt = time.Now()
+	}
 	_, err := tx.ExecContext(ctx, `
-		INSERT INTO owners (code, name, phone, email, brand_name, province, city, address, status)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE')
+		INSERT INTO owners (code, name, phone, email, brand_name, province, city, address, status, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?)
 		ON DUPLICATE KEY UPDATE
 			name = VALUES(name),
 			phone = VALUES(phone),
@@ -236,7 +241,7 @@ func (f *Factory) CreateOwner(ctx context.Context, tx *sql.Tx, owner Owner) (int
 			address = VALUES(address),
 			status = 'ACTIVE',
 			deleted_at = NULL`,
-		owner.Code, owner.Name, owner.Phone, owner.Email, owner.BrandName, owner.Province, owner.City, owner.Address,
+		owner.Code, owner.Name, owner.Phone, owner.Email, owner.BrandName, owner.Province, owner.City, owner.Address, createdAt,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("seed owner %s: %w", owner.Code, err)
