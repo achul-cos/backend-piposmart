@@ -353,6 +353,10 @@ func seedPartnerTypes(ctx context.Context, tx *sql.Tx) error {
 		code, name, mode, description string
 		value                         string
 	}{
+		{"SUPPLIER", "Supplier Hardware & POS", "PERCENTAGE", "Partner penyedia perangkat POS dan hardware kasir.", "5.00"},
+		{"DISTRIBUTOR", "Distributor Software", "PERCENTAGE", "Distributor lisensi aplikasi Piposmart.", "10.00"},
+		{"AGENT", "Agent Regional", "FIXED", "Agen pemasaran tingkat daerah/regional.", "150000.00"},
+		{"REFERRAL_PARTNER", "Referral Community", "PERCENTAGE", "Mitra komunitas perujuk calon pelanggan.", "3.00"},
 		{"REFERRAL_REGULAR", "Mitra Regular", "FIXED", "Mitra dengan komisi nominal tetap.", "0.00"},
 		{"REFERRAL_STRATEGIC", "Mitra Strategic", "PERCENTAGE", "Mitra strategis dengan komisi persentase.", "0.00"},
 	}
@@ -706,6 +710,110 @@ func seedDemoMinimal(ctx context.Context, tx *sql.Tx, options Options) error {
 		hangingOrder.Note = "Demo Sprint 10: pembelian tanpa closing untuk reconciliation issue queue"
 		if _, err := fake.CreateSubscriptionOrder(ctx, tx, ownerIDs[3], hangingOrder); err != nil {
 			return err
+		}
+	}
+	if err := seedPartnersDemo(ctx, tx, fake); err != nil {
+		return err
+	}
+	return nil
+}
+
+func seedPartnersDemo(ctx context.Context, tx *sql.Tx, fake *factory.Factory) error {
+	supTypeID, err := lookupID(ctx, tx, "partner_types", "code", "SUPPLIER")
+	if err != nil {
+		return err
+	}
+	disTypeID, err := lookupID(ctx, tx, "partner_types", "code", "DISTRIBUTOR")
+	if err != nil {
+		return err
+	}
+	refTypeID, err := lookupID(ctx, tx, "partner_types", "code", "REFERRAL_PARTNER")
+	if err != nil {
+		return err
+	}
+
+	spvID, err := lookupID(ctx, tx, "users", "code", "SPV-001")
+	if err != nil {
+		spvID = 2
+	}
+	slsID, err := lookupID(ctx, tx, "users", "code", "SLS-001")
+	if err != nil {
+		slsID = 3
+	}
+	admID, _ := lookupID(ctx, tx, "users", "code", "ADM-001")
+	if admID == 0 {
+		admID = 1
+	}
+
+	partnersData := []struct {
+		typeID                                                int64
+		code, name, phone, email, address, bankLast4, encBank string
+	}{
+		{supTypeID, "SUP-001", "PT Hardware Maju POS", "08123456001", "contact@posmaju.demo.id", "Jl. Industri Hardware No. 12, Jakarta", "5678", "enc_bank_account_001"},
+		{disTypeID, "DIS-001", "CV Digital Software Solution", "08123456002", "sales@digitalsft.demo.id", "Jl. Teknologi No. 45, Bandung", "1234", "enc_bank_account_002"},
+		{refTypeID, "REF-001", "Komunitas UMKM Kopi Indonesia", "08123456003", "info@umkmkopi.demo.id", "Jl. Pemuda No. 8, Surabaya", "9876", "enc_bank_account_003"},
+	}
+
+	partnerIDs := make(map[string]int64)
+	for _, p := range partnersData {
+		res, err := tx.ExecContext(ctx, `
+			INSERT INTO partners (partner_type_id, code, name, phone, email, address, bank_account_encrypted, bank_account_last4, status, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', NOW(), NOW())
+			ON DUPLICATE KEY UPDATE name = VALUES(name), phone = VALUES(phone)`,
+			p.typeID, p.code, p.name, p.phone, p.email, p.address, []byte(p.encBank), p.bankLast4,
+		)
+		if err != nil {
+			return fmt.Errorf("seed partner %s: %w", p.code, err)
+		}
+		id, _ := res.LastInsertId()
+		if id == 0 {
+			id, _ = lookupID(ctx, tx, "partners", "code", p.code)
+		}
+		partnerIDs[p.code] = id
+	}
+
+	if pid, ok := partnerIDs["SUP-001"]; ok && pid > 0 {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO partner_assignments (partner_id, user_id, assigned_by_id, assigned_at, active, created_at, updated_at)
+			VALUES (?, ?, ?, NOW(), TRUE, NOW(), NOW())
+			ON DUPLICATE KEY UPDATE active = TRUE`,
+			pid, spvID, admID,
+		); err != nil {
+			return fmt.Errorf("seed assignment SUP-001: %w", err)
+		}
+	}
+	if pid, ok := partnerIDs["DIS-001"]; ok && pid > 0 {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO partner_assignments (partner_id, user_id, assigned_by_id, assigned_at, active, created_at, updated_at)
+			VALUES (?, ?, ?, NOW(), TRUE, NOW(), NOW())
+			ON DUPLICATE KEY UPDATE active = TRUE`,
+			pid, slsID, spvID,
+		); err != nil {
+			return fmt.Errorf("seed assignment DIS-001: %w", err)
+		}
+	}
+
+	if pid, ok := partnerIDs["SUP-001"]; ok && pid > 0 {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO partner_interactions (partner_id, interaction_type, interaction_at, note, created_at)
+			VALUES (?, 'CALL', NOW(), 'Diskusi penawaran paket bundle POS Kasir edisi Juli 2026', NOW())`,
+			pid,
+		); err != nil {
+			return fmt.Errorf("seed interaction SUP-001: %w", err)
+		}
+	}
+
+	leadID, err := lookupID(ctx, tx, "customer_leads", "code", "LEAD-000001")
+	if err == nil && leadID > 0 {
+		if pid, ok := partnerIDs["REF-001"]; ok && pid > 0 {
+			if _, err := tx.ExecContext(ctx, `
+				INSERT INTO partner_referrals (partner_id, lead_id, referral_date, notes, created_at)
+				VALUES (?, ?, NOW(), 'Komunitas UMKM merujuk lead Owner Kopi Kenangan', NOW())
+				ON DUPLICATE KEY UPDATE notes = VALUES(notes)`,
+				pid, leadID,
+			); err != nil {
+				return fmt.Errorf("seed referral REF-001: %w", err)
+			}
 		}
 	}
 	return nil

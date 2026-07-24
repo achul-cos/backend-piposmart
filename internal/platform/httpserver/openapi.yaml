@@ -1,8 +1,8 @@
 openapi: 3.0.3
 info:
   title: Backend CRM Piposmart
-  version: 0.10.0-sprint-10
-  description: API CRM Piposmart dengan Owner/Outlet, Lead Ownership, Activity, Training, Catalog, Closing, Payment/Wallet Ledger, Subscription Order, Subscription, dan Reconciliation Sprint 10.
+  version: 0.11.0-sprint-11
+  description: API CRM Piposmart dengan Partner Type, Partner (Encrypted & Masked Bank Account), PIC Assignment, Call Interactions, Lead Referrals, Subscription Order, dan Reconciliation Sprint 11.
 servers:
   - url: http://localhost:8080
 paths:
@@ -2457,6 +2457,532 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/partner-types:
+    post:
+      tags: [Partner Types]
+      summary: Membuat partner type
+      operationId: createPartnerType
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePartnerTypeRequest"
+      responses:
+        "201":
+          description: Partner type berhasil dibuat
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+        "400":
+          description: Payload request tidak valid
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "409":
+          description: Partner type code sudah ada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+    get:
+      tags: [Partner Types]
+      summary: List partner type
+      operationId: listPartnerTypes
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: List partner type
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/partner-types/{id}:
+    get:
+      tags: [Partner Types]
+      summary: Detail partner type
+      operationId: getPartnerType
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: Detail partner type
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+        "404":
+          description: Partner type tidak ditemukan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+    put:
+      tags: [Partner Types]
+      summary: Update partner type
+      operationId: updatePartnerType
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdatePartnerTypeRequest"
+      responses:
+        "200":
+          description: Partner type berhasil diupdate
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+        "400":
+          description: Payload request tidak valid
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "404":
+          description: Partner type tidak ditemukan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+  /api/v1/partners:
+    post:
+      tags: [Partners]
+      summary: Membuat partner
+      operationId: createPartner
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePartnerRequest"
+      responses:
+        "201":
+          description: Partner berhasil dibuat
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+        "400":
+          description: Payload request tidak valid
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "409":
+          description: Partner code sudah ada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+    get:
+      tags: [Partners]
+      summary: List partner
+      operationId: listPartners
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: search
+          in: query
+          schema:
+            type: string
+          description: Pencarian berdasarkan nama atau kode partner
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 10
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        "200":
+          description: List partner
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/partners/code/{code}:
+    get:
+      tags: [Partners]
+      summary: Get partner berdasarkan code
+      operationId: getPartnerByCode
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: code
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Detail partner
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+        "404":
+          description: Partner tidak ditemukan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+  /api/v1/partners/{partnerID}:
+    get:
+      tags: [Partners]
+      summary: Detail partner
+      operationId: getPartner
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: partnerID
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: Detail partner
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+        "404":
+          description: Partner tidak ditemukan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+    put:
+      tags: [Partners]
+      summary: Update partner
+      operationId: updatePartner
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: partnerID
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdatePartnerRequest"
+      responses:
+        "200":
+          description: Partner berhasil diupdate
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+        "400":
+          description: Payload request tidak valid
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "404":
+          description: Partner tidak ditemukan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+    delete:
+      tags: [Partners]
+      summary: Deactivate partner
+      operationId: deactivatePartner
+      description: Mendeactivate partner dengan mengubah status menjadi INACTIVE (soft delete)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: partnerID
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "204":
+          description: Partner berhasil dideactivate
+        "404":
+          description: Partner tidak ditemukan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+  /api/v1/partners/{partnerID}/assignments:
+    post:
+      tags: [Partner Assignments]
+      summary: Assign PIC ke partner
+      operationId: assignPIC
+      description: Mengassign Person In Charge ke partner. Jika ada assignment aktif sebelumnya, akan otomatis dinonaktifkan.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: partnerID
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePartnerAssignmentRequest"
+      responses:
+        "201":
+          description: PIC berhasil diassign
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+        "400":
+          description: Payload request tidak valid
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "404":
+          description: Partner atau user tidak ditemukan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+    get:
+      tags: [Partner Assignments]
+      summary: List assignment history partner
+      operationId: listPartnerAssignments
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: partnerID
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: List assignment history
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/partners/{partnerID}/assignments/active:
+    get:
+      tags: [Partner Assignments]
+      summary: Get active PIC assignment
+      operationId: getActiveAssignment
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: partnerID
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: Active assignment partner
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+        "404":
+          description: Tidak ada assignment aktif
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+  /api/v1/partners/{partnerID}/assignments/release:
+    delete:
+      tags: [Partner Assignments]
+      summary: Release PIC dari partner
+      operationId: releasePartner
+      description: Menonaktifkan assignment PIC yang aktif pada partner
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: partnerID
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "204":
+          description: PIC berhasil direleased
+  /api/v1/partners/{partnerID}/interactions:
+    post:
+      tags: [Partner Interactions]
+      summary: Mencatat interaksi dengan partner
+      operationId: recordInteraction
+      description: Mencatat call atau chat interaction dengan partner
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: partnerID
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePartnerInteractionRequest"
+      responses:
+        "201":
+          description: Interaksi berhasil dicatat
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+        "400":
+          description: Payload request tidak valid
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "404":
+          description: Partner tidak ditemukan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+    get:
+      tags: [Partner Interactions]
+      summary: List interaksi partner
+      operationId: listInteractions
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: partnerID
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 10
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        "200":
+          description: List interaksi partner
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/partners/{partnerID}/referrals:
+    post:
+      tags: [Partner Referrals]
+      summary: Membuat referral dari partner ke lead
+      operationId: createReferral
+      description: Mencatat referral dari partner ke lead. Mencegah duplikasi referral untuk partner-lead pair yang sama.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: partnerID
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePartnerReferralRequest"
+      responses:
+        "201":
+          description: Referral berhasil dibuat
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+        "400":
+          description: Payload request tidak valid
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "404":
+          description: Partner tidak ditemukan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "409":
+          description: Referral sudah ada untuk partner-lead pair ini
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+    get:
+      tags: [Partner Referrals]
+      summary: List referral dari partner
+      operationId: listReferrals
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: partnerID
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: List referral partner
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
 components:
   securitySchemes:
     bearerAuth:
@@ -3503,3 +4029,276 @@ components:
               nullable: true
             request_id:
               type: string
+    PartnerTypeResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        code:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    PartnerResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        partner_type:
+          $ref: "#/components/schemas/PartnerTypeResponse"
+        code:
+          type: string
+        name:
+          type: string
+        phone:
+          type: string
+          nullable: true
+        email:
+          type: string
+          nullable: true
+        address:
+          type: string
+          nullable: true
+        bank_account_masked:
+          type: string
+          example: "****1234"
+          nullable: true
+          description: Bank account number yang sudah di-mask (encrypted di database, hanya 4 digit terakhir yang ditampilkan)
+        status:
+          type: string
+          enum: [ACTIVE, INACTIVE]
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    PartnerAssignmentResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        partner_id:
+          type: integer
+          format: int64
+        user_id:
+          type: integer
+          format: int64
+        user_name:
+          type: string
+          nullable: true
+        user_role:
+          type: string
+          description: Role dari user yang diassign (SALES, SUPERVISOR, dsb)
+        assigned_by_id:
+          type: integer
+          format: int64
+          nullable: true
+        assigned_by_name:
+          type: string
+          nullable: true
+        assigned_at:
+          type: string
+          format: date-time
+        unassigned_at:
+          type: string
+          format: date-time
+          nullable: true
+        active:
+          type: boolean
+          description: Menunjukkan assignment saat ini aktif atau tidak
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    PartnerInteractionResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        partner_id:
+          type: integer
+          format: int64
+        interaction_type:
+          type: string
+          enum: [CALL, CHAT]
+        interaction_at:
+          type: string
+          format: date-time
+        note:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+    PartnerReferralResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        partner_id:
+          type: integer
+          format: int64
+        lead_id:
+          type: integer
+          format: int64
+        referral_date:
+          type: string
+          format: date-time
+        notes:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+    CreatePartnerTypeRequest:
+      type: object
+      required: [code, name]
+      properties:
+        code:
+          type: string
+          minLength: 3
+          example: SUPPLIER
+        name:
+          type: string
+          minLength: 3
+          example: Supplier
+        description:
+          type: string
+          example: Partner sebagai supplier produk
+    UpdatePartnerTypeRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          example: Supplier Produk
+        description:
+          type: string
+          example: Partner sebagai supplier produk berkualitas
+    CreatePartnerRequest:
+      type: object
+      required: [partner_type_id, code, name]
+      properties:
+        partner_type_id:
+          type: integer
+          format: int64
+          example: 1
+        code:
+          type: string
+          minLength: 3
+          example: PART-001
+        name:
+          type: string
+          minLength: 3
+          example: PT. Mitra Jaya
+        phone:
+          type: string
+          nullable: true
+          example: "0812-3456-7890"
+        email:
+          type: string
+          nullable: true
+          format: email
+          example: contact@mitrajaya.com
+        address:
+          type: string
+          nullable: true
+          example: Jl. Merdeka No. 10, Jakarta
+        bank_account:
+          type: string
+          nullable: true
+          description: Bank account number yang akan diencrypt. Hanya 4 digit terakhir yang disimpan untuk display (masked)
+          example: "1234567890123456"
+        status:
+          type: string
+          enum: [ACTIVE, INACTIVE]
+          default: ACTIVE
+    UpdatePartnerRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          example: PT. Mitra Jaya Mandiri
+        phone:
+          type: string
+          nullable: true
+        email:
+          type: string
+          nullable: true
+          format: email
+        address:
+          type: string
+          nullable: true
+        bank_account:
+          type: string
+          nullable: true
+          description: Jika dikirim, akan di-re-encrypt dengan key terbaru
+        status:
+          type: string
+          enum: [ACTIVE, INACTIVE]
+    CreatePartnerAssignmentRequest:
+      type: object
+      required: [user_id]
+      properties:
+        user_id:
+          type: integer
+          format: int64
+          description: ID user (PIC) yang akan diassign
+          example: 5
+        assigned_by_id:
+          type: integer
+          format: int64
+          nullable: true
+          description: ID user yang melakukan assignment. Jika kosong, diambil dari auth context.
+          example: 1
+    CreatePartnerInteractionRequest:
+      type: object
+      required: [interaction_type]
+      properties:
+        interaction_type:
+          type: string
+          enum: [CALL, CHAT]
+          description: Tipe interaksi dengan partner
+        interaction_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: Waktu interaksi. Jika kosong, default adalah sekarang (now).
+          example: "2026-07-24T10:30:00Z"
+        note:
+          type: string
+          nullable: true
+          example: Diskusi tentang pengiriman barang bulan depan
+    CreatePartnerReferralRequest:
+      type: object
+      required: [lead_id]
+      properties:
+        lead_id:
+          type: integer
+          format: int64
+          description: ID lead yang direferensikan oleh partner
+          example: 10
+        referral_date:
+          type: string
+          format: date-time
+          nullable: true
+          description: Tanggal referral. Jika kosong, default adalah sekarang (now).
+          example: "2026-07-24T00:00:00Z"
+        notes:
+          type: string
+          nullable: true
+          example: Lead direkomendasikan oleh partner karena relasi bisnis

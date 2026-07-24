@@ -12,6 +12,7 @@ import (
 	"backend_crm_piposmart/internal/customer"
 	"backend_crm_piposmart/internal/identity"
 	"backend_crm_piposmart/internal/lead"
+	"backend_crm_piposmart/internal/partner"
 	"backend_crm_piposmart/internal/platform/config"
 	"backend_crm_piposmart/internal/platform/httpx"
 	"backend_crm_piposmart/internal/subscription"
@@ -142,6 +143,12 @@ func NewRouter(cfg config.Config, logger *slog.Logger, connection Connection) *g
 		subscriptionRoutes := api.Group("")
 		subscriptionRoutes.Use(identity.AuthMiddleware(identityService))
 		subscription.NewHandler(subscriptionService).RegisterRoutes(subscriptionRoutes)
+
+		partnerRepository := partner.NewRepository(connection.SQLDB())
+		partnerService := partner.NewService(partnerRepository, cfg)
+		partnerRoutes := api.Group("")
+		partnerRoutes.Use(identity.AuthMiddleware(identityService))
+		partner.NewHandler(partnerService).RegisterRoutes(partnerRoutes)
 	}
 
 	router.NoRoute(func(c *gin.Context) {

@@ -22,6 +22,13 @@ type APIError struct {
 	RequestID string `json:"request_id"`
 }
 
+// PaginationMeta holds pagination metadata
+type PaginationMeta struct {
+	Page  int   `json:"page"`
+	Limit int   `json:"limit"`
+	Total int64 `json:"total"`
+}
+
 func Success(c *gin.Context, status int, data any) {
 	c.JSON(status, SuccessEnvelope{
 		Data: data,
