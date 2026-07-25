@@ -8,8 +8,11 @@ import (
 	"net/http"
 	"time"
 
+	"backend_crm_piposmart/internal/customer"
 	"backend_crm_piposmart/internal/identity"
+	"backend_crm_piposmart/internal/importing"
 	"backend_crm_piposmart/internal/kpi"
+	"backend_crm_piposmart/internal/lead"
 	"backend_crm_piposmart/internal/platform/config"
 	"backend_crm_piposmart/internal/platform/database"
 	"backend_crm_piposmart/internal/platform/httpserver"
@@ -75,8 +78,13 @@ func RunWorker(ctx context.Context, cfg config.Config, logger *slog.Logger) erro
 
 	jobRepository := jobqueue.NewRepository(connection.SQL)
 	kpiRepository := kpi.NewRepository(connection.SQL)
+	importingRepository := importing.NewRepository(connection.SQL)
+	customerService := customer.NewService(customer.NewRepository(connection.SQL))
+	leadService := lead.NewService(lead.NewRepository(connection.SQL))
 	registry := jobqueue.Registry{
-		kpi.JobTypeRecompute: kpi.RecomputeHandler(kpiRepository),
+		kpi.JobTypeRecompute:      kpi.RecomputeHandler(kpiRepository),
+		importing.JobTypeValidate: importing.ValidateHandler(importingRepository),
+		importing.JobTypeCommit:   importing.CommitHandler(importingRepository, customerService, leadService),
 	}
 
 	logger.Info("worker started",

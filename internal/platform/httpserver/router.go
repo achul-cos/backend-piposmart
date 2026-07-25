@@ -11,6 +11,7 @@ import (
 	"backend_crm_piposmart/internal/closing"
 	"backend_crm_piposmart/internal/customer"
 	"backend_crm_piposmart/internal/identity"
+	"backend_crm_piposmart/internal/importing"
 	"backend_crm_piposmart/internal/kpi"
 	"backend_crm_piposmart/internal/lead"
 	"backend_crm_piposmart/internal/partner"
@@ -165,6 +166,12 @@ func NewRouter(cfg config.Config, logger *slog.Logger, connection Connection) *g
 		kpiRoutes := api.Group("")
 		kpiRoutes.Use(identity.AuthMiddleware(identityService))
 		kpi.NewHandler(kpiService).RegisterRoutes(kpiRoutes)
+
+		importingRepository := importing.NewRepository(connection.SQLDB())
+		importingService := importing.NewService(importingRepository, jobRepository, cfg.Storage)
+		importingRoutes := api.Group("")
+		importingRoutes.Use(identity.AuthMiddleware(identityService))
+		importing.NewHandler(importingService).RegisterRoutes(importingRoutes)
 	}
 
 	router.NoRoute(func(c *gin.Context) {

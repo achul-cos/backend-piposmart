@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Backend CRM Piposmart
-  version: 0.14.0-sprint-13
+  version: 0.15.0-sprint-14
   description: API CRM Piposmart dengan Partner Type, Partner (Encrypted & Masked Bank Account), PIC Assignment, Call Interactions, Lead Referrals, Subscription Order, Reconciliation Sprint 11, dan Partner Commission Sprint 12.
 servers:
   - url: http://localhost:8080
@@ -3958,6 +3958,195 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelope"
+  /api/v1/imports:
+    post:
+      tags: [Imports]
+      summary: Upload Excel file untuk import
+      operationId: uploadImport
+      description: Hanya ADMIN. Dedup berdasarkan SHA-256 file — upload file yang sama mengembalikan batch yang sudah ada. Validasi berjalan async lewat worker (job_queue). Profil (OWNER_OUTLET/NON_REGISTER) bisa dideklarasikan eksplisit atau dibiarkan auto-detect dari header kolom.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                profile:
+                  type: string
+                  enum: [OWNER_OUTLET, NON_REGISTER]
+      responses:
+        "201":
+          description: Batch berhasil diupload (atau batch existing dikembalikan bila file sama)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+        "400":
+          description: File tidak valid (bukan .xlsx, terlalu besar, atau kosong)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "403":
+          description: Akses ditolak (bukan ADMIN)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+    get:
+      tags: [Imports]
+      summary: List import batch
+      operationId: listImportBatches
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+        - name: profile
+          in: query
+          schema:
+            type: string
+        - name: page
+          in: query
+          schema:
+            type: integer
+        - name: limit
+          in: query
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Daftar batch
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/imports/{id}:
+    get:
+      tags: [Imports]
+      summary: Detail import batch
+      operationId: getImportBatch
+      description: Status dan counts (total/valid/invalid/committed) jadi preview sebelum commit.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: Detail batch
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+        "404":
+          description: Batch tidak ditemukan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+  /api/v1/imports/{id}/rows:
+    get:
+      tags: [Imports]
+      summary: List baris dalam satu batch
+      operationId: listImportRows
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+        - name: status
+          in: query
+          description: PENDING, VALID, INVALID, COMMITTED, atau COMMIT_FAILED
+          schema:
+            type: string
+        - name: page
+          in: query
+          schema:
+            type: integer
+        - name: limit
+          in: query
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Daftar baris
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/imports/{id}/rejected-rows/export:
+    get:
+      tags: [Imports]
+      summary: Unduh baris invalid sebagai CSV
+      operationId: exportRejectedRows
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: File CSV berisi baris invalid + alasan
+          content:
+            text/csv:
+              schema:
+                type: string
+                format: binary
+  /api/v1/imports/{id}/commit:
+    post:
+      tags: [Imports]
+      summary: Commit batch yang sudah divalidasi
+      operationId: commitImportBatch
+      description: Hanya ADMIN. Ditolak kalau batch belum berstatus VALIDATED atau sudah pernah di-commit — inilah gerbang "preview harus disetujui dulu". Berjalan async; poll GET /imports/{id} untuk status.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "202":
+          description: Commit di-enqueue
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+        "400":
+          description: Batch belum VALIDATED atau sudah COMMITTED
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "403":
+          description: Akses ditolak (bukan ADMIN)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
 components:
   securitySchemes:
     bearerAuth:
@@ -4075,6 +4264,37 @@ components:
         minimum: 1
         maximum: 100
   schemas:
+    ImportBatchResponse:
+      type: object
+      properties:
+        id: { type: integer, format: int64 }
+        code: { type: string }
+        profile: { type: string, enum: [OWNER_OUTLET, NON_REGISTER] }
+        original_filename: { type: string }
+        status: { type: string, enum: [UPLOADED, VALIDATING, VALIDATED, VALIDATION_FAILED, COMMITTING, COMMITTED, COMMIT_FAILED] }
+        total_rows: { type: integer }
+        valid_rows: { type: integer }
+        invalid_rows: { type: integer }
+        committed_rows: { type: integer }
+        error_message: { type: string, nullable: true }
+        uploaded_at: { type: string, format: date-time }
+        validated_at: { type: string, format: date-time, nullable: true }
+        committed_at: { type: string, format: date-time, nullable: true }
+    ImportRowResponse:
+      type: object
+      properties:
+        id: { type: integer, format: int64 }
+        batch_id: { type: integer, format: int64 }
+        row_index: { type: integer, description: "Nomor baris Excel asli (1-based)" }
+        raw_payload: { type: object, description: "Kolom yang sudah dipetakan & dinormalisasi; kolom OTP tidak pernah muncul di sini" }
+        status: { type: string, enum: [PENDING, VALID, INVALID, COMMITTED, COMMIT_FAILED] }
+        validation_errors:
+          type: array
+          items: { type: string }
+        owner_id: { type: integer, format: int64, nullable: true }
+        outlet_id: { type: integer, format: int64, nullable: true }
+        lead_id: { type: integer, format: int64, nullable: true }
+        commit_error: { type: string, nullable: true }
     BulkSetTargetRequest:
       type: object
       required: [period_year, period_month, metric_code, target_value]
