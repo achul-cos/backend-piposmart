@@ -11,9 +11,21 @@ Fondasi saat ini menyediakan:
 - structured logging, request ID, panic recovery, serta CORS eksplisit;
 - liveness dan readiness check;
 - migration command berbasis Goose;
-- baseline schema, factory, dan seeder awal;
+- baseline schema, factory, dan seeder (preset `minimal` dan `large`);
+- background job queue berbasis MySQL (tanpa Redis) yang diproses worker — dipakai KPI recompute (Sprint 13), siap dipakai job import (Sprint 14);
+- modul bisnis: identity/RBAC, owner/outlet, lead & assignment, customer activity & training, catalog paket/promo, closing, wallet, subscription & reconciliation, partner/PIC/referral/komisi/payout, sales target/KPI/ranking;
 - Dockerfile multi-stage dan Docker Compose;
 - pipeline test, vet, build, dan container build.
+
+Status progres mengikuti roadmap `BACKEND_PLAN_SPRINT.md` (18 Sprint) — Sprint 1 s.d. 13 selesai dan
+terdokumentasi di `docs/sprint-01/` s.d. `docs/sprint-13/`. Sprint 11b/11c menambah preset seeder
+`large` (data skala besar untuk load test) tanpa endpoint API baru; Sprint 12 diperluas hari yang
+sama dengan addendum TIER commission, effective-dated/package-scoped commission rule, dan
+Payout/PayoutItem batching (`docs/sprint-12/ADDENDUM_02_commission_rules_payouts.md`).
+
+> 📖 **Baru di project ini atau bingung dengan istilah teknis** (idempotent, row lock, snapshot,
+> effective dating, job queue, RBAC, dll)? Lihat **[`docs/GLOSARIUM.md`](docs/GLOSARIUM.md)** —
+> glosarium lengkap tiap istilah dengan penjelasan detail + analogi bahasa sederhana.
 
 ## Prasyarat
 
@@ -87,10 +99,28 @@ go run . seed demo --preset=minimal --seed=20260723 --as-of=2026-07-01
 go run . api
 ```
 
-Worker dijalankan pada terminal lain:
+Worker dijalankan pada terminal lain. Sejak Sprint 13, worker bukan lagi sekadar heartbeat —
+worker memproses job dari `job_queue` (MySQL murni, tanpa Redis), dipakai KPI recompute dan siap
+dipakai job import Excel di Sprint 14:
 
 ```powershell
 go run . worker
+```
+
+Preset seeder demo yang tersedia:
+
+| Preset | Skala | Kegunaan |
+| --- | --- | --- |
+| `minimal` (default) | Beberapa baris per modul | Demo cepat dan smoke test harian. |
+| `large` | Ribuan baris (Sprint 11b/11c) | Load test, uji index/query, dan simulasi data produksi sebelum UAT. |
+
+Kedua preset otomatis menyertakan skenario Sales Target/KPI/Ranking (Sprint 13) — 3 Sales dengan
+klasifikasi `ACHIEVED`/`NEAR_ACHIEVED`/`NOT_ACHIEVED` yang deterministik, langsung terlihat lewat
+`GET /api/v1/kpi/ranking` tanpa perlu menjalankan worker (recompute dipanggil langsung oleh
+seeder untuk skenario demo).
+
+```powershell
+go run . seed demo --preset=large --seed=20260723 --as-of=2026-07-01
 ```
 
 Command yang tersedia:
@@ -104,6 +134,7 @@ crm migrate status
 crm migrate version
 crm seed master
 crm seed demo --preset=minimal --seed=20260723 --as-of=2026-07-01
+crm seed demo --preset=large --seed=20260723 --as-of=2026-07-01
 crm bootstrap-admin
 crm version
 crm help
@@ -2856,6 +2887,483 @@ Response `409 Conflict`:
 ```
 
 Dokumentasi testing lengkap Sprint 10 tersedia di `docs/sprint-10/README.md`.
+
+### Partner, PIC, Referral, dan Call Mitra
+
+Mulai Sprint 11, tim Sales dapat mengelola mitra (partner) — supplier hardware/POS, distributor software, agent regional, atau komunitas referral — beserta PIC yang bertanggung jawab, riwayat call/chat ke mitra, dan customer lead yang direferensikan mitra tersebut.
+
+Aturan penting:
+
+- Satu mitra hanya boleh memiliki **satu PIC aktif** dalam satu waktu (di-enforce di database lewat generated column + `UNIQUE KEY`, bukan hanya validasi aplikasi — lihat `migrations/20260724001100_partner_assignment_concurrency_guard.sql`). Assign PIC baru otomatis melepas PIC lama secara atomik dalam satu transaction dengan row lock, aman terhadap assignment bersamaan.
+- Sales hanya melihat mitra yang PIC-nya adalah dirinya sendiri; Admin/Supervisor melihat semua.
+- Nomor rekening mitra dienkripsi di database (`bank_account_encrypted`); response API hanya menampilkan `bank_account_masked` (contoh: `****1234`), tidak pernah nomor lengkap.
+- Referral tidak dapat didaftarkan dua kali untuk pasangan mitra-lead yang sama (`UNIQUE KEY` pada `partner_id, lead_id`).
+
+| Nama Route | Method | Path | Fungsi |
+| --- | --- | --- | --- |
+| List Partner Type | GET | `/api/v1/partner-types` | Melihat daftar tipe mitra (SUPPLIER, DISTRIBUTOR, AGENT, REFERRAL_PARTNER, REFERRAL_REGULAR). |
+| Create Partner Type | POST | `/api/v1/partner-types` | Membuat tipe mitra baru dengan rate komisi flat (`commission_mode`/`commission_value`). |
+| Detail Partner Type | GET | `/api/v1/partner-types/{id}` | Melihat detail tipe mitra. |
+| Update Partner Type | PUT | `/api/v1/partner-types/{id}` | Mengubah rate komisi flat tipe mitra. |
+| List Partner | GET | `/api/v1/partners` | Melihat daftar mitra (Sales hanya melihat mitra kelolaannya). |
+| Create Partner | POST | `/api/v1/partners` | Mendaftarkan mitra baru. |
+| Detail Partner | GET | `/api/v1/partners/{partnerID}` | Melihat detail mitra. |
+| Detail Partner by Code | GET | `/api/v1/partners/code/{code}` | Mencari mitra berdasarkan kode. |
+| Update Partner | PUT | `/api/v1/partners/{partnerID}` | Mengubah data mitra (termasuk ganti nomor rekening). |
+| Deactivate Partner | DELETE | `/api/v1/partners/{partnerID}` | Menonaktifkan mitra. |
+| Active Assignment | GET | `/api/v1/partners/{partnerID}/assignments/active` | Melihat PIC aktif mitra saat ini. |
+| List Assignment | GET | `/api/v1/partners/{partnerID}/assignments` | Melihat riwayat PIC mitra. |
+| Assign PIC | POST | `/api/v1/partners/{partnerID}/assignments` | Menetapkan PIC baru (otomatis melepas PIC lama). |
+| Release PIC | DELETE | `/api/v1/partners/{partnerID}/assignments/release` | Melepas PIC aktif tanpa menggantinya. |
+| List Interaction | GET | `/api/v1/partners/{partnerID}/interactions` | Melihat riwayat call/chat ke mitra. |
+| Record Interaction | POST | `/api/v1/partners/{partnerID}/interactions` | Mencatat call/chat ke mitra. |
+| List Referral | GET | `/api/v1/partners/{partnerID}/referrals` | Melihat customer lead yang direferensikan mitra. |
+| Create Referral | POST | `/api/v1/partners/{partnerID}/referrals` | Mendaftarkan referral mitra ke lead. |
+
+#### POST `/api/v1/partners`
+
+Request:
+
+```http
+POST /api/v1/partners
+Authorization: Bearer {admin_or_supervisor_access_token}
+Content-Type: application/json
+Accept: application/json
+```
+
+Body:
+
+```json
+{
+  "partner_type_id": 3,
+  "code": "PTR-AGENT-001",
+  "name": "Agen Regional Bandung",
+  "phone": "6281200001111",
+  "bank_account": "1234567890123456"
+}
+```
+
+Response `201 Created`:
+
+```json
+{
+  "data": {
+    "id": 5,
+    "partner_type": {
+      "id": 3,
+      "code": "AGENT",
+      "name": "Agent Regional",
+      "commission_mode": "PERCENTAGE",
+      "commission_value": "5.00"
+    },
+    "code": "PTR-AGENT-001",
+    "name": "Agen Regional Bandung",
+    "phone": "6281200001111",
+    "bank_account_masked": "****3456",
+    "status": "ACTIVE"
+  },
+  "meta": {
+    "request_id": "generated-request-id"
+  }
+}
+```
+
+Nomor rekening lengkap yang dikirim di request **tidak pernah** dikembalikan lagi di response manapun — hanya 4 digit terakhir.
+
+#### POST `/api/v1/partners/{partnerID}/assignments`
+
+Request:
+
+```http
+POST /api/v1/partners/5/assignments
+Authorization: Bearer {supervisor_access_token}
+Content-Type: application/json
+Accept: application/json
+```
+
+Body:
+
+```json
+{
+  "user_id": 3
+}
+```
+
+Response `201 Created`: assignment baru menjadi `active: true`; assignment PIC sebelumnya (jika ada) otomatis mendapat `unassigned_at` terisi dan `active: false` dalam transaction yang sama.
+
+Contoh error assign bersamaan (dua request assign PIC berbeda ke mitra yang sama, dikirim nyaris bersamaan):
+
+```json
+{
+  "error": {
+    "code": "INVALID_ASSIGNMENT",
+    "message": "partner: invalid partner assignment (only one active PIC allowed)",
+    "request_id": "generated-request-id"
+  }
+}
+```
+
+Row lock pada `AssignPIC` menyerialkan request yang bersamaan — hasil akhirnya selalu tepat satu PIC aktif, tidak pernah dua.
+
+#### POST `/api/v1/partners/{partnerID}/referrals`
+
+Request:
+
+```http
+POST /api/v1/partners/5/referrals
+Authorization: Bearer {sales_access_token}
+Content-Type: application/json
+Accept: application/json
+```
+
+Body:
+
+```json
+{
+  "lead_id": 24,
+  "notes": "Referral dari agen regional Bandung"
+}
+```
+
+Contoh error referral duplikat (lead yang sama direferensikan mitra yang sama dua kali):
+
+```json
+{
+  "error": {
+    "code": "DUPLICATE_REFERRAL",
+    "message": "partner: referral already exists for this partner-lead pair",
+    "request_id": "generated-request-id"
+  }
+}
+```
+
+Dokumentasi testing lengkap Sprint 11 tersedia di `docs/sprint-11/README.md`.
+
+### Partner Commission dan Payout
+
+Mulai Sprint 12 (diperluas hari yang sama dengan addendum TIER/effective-date/Payout), komisi mitra dihitung otomatis dari closing `CONFIRMED` yang terhubung ke referral mitra, dengan lifecycle persetujuan bertingkat sebelum dibayarkan — baik satu per satu maupun dibatch dalam satu payout.
+
+Aturan penting:
+
+- Rate komisi punya 3 sumber, dicek berurutan saat sync: **commission rule** yang effective-dated & opsional package-scoped (`commission_rules`, mode `PERCENTAGE`/`FIXED`/`TIER`) → kalau tidak ada yang cocok, **fallback ke rate flat** `partner_types.commission_mode`/`commission_value` (perilaku dasar sejak Sprint 12, tidak pernah berubah).
+- Mode **TIER**: rate ditentukan dari bracket volume closing `CONFIRMED` kumulatif mitra **per bulan kalender** — closing ke-1 s/d ke-3 bisa punya rate berbeda dari closing ke-4 dan seterusnya, tergantung konfigurasi tier.
+- Rule package-specific selalu mengalahkan rule type-wide; kalau ada beberapa rule berlaku, `effective_from` paling baru yang menang.
+- Lifecycle commission: `PENDING → APPROVED → PAID`, atau `→ CANCELLED` (dari PENDING/APPROVED). Sync bersifat idempotent — closing yang sudah punya commission tidak diproses ulang.
+- Role gating: sync/approve/cancel/kelola commission rule = ADMIN atau SUPERVISOR; pay (baik individual maupun payout) = **ADMIN saja**.
+- Payout membatch beberapa commission `APPROVED` milik satu mitra menjadi satu pencairan. Commission yang sudah masuk payout aktif **tidak bisa** dibayar individual (double-pay guard, dijamin database lewat `UNIQUE KEY` pada generated column, bukan hanya validasi aplikasi).
+- Cancel payout melepas commission kembali ke `APPROVED` (soft-release, `released_at` diisi) — riwayat payout yang dibatalkan tetap tersimpan untuk audit, tidak dihapus.
+
+| Nama Route | Method | Path | Fungsi |
+| --- | --- | --- | --- |
+| Create Commission Rule | POST | `/api/v1/partner-types/{id}/commission-rules` | Membuat rate komisi effective-dated (PERCENTAGE/FIXED/TIER), opsional package-scoped. |
+| List Commission Rule | GET | `/api/v1/partner-types/{id}/commission-rules` | Melihat daftar commission rule tipe mitra. |
+| Detail Commission Rule | GET | `/api/v1/partner-types/{id}/commission-rules/{ruleID}` | Melihat detail rule termasuk tier (jika mode TIER). |
+| Deactivate Commission Rule | PATCH | `/api/v1/partner-types/{id}/commission-rules/{ruleID}/deactivate` | Menonaktifkan rule (supersede lewat rule baru, bukan edit di tempat). |
+| Sync Commission | POST | `/api/v1/partners/{partnerID}/commissions/sync` | Membuat commission `PENDING` dari closing `CONFIRMED` yang belum diproses. |
+| List Commission | GET | `/api/v1/partners/{partnerID}/commissions` | Melihat daftar commission mitra. |
+| Detail Commission | GET | `/api/v1/partners/{partnerID}/commissions/{commissionID}` | Melihat detail satu commission. |
+| Approve Commission | PATCH | `/api/v1/partners/{partnerID}/commissions/{commissionID}/approve` | Menyetujui commission (PENDING → APPROVED). |
+| Pay Commission | PATCH | `/api/v1/partners/{partnerID}/commissions/{commissionID}/pay` | Membayar satu commission secara individual (APPROVED → PAID), ADMIN saja. |
+| Cancel Commission | PATCH | `/api/v1/partners/{partnerID}/commissions/{commissionID}/cancel` | Membatalkan commission. |
+| Create Payout | POST | `/api/v1/partners/{partnerID}/payouts` | Membatch seluruh commission `APPROVED` mitra menjadi satu payout `PENDING`. |
+| List Payout | GET | `/api/v1/partners/{partnerID}/payouts` | Melihat daftar payout mitra. |
+| Detail Payout | GET | `/api/v1/partners/{partnerID}/payouts/{payoutID}` | Melihat detail payout beserta item commission-nya. |
+| Pay Payout | PATCH | `/api/v1/partners/{partnerID}/payouts/{payoutID}/pay` | Membayar payout, mengubah seluruh commission di dalamnya jadi `PAID`, ADMIN saja. |
+| Cancel Payout | PATCH | `/api/v1/partners/{partnerID}/payouts/{payoutID}/cancel` | Membatalkan payout, melepas commission kembali ke `APPROVED`. |
+
+#### POST `/api/v1/partner-types/{id}/commission-rules`
+
+Contoh rule TIER — closing ke-1 s/d ke-3 dalam sebulan dapat 2%, closing ke-4 dan seterusnya dapat 5%:
+
+```http
+POST /api/v1/partner-types/3/commission-rules
+Authorization: Bearer {admin_access_token}
+Content-Type: application/json
+Accept: application/json
+```
+
+```json
+{
+  "mode": "TIER",
+  "effective_from": "2026-01-01T00:00:00Z",
+  "tiers": [
+    { "tier_order": 1, "min_closings": 1, "max_closings": 3, "mode": "PERCENTAGE", "value": "2.00" },
+    { "tier_order": 2, "min_closings": 4, "mode": "PERCENTAGE", "value": "5.00" }
+  ]
+}
+```
+
+Response `201 Created`: object rule dengan `tiers` berisi kedua bracket. Tier terakhir wajib `max_closings` kosong (open-ended).
+
+#### POST `/api/v1/partners/{partnerID}/commissions/sync`
+
+Request:
+
+```http
+POST /api/v1/partners/5/commissions/sync
+Authorization: Bearer {admin_or_supervisor_access_token}
+Accept: application/json
+```
+
+Response `200 OK`:
+
+```json
+{
+  "data": {
+    "created": 1,
+    "items": [
+      {
+        "id": 9,
+        "code": "COM-20260725-000009-747811",
+        "partner_id": 5,
+        "closing_id": 12,
+        "commission_mode": "PERCENTAGE",
+        "commission_value": "5.00",
+        "commission_rule_id": 2,
+        "tier_ordinal": null,
+        "base_amount": "3000000.00",
+        "commission_amount": "150000.00",
+        "currency": "IDR",
+        "status": "PENDING"
+      }
+    ]
+  },
+  "meta": {
+    "request_id": "generated-request-id"
+  }
+}
+```
+
+`commission_rule_id` dan `tier_ordinal` (khusus mode TIER) menunjukkan rule/bracket mana yang dipakai — `null` berarti memakai fallback rate flat `partner_types`.
+
+#### POST `/api/v1/partners/{partnerID}/payouts`
+
+Request:
+
+```http
+POST /api/v1/partners/5/payouts
+Authorization: Bearer {admin_or_supervisor_access_token}
+Accept: application/json
+```
+
+Response `201 Created`:
+
+```json
+{
+  "data": {
+    "id": 3,
+    "code": "PAYOUT-20260725-000005-866534",
+    "partner_id": 5,
+    "total_amount": "150000.00",
+    "currency": "IDR",
+    "status": "PENDING",
+    "items": [
+      { "id": 6, "commission_id": 9, "commission_code": "COM-20260725-000009-747811", "amount": "150000.00" }
+    ]
+  },
+  "meta": {
+    "request_id": "generated-request-id"
+  }
+}
+```
+
+Contoh error mencoba membayar commission yang sudah masuk payout aktif:
+
+```json
+{
+  "error": {
+    "code": "COMMISSION_IN_PAYOUT",
+    "message": "partner: commission is already reserved in an active payout",
+    "request_id": "generated-request-id"
+  }
+}
+```
+
+Dokumentasi testing lengkap Sprint 12 (termasuk addendum TIER/effective-date/Payout) tersedia di `docs/sprint-12/README.md` dan `docs/sprint-12/ADDENDUM_02_commission_rules_payouts.md`.
+
+### Sales Target, KPI, dan Ranking
+
+Mulai Sprint 13, performa Sales dihitung otomatis dari aktivitas CRM (call/chat, training, closing `CONFIRMED`) terhadap target bulanan, diproses **asinkron lewat background worker** (`job_queue`, MySQL murni tanpa Redis — worker sebelumnya cuma heartbeat stub, sekarang benar-benar memproses job).
+
+Aturan penting:
+
+- Target dan KPI Definition memakai `metric_codes` yang sudah ada sejak Sprint 2 (`CALL_CUSTOMER_COUNT`, `TRAINING_COUNT`, `CONFIRMED_CLOSING_COUNT`, `CONFIRMED_CLOSING_AMOUNT`, `PARTNER_CALL_COUNT` — metric terakhir belum didukung recompute, lihat catatan di bawah).
+- Bulk-set target (`POST /sales-targets/bulk`) **tidak pernah menimpa** target yang sudah ada (baik hasil bulk maupun override sebelumnya) — hanya mengisi Sales yang belum punya target di periode itu. Override (`PUT /sales-targets/{salesID}`) **selalu menang**.
+- Total weight seluruh KPI definition **aktif** dalam satu periode wajib tepat 100% — divalidasi saat recompute dijalankan, bukan saat definisi dibuat satu-satu.
+- Recompute **idempoten**: dijalankan ulang untuk periode yang sama kapan pun menghasilkan hasil identik (delete-then-insert dalam satu transaction).
+- Klasifikasi per Sales per periode: `ACHIEVED` (total score ≥ threshold_achieved), `NEAR_ACHIEVED` (≥ threshold_near), atau `NOT_ACHIEVED`.
+- Sales hanya melihat KPI miliknya sendiri (termasuk posisi rank-nya) lewat `/kpi/results`; ranking lengkap satu periode (`/kpi/ranking`) hanya untuk Admin/Supervisor.
+- `PARTNER_CALL_COUNT` sengaja **belum didukung** recompute (atribusi ke Sales tidak langsung, perlu join time-scoped ke assignment PIC mitra) — kalau ada KPI definition yang mengaktifkan metric ini, recompute akan gagal eksplisit dengan `UNSUPPORTED_METRIC`, bukan diam-diam dihitung nol.
+
+| Nama Route | Method | Path | Fungsi |
+| --- | --- | --- | --- |
+| Bulk Set Target | POST | `/api/v1/sales-targets/bulk` | Set target default untuk seluruh Sales aktif yang belum punya target di periode & metric ini. |
+| Override Target | PUT | `/api/v1/sales-targets/{salesID}` | Menimpa target satu Sales untuk periode & metric tertentu. |
+| List Target | GET | `/api/v1/sales-targets` | Melihat daftar target (Sales hanya melihat miliknya). |
+| Create KPI Definition | POST | `/api/v1/kpi-definitions` | Mendefinisikan bobot & threshold satu metric untuk satu periode. |
+| List KPI Definition | GET | `/api/v1/kpi-definitions` | Melihat daftar KPI definition. |
+| Detail KPI Definition | GET | `/api/v1/kpi-definitions/{id}` | Melihat detail satu KPI definition. |
+| Deactivate KPI Definition | PATCH | `/api/v1/kpi-definitions/{id}/deactivate` | Menonaktifkan definition (supersede lewat definition baru). |
+| Trigger Recompute | POST | `/api/v1/kpi/recompute` | Meng-enqueue job recompute KPI untuk satu periode (diproses worker). |
+| Job Status | GET | `/api/v1/kpi/jobs/{id}` | Mengecek status job recompute (`PENDING`/`PROCESSING`/`COMPLETED`/`FAILED`). |
+| List KPI Result | GET | `/api/v1/kpi/results` | Melihat hasil KPI (Sales hanya melihat miliknya). |
+| List Ranking | GET | `/api/v1/kpi/ranking` | Melihat ranking lengkap satu periode. Admin/Supervisor saja. |
+
+#### POST `/api/v1/sales-targets/bulk`
+
+Request:
+
+```http
+POST /api/v1/sales-targets/bulk
+Authorization: Bearer {admin_or_supervisor_access_token}
+Content-Type: application/json
+Accept: application/json
+```
+
+Body:
+
+```json
+{
+  "period_year": 2026,
+  "period_month": 8,
+  "metric_code": "CONFIRMED_CLOSING_COUNT",
+  "target_value": "10.00"
+}
+```
+
+Response `200 OK`:
+
+```json
+{
+  "data": {
+    "metric_code": "CONFIRMED_CLOSING_COUNT",
+    "period_year": 2026,
+    "period_month": 8,
+    "target_value": "10.00",
+    "eligible_sales": 5,
+    "created": 5
+  },
+  "meta": {
+    "request_id": "generated-request-id"
+  }
+}
+```
+
+#### POST `/api/v1/kpi/recompute`
+
+Request:
+
+```http
+POST /api/v1/kpi/recompute
+Authorization: Bearer {admin_or_supervisor_access_token}
+Content-Type: application/json
+Accept: application/json
+```
+
+Body:
+
+```json
+{
+  "period_year": 2026,
+  "period_month": 7
+}
+```
+
+Response `202 Accepted`:
+
+```json
+{
+  "data": {
+    "id": 2,
+    "job_type": "KPI_RECOMPUTE",
+    "status": "PENDING",
+    "attempts": 0,
+    "max_attempts": 5
+  },
+  "meta": {
+    "request_id": "generated-request-id"
+  }
+}
+```
+
+Cek status lewat `GET /api/v1/kpi/jobs/2` setelah beberapa detik (sesuai `WORKER_POLL_INTERVAL`):
+
+```json
+{
+  "data": {
+    "id": 2,
+    "job_type": "KPI_RECOMPUTE",
+    "status": "COMPLETED",
+    "attempts": 1,
+    "max_attempts": 5,
+    "completed_at": "2026-07-25T09:45:01Z"
+  },
+  "meta": {
+    "request_id": "generated-request-id"
+  }
+}
+```
+
+Contoh error total weight definition aktif belum 100% (job gagal setelah dicoba ulang sebanyak `max_attempts`, bukan langsung ditolak saat trigger karena recompute berjalan async):
+
+```json
+{
+  "data": {
+    "id": 1,
+    "status": "FAILED",
+    "attempts": 5,
+    "max_attempts": 5,
+    "last_error": "kpi: active KPI definitions for this period must have weights summing to exactly 100"
+  },
+  "meta": {
+    "request_id": "generated-request-id"
+  }
+}
+```
+
+#### GET `/api/v1/kpi/ranking`
+
+Request:
+
+```http
+GET /api/v1/kpi/ranking?period_year=2026&period_month=7
+Authorization: Bearer {admin_or_supervisor_access_token}
+Accept: application/json
+```
+
+Response `200 OK`:
+
+```json
+{
+  "data": {
+    "items": [
+      { "sales_id": 5, "sales_name": "Sales Demo 091", "total_score": "100.00", "classification": "ACHIEVED", "rank_position": 1 },
+      { "sales_id": 6, "sales_name": "Sales Demo 092", "total_score": "80.00", "classification": "NEAR_ACHIEVED", "rank_position": 2 },
+      { "sales_id": 7, "sales_name": "Sales Demo 093", "total_score": "20.00", "classification": "NOT_ACHIEVED", "rank_position": 3 }
+    ]
+  },
+  "meta": {
+    "request_id": "generated-request-id"
+  }
+}
+```
+
+Contoh error Sales mencoba mengakses ranking penuh:
+
+```json
+{
+  "error": {
+    "code": "FORBIDDEN",
+    "message": "kpi: forbidden",
+    "request_id": "generated-request-id"
+  }
+}
+```
+
+Sales tetap bisa melihat posisi rank-nya sendiri lewat `GET /api/v1/kpi/results` (hanya mengembalikan baris miliknya).
+
+Dokumentasi testing lengkap Sprint 13 tersedia di `docs/sprint-13/README.md`.
+
 ## Konfigurasi
 
 `.env.example` adalah kontrak konfigurasi. File `.env` tidak boleh dikomit.
@@ -2949,14 +3457,34 @@ docker build -t crm-piposmart-backend:local .
 
 ```text
 main.go                        Entry point API, worker, migration, dan seeder
-internal/app/                  Lifecycle executable
+internal/app/                  Lifecycle executable (RunAPI, RunWorker, RunBootstrapAdmin)
 internal/platform/config/      Konfigurasi dan validasi environment
 internal/platform/database/    Koneksi dan pool MySQL
 internal/platform/factory/     Factory data dummy deterministik
 internal/platform/httpserver/  Router, middleware, health, OpenAPI
 internal/platform/httpx/       Response envelope API
+internal/platform/jobqueue/    Job queue generik berbasis MySQL (klaim, retry, stale reclaim)
 internal/platform/logging/     Structured logging
 internal/platform/migration/   Goose runner
-internal/platform/seeder/      Master dan demo seeder
+internal/platform/seeder/      Master dan demo seeder (preset minimal & large)
 migrations/                    SQL migration
+```
+
+## Struktur Modul Bisnis
+
+Setiap modul mengikuti pola file yang sama: `types.go` (struct & response), `errors.go`,
+`money.go` (bila ada validasi desimal/persen), `repository.go`, `service.go`, `handler.go`.
+
+```text
+internal/identity/     Auth, RBAC, Sales management (Sprint 3)
+internal/customer/     Owner & Outlet (Sprint 4)
+internal/lead/         Customer lead & assignment (Sprint 5)
+internal/activity/     Interaction, remark, follow-up, training (Sprint 6)
+internal/catalog/      Package, plan, promotion, benefit (Sprint 7)
+internal/closing/      Sales closing & laporan penjualan (Sprint 8)
+internal/wallet/       Payment, top-up, wallet ledger (Sprint 9)
+internal/subscription/ Subscription order & reconciliation (Sprint 10)
+internal/partner/      Partner, PIC, referral, commission, payout (Sprint 11, 12)
+internal/target/       Sales target — bulk & override (Sprint 13)
+internal/kpi/          KPI definition, recompute, ranking (Sprint 13)
 ```

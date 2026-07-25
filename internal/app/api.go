@@ -9,9 +9,11 @@ import (
 	"time"
 
 	"backend_crm_piposmart/internal/identity"
+	"backend_crm_piposmart/internal/kpi"
 	"backend_crm_piposmart/internal/platform/config"
 	"backend_crm_piposmart/internal/platform/database"
 	"backend_crm_piposmart/internal/platform/httpserver"
+	"backend_crm_piposmart/internal/platform/jobqueue"
 )
 
 func RunAPI(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
@@ -71,9 +73,16 @@ func RunWorker(ctx context.Context, cfg config.Config, logger *slog.Logger) erro
 	ticker := time.NewTicker(cfg.Worker.PollInterval)
 	defer ticker.Stop()
 
+	jobRepository := jobqueue.NewRepository(connection.SQL)
+	kpiRepository := kpi.NewRepository(connection.SQL)
+	registry := jobqueue.Registry{
+		kpi.JobTypeRecompute: kpi.RecomputeHandler(kpiRepository),
+	}
+
 	logger.Info("worker started",
 		slog.Duration("poll_interval", cfg.Worker.PollInterval),
 		slog.Int("max_attempts", cfg.Worker.MaxAttempts),
+		slog.Duration("stale_job_timeout", cfg.Worker.StaleJobTimeout),
 	)
 
 	for {
@@ -90,6 +99,25 @@ func RunWorker(ctx context.Context, cfg config.Config, logger *slog.Logger) erro
 				continue
 			}
 			logger.Debug("worker heartbeat", slog.String("status", "ready"))
+
+			if reclaimed, err := jobRepository.ReclaimStale(ctx, cfg.Worker.StaleJobTimeout); err != nil {
+				logger.Error("worker stale job reclaim failed", slog.String("error", err.Error()))
+			} else if reclaimed > 0 {
+				logger.Warn("worker reclaimed stale jobs", slog.Int64("count", reclaimed))
+			}
+
+			// Drain the queue each tick rather than handling one job per tick, so a burst of
+			// enqueued jobs (e.g. several KPI recompute requests) doesn't wait multiple
+			// PollInterval cycles to clear.
+			for {
+				handled, dispatchErr := jobqueue.Dispatch(ctx, connection.SQL, jobRepository, registry)
+				if dispatchErr != nil {
+					logger.Error("worker job dispatch failed", slog.String("error", dispatchErr.Error()))
+				}
+				if !handled {
+					break
+				}
+			}
 		}
 	}
 }

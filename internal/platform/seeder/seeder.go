@@ -154,6 +154,9 @@ func runWithTransaction(ctx context.Context, db *sql.DB, options Options) error 
 				return err
 			}
 		}
+		if err := seedTargetKpiRankingScenario(ctx, tx, options); err != nil {
+			return err
+		}
 	}
 
 	if err := tx.Commit(); err != nil {

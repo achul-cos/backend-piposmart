@@ -137,6 +137,112 @@ func TestValidateCommissionValue(t *testing.T) {
 	}
 }
 
+func strPtr(s string) *string { return &s }
+func intPtr(i int) *int       { return &i }
+
+func TestValidateRuleCommissionValue(t *testing.T) {
+	tests := []struct {
+		name    string
+		mode    string
+		value   *string
+		wantErr bool
+	}{
+		{name: "percentage valid", mode: CommissionModePercentage, value: strPtr("5.00")},
+		{name: "percentage missing value", mode: CommissionModePercentage, value: nil, wantErr: true},
+		{name: "fixed valid", mode: CommissionModeFixed, value: strPtr("150000.00")},
+		{name: "tier with no value", mode: CommissionModeTier, value: nil},
+		{name: "tier with value is invalid", mode: CommissionModeTier, value: strPtr("5.00"), wantErr: true},
+		{name: "unknown mode", mode: "BOGUS", value: strPtr("5.00"), wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateRuleCommissionValue(tt.mode, tt.value)
+			if tt.wantErr && err == nil {
+				t.Fatalf("expected error, got nil")
+			}
+			if !tt.wantErr && err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+func TestValidateCommissionTiers(t *testing.T) {
+	tests := []struct {
+		name    string
+		tiers   []CreateCommissionTierRequest
+		wantErr bool
+	}{
+		{
+			name: "valid two tiers",
+			tiers: []CreateCommissionTierRequest{
+				{TierOrder: 1, MinClosings: 1, MaxClosings: intPtr(3), Mode: CommissionModePercentage, Value: "2.00"},
+				{TierOrder: 2, MinClosings: 4, MaxClosings: nil, Mode: CommissionModePercentage, Value: "5.00"},
+			},
+		},
+		{
+			name:    "empty tiers",
+			tiers:   nil,
+			wantErr: true,
+		},
+		{
+			name: "first tier doesn't start at 1",
+			tiers: []CreateCommissionTierRequest{
+				{TierOrder: 1, MinClosings: 2, MaxClosings: nil, Mode: CommissionModePercentage, Value: "2.00"},
+			},
+			wantErr: true,
+		},
+		{
+			name: "last tier not open-ended",
+			tiers: []CreateCommissionTierRequest{
+				{TierOrder: 1, MinClosings: 1, MaxClosings: intPtr(3), Mode: CommissionModePercentage, Value: "2.00"},
+			},
+			wantErr: true,
+		},
+		{
+			name: "gap between tiers",
+			tiers: []CreateCommissionTierRequest{
+				{TierOrder: 1, MinClosings: 1, MaxClosings: intPtr(3), Mode: CommissionModePercentage, Value: "2.00"},
+				{TierOrder: 2, MinClosings: 5, MaxClosings: nil, Mode: CommissionModePercentage, Value: "5.00"}, // gap at 4
+			},
+			wantErr: true,
+		},
+		{
+			name: "overlapping tiers",
+			tiers: []CreateCommissionTierRequest{
+				{TierOrder: 1, MinClosings: 1, MaxClosings: intPtr(3), Mode: CommissionModePercentage, Value: "2.00"},
+				{TierOrder: 2, MinClosings: 3, MaxClosings: nil, Mode: CommissionModePercentage, Value: "5.00"}, // overlaps at 3
+			},
+			wantErr: true,
+		},
+		{
+			name: "unsorted input still validated correctly after sort",
+			tiers: []CreateCommissionTierRequest{
+				{TierOrder: 2, MinClosings: 4, MaxClosings: nil, Mode: CommissionModePercentage, Value: "5.00"},
+				{TierOrder: 1, MinClosings: 1, MaxClosings: intPtr(3), Mode: CommissionModePercentage, Value: "2.00"},
+			},
+		},
+		{
+			name: "invalid tier value",
+			tiers: []CreateCommissionTierRequest{
+				{TierOrder: 1, MinClosings: 1, MaxClosings: nil, Mode: CommissionModePercentage, Value: "150.00"},
+			},
+			wantErr: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateCommissionTiers(tt.tiers)
+			if tt.wantErr && err == nil {
+				t.Fatalf("expected error, got nil")
+			}
+			if !tt.wantErr && err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
 func TestCalculateCommissionAmountCents(t *testing.T) {
 	tests := []struct {
 		name      string

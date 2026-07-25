@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Backend CRM Piposmart
-  version: 0.12.0-sprint-12
+  version: 0.14.0-sprint-13
   description: API CRM Piposmart dengan Partner Type, Partner (Encrypted & Masked Bank Account), PIC Assignment, Call Interactions, Lead Referrals, Subscription Order, Reconciliation Sprint 11, dan Partner Commission Sprint 12.
 servers:
   - url: http://localhost:8080
@@ -3233,6 +3233,731 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelope"
+  /api/v1/partner-types/{id}/commission-rules:
+    post:
+      tags: [Partner Commission Rules]
+      summary: Buat commission rule
+      operationId: createCommissionRule
+      description: Menambahkan rate komisi yang effective-dated dan opsional package-scoped untuk sebuah partner type (PERCENTAGE/FIXED/TIER). Jika mode TIER, rate ditentukan dari tiers berdasarkan volume closing confirmed bulanan partner. Jika tidak ada rule yang cocok saat sync, kalkulasi fallback ke rate flat partner_types (perilaku Sprint 12, tidak berubah). Hanya ADMIN dan SUPERVISOR.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Partner Type ID
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateCommissionRuleRequest"
+      responses:
+        "201":
+          description: Commission rule berhasil dibuat
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+        "400":
+          description: Payload tidak valid (mode/value/tiers tidak konsisten)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "403":
+          description: Akses ditolak (bukan ADMIN/SUPERVISOR)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "404":
+          description: Partner type tidak ditemukan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+    get:
+      tags: [Partner Commission Rules]
+      summary: List commission rules partner type
+      operationId: listCommissionRules
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Partner Type ID
+          schema:
+            type: integer
+            format: int64
+        - name: package_id
+          in: query
+          required: false
+          description: Filter berdasarkan subscription package ID
+          schema:
+            type: integer
+            format: int64
+        - name: active_only
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
+      responses:
+        "200":
+          description: List commission rules
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/partner-types/{id}/commission-rules/{ruleID}:
+    get:
+      tags: [Partner Commission Rules]
+      summary: Detail commission rule
+      operationId: getCommissionRule
+      description: Mengambil satu commission rule beserta tiers-nya (jika mode TIER), scoped ke partner type yang diberikan.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Partner Type ID
+          schema:
+            type: integer
+            format: int64
+        - name: ruleID
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: Detail commission rule
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+        "404":
+          description: Commission rule tidak ditemukan untuk partner type ini
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+  /api/v1/partner-types/{id}/commission-rules/{ruleID}/deactivate:
+    patch:
+      tags: [Partner Commission Rules]
+      summary: Nonaktifkan commission rule
+      operationId: deactivateCommissionRule
+      description: Menonaktifkan rule (rule di-supersede dengan membuat rule baru, tidak pernah diedit langsung). Hanya ADMIN dan SUPERVISOR.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Partner Type ID
+          schema:
+            type: integer
+            format: int64
+        - name: ruleID
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: Commission rule berhasil dinonaktifkan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+        "403":
+          description: Akses ditolak (bukan ADMIN/SUPERVISOR)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "404":
+          description: Commission rule tidak ditemukan untuk partner type ini
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+  /api/v1/partners/{partnerID}/payouts:
+    post:
+      tags: [Partner Payouts]
+      summary: Buat payout (batch commission approved)
+      operationId: createPayout
+      description: Mengelompokkan seluruh commission berstatus APPROVED milik partner ini (yang belum masuk payout lain) ke dalam satu payout PENDING baru. Endpoint PATCH .../commissions/{id}/pay individual tetap tersedia untuk kasus one-off; commission yang sudah masuk payout aktif tidak bisa dibayar individual (409 COMMISSION_IN_PAYOUT). Hanya ADMIN dan SUPERVISOR.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: partnerID
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "201":
+          description: Payout berhasil dibuat
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+        "400":
+          description: Tidak ada commission APPROVED yang bisa dibayarkan, atau currency campuran
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "403":
+          description: Akses ditolak (bukan ADMIN/SUPERVISOR)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "404":
+          description: Partner tidak ditemukan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+    get:
+      tags: [Partner Payouts]
+      summary: List payout partner
+      operationId: listPayouts
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: partnerID
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [PENDING, PAID, CANCELLED]
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 1
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 10
+      responses:
+        "200":
+          description: List payout partner
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/partners/{partnerID}/payouts/{payoutID}:
+    get:
+      tags: [Partner Payouts]
+      summary: Detail payout
+      operationId: getPayout
+      description: Mengambil satu payout beserta commission items yang dibatch di dalamnya, scoped ke partner yang diberikan.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: partnerID
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+        - name: payoutID
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: Detail payout
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+        "404":
+          description: Payout tidak ditemukan untuk partner ini
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+  /api/v1/partners/{partnerID}/payouts/{payoutID}/pay:
+    patch:
+      tags: [Partner Payouts]
+      summary: Bayar payout
+      operationId: payPayout
+      description: Memindahkan payout PENDING (beserta seluruh commission yang dibatch di dalamnya) menjadi PAID. Hanya ADMIN (uang benar-benar keluar dari bisnis).
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: partnerID
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+        - name: payoutID
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: Payout berhasil dibayar
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+        "400":
+          description: Status payout tidak valid untuk transisi ini (harus PENDING)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "403":
+          description: Akses ditolak (bukan ADMIN)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "404":
+          description: Payout tidak ditemukan untuk partner ini
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+  /api/v1/partners/{partnerID}/payouts/{payoutID}/cancel:
+    patch:
+      tags: [Partner Payouts]
+      summary: Batalkan payout
+      operationId: cancelPayout
+      description: Membatalkan payout PENDING, melepaskan seluruh commission yang dibatch di dalamnya kembali ke status APPROVED (bisa dibayar individual atau dibatch lagi ke payout berikutnya). Hanya ADMIN dan SUPERVISOR.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: partnerID
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+        - name: payoutID
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PayoutActionRequest"
+      responses:
+        "200":
+          description: Payout berhasil dibatalkan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+        "400":
+          description: Status payout tidak valid untuk transisi ini (harus PENDING)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "403":
+          description: Akses ditolak (bukan ADMIN/SUPERVISOR)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "404":
+          description: Payout tidak ditemukan untuk partner ini
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+  /api/v1/sales-targets/bulk:
+    post:
+      tags: [Sales Target]
+      summary: Bulk-set sales target
+      operationId: bulkSetSalesTarget
+      description: Set target default untuk setiap Sales aktif yang belum punya target di periode & metric ini. Tidak pernah menimpa baris yang sudah ada (bulk maupun override). Hanya ADMIN dan SUPERVISOR.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BulkSetTargetRequest"
+      responses:
+        "200":
+          description: Bulk target berhasil diterapkan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+        "400":
+          description: Payload tidak valid (metric_code/target_value/period)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "403":
+          description: Akses ditolak (bukan ADMIN/SUPERVISOR)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+  /api/v1/sales-targets/{salesID}:
+    put:
+      tags: [Sales Target]
+      summary: Override target satu Sales
+      operationId: overrideSalesTarget
+      description: Menimpa (selalu menang atas) target bulk untuk satu Sales di periode & metric tertentu. Hanya ADMIN dan SUPERVISOR.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: salesID
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OverrideTargetRequest"
+      responses:
+        "200":
+          description: Target berhasil di-override
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+        "400":
+          description: Payload tidak valid atau sales_id bukan Sales aktif
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "403":
+          description: Akses ditolak (bukan ADMIN/SUPERVISOR)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+  /api/v1/sales-targets:
+    get:
+      tags: [Sales Target]
+      summary: List sales targets
+      operationId: listSalesTargets
+      description: Sales hanya melihat target miliknya. Admin/Supervisor melihat semua, bisa difilter.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: sales_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: period_year
+          in: query
+          schema:
+            type: integer
+        - name: period_month
+          in: query
+          schema:
+            type: integer
+        - name: metric_code
+          in: query
+          schema:
+            type: string
+        - name: page
+          in: query
+          schema:
+            type: integer
+        - name: limit
+          in: query
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Daftar target
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/kpi-definitions:
+    post:
+      tags: [KPI Definition]
+      summary: Buat KPI definition
+      operationId: createKpiDefinition
+      description: Definisi bobot & threshold satu metric untuk satu periode. Total weight aktif per periode harus tepat 100% (divalidasi saat recompute, bukan saat create). Hanya ADMIN dan SUPERVISOR.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateKpiDefinitionRequest"
+      responses:
+        "201":
+          description: KPI definition berhasil dibuat
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+        "400":
+          description: Payload tidak valid (weight/threshold/metric_code)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "403":
+          description: Akses ditolak (bukan ADMIN/SUPERVISOR)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "409":
+          description: Definisi aktif untuk metric & periode ini sudah ada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+    get:
+      tags: [KPI Definition]
+      summary: List KPI definitions
+      operationId: listKpiDefinitions
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: period_year
+          in: query
+          schema:
+            type: integer
+        - name: period_month
+          in: query
+          schema:
+            type: integer
+        - name: active_only
+          in: query
+          schema:
+            type: boolean
+      responses:
+        "200":
+          description: Daftar KPI definition
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/kpi-definitions/{id}:
+    get:
+      tags: [KPI Definition]
+      summary: Get KPI definition
+      operationId: getKpiDefinition
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: Detail KPI definition
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+        "404":
+          description: Definisi tidak ditemukan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+  /api/v1/kpi-definitions/{id}/deactivate:
+    patch:
+      tags: [KPI Definition]
+      summary: Nonaktifkan KPI definition
+      operationId: deactivateKpiDefinition
+      description: Effective-dating berarti supersede via definisi baru, bukan update di tempat — sama seperti commission_rules Sprint 12. Hanya ADMIN dan SUPERVISOR.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "204":
+          description: Definisi berhasil dinonaktifkan
+        "403":
+          description: Akses ditolak (bukan ADMIN/SUPERVISOR)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "404":
+          description: Definisi tidak ditemukan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+  /api/v1/kpi/recompute:
+    post:
+      tags: [KPI]
+      summary: Enqueue KPI recompute untuk satu periode
+      operationId: recomputeKpi
+      description: Asinkron — diproses background worker (job_queue, MySQL, tanpa Redis). Idempoten, aman dijalankan berulang untuk periode yang sama. Hanya ADMIN dan SUPERVISOR.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RecomputeRequest"
+      responses:
+        "202":
+          description: Job recompute berhasil di-enqueue
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+        "400":
+          description: Payload tidak valid
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "403":
+          description: Akses ditolak (bukan ADMIN/SUPERVISOR)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+  /api/v1/kpi/jobs/{id}:
+    get:
+      tags: [KPI]
+      summary: Cek status job recompute
+      operationId: getKpiJob
+      description: "Status: PENDING, PROCESSING, COMPLETED, atau FAILED (lihat last_error)."
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: Status job
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+        "404":
+          description: Job tidak ditemukan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+  /api/v1/kpi/results:
+    get:
+      tags: [KPI]
+      summary: List hasil KPI
+      operationId: listKpiResults
+      description: Sales hanya melihat hasil miliknya sendiri (termasuk rank_position-nya). Admin/Supervisor melihat semua, bisa difilter.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: sales_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: period_year
+          in: query
+          schema:
+            type: integer
+        - name: period_month
+          in: query
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Daftar hasil KPI
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/kpi/ranking:
+    get:
+      tags: [KPI]
+      summary: List ranking sales satu periode
+      operationId: listKpiRanking
+      description: Daftar terurut lengkap satu periode. Hanya ADMIN dan SUPERVISOR (Sales tidak dapat mengakses daftar penuh, hanya rank_position miliknya sendiri lewat /kpi/results).
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: period_year
+          in: query
+          required: true
+          schema:
+            type: integer
+        - name: period_month
+          in: query
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Daftar ranking
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+        "403":
+          description: Akses ditolak (bukan ADMIN/SUPERVISOR)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
 components:
   securitySchemes:
     bearerAuth:
@@ -3350,6 +4075,102 @@ components:
         minimum: 1
         maximum: 100
   schemas:
+    BulkSetTargetRequest:
+      type: object
+      required: [period_year, period_month, metric_code, target_value]
+      properties:
+        period_year: { type: integer }
+        period_month: { type: integer, minimum: 1, maximum: 12 }
+        metric_code: { type: string, example: "CONFIRMED_CLOSING_COUNT" }
+        target_value: { type: string, example: "10.00" }
+    OverrideTargetRequest:
+      type: object
+      required: [period_year, period_month, metric_code, target_value]
+      properties:
+        period_year: { type: integer }
+        period_month: { type: integer, minimum: 1, maximum: 12 }
+        metric_code: { type: string }
+        target_value: { type: string }
+    SalesTargetResponse:
+      type: object
+      properties:
+        id: { type: integer, format: int64 }
+        sales_id: { type: integer, format: int64 }
+        sales_name: { type: string }
+        metric_code: { type: string }
+        metric_name: { type: string }
+        metric_unit: { type: string }
+        period_year: { type: integer }
+        period_month: { type: integer }
+        target_value: { type: string }
+        source: { type: string, enum: [BULK, OVERRIDE] }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    CreateKpiDefinitionRequest:
+      type: object
+      required: [metric_code, period_year, period_month, weight]
+      properties:
+        metric_code: { type: string, example: "CONFIRMED_CLOSING_COUNT" }
+        period_year: { type: integer }
+        period_month: { type: integer, minimum: 1, maximum: 12 }
+        weight: { type: string, example: "40.00", description: "Persen, seluruh definisi aktif per periode harus total 100" }
+        threshold_achieved: { type: string, default: "100.00" }
+        threshold_near: { type: string, default: "80.00" }
+    KpiDefinitionResponse:
+      type: object
+      properties:
+        id: { type: integer, format: int64 }
+        metric_code: { type: string }
+        metric_name: { type: string }
+        metric_unit: { type: string }
+        period_year: { type: integer }
+        period_month: { type: integer }
+        weight: { type: string }
+        threshold_achieved: { type: string }
+        threshold_near: { type: string }
+        active: { type: boolean }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    RecomputeRequest:
+      type: object
+      required: [period_year, period_month]
+      properties:
+        period_year: { type: integer }
+        period_month: { type: integer, minimum: 1, maximum: 12 }
+    JobResponse:
+      type: object
+      properties:
+        id: { type: integer, format: int64 }
+        job_type: { type: string, example: "KPI_RECOMPUTE" }
+        status: { type: string, enum: [PENDING, PROCESSING, COMPLETED, FAILED] }
+        attempts: { type: integer }
+        max_attempts: { type: integer }
+        last_error: { type: string, nullable: true }
+        created_at: { type: string, format: date-time }
+        completed_at: { type: string, format: date-time, nullable: true }
+    SalesKpiMetricResultResponse:
+      type: object
+      properties:
+        metric_code: { type: string }
+        target_value: { type: string }
+        actual_value: { type: string }
+        achievement_pct: { type: string }
+        weighted_score: { type: string }
+    SalesKpiResultResponse:
+      type: object
+      properties:
+        sales_id: { type: integer, format: int64 }
+        sales_name: { type: string }
+        period_year: { type: integer }
+        period_month: { type: integer }
+        total_score: { type: string }
+        classification: { type: string, enum: [ACHIEVED, NEAR_ACHIEVED, NOT_ACHIEVED] }
+        rank_position: { type: integer, nullable: true }
+        computed_at: { type: string, format: date-time }
+        metrics:
+          type: array
+          items:
+            $ref: "#/components/schemas/SalesKpiMetricResultResponse"
     LoginRequest:
       type: object
       required: [email, password]
@@ -4604,11 +5425,21 @@ components:
         commission_mode:
           type: string
           enum: [PERCENTAGE, FIXED]
-          description: Snapshot commission_mode partner_type saat komisi dihitung
+          description: Mode efektif saat komisi dihitung — snapshot dari commission_rules yang cocok (bisa hasil resolusi TIER), atau fallback ke rate flat partner_type jika tidak ada rule yang cocok
         commission_value:
           type: string
-          description: Snapshot commission_value partner_type saat komisi dihitung
+          description: Snapshot value efektif saat komisi dihitung (lihat commission_mode)
           example: "5.00"
+        commission_rule_id:
+          type: integer
+          format: int64
+          nullable: true
+          description: ID commission_rules yang menghasilkan snapshot ini. Null berarti fallback ke rate flat partner_type (perilaku Sprint 12)
+        tier_ordinal:
+          type: integer
+          format: int64
+          nullable: true
+          description: Rank ke berapa (1-based) closing ini di antara closing confirmed partner pada bulan kalender yang sama. Hanya terisi jika commission_rule_id merujuk ke rule bermode TIER
         base_amount:
           type: string
           description: Snapshot final_amount closing saat komisi dihitung
@@ -4637,6 +5468,11 @@ components:
           type: string
           format: date-time
           nullable: true
+        active_payout_id:
+          type: integer
+          format: int64
+          nullable: true
+          description: ID payout PENDING/PAID yang sedang membatch commission ini, jika ada. Commission dengan field ini terisi tidak bisa dibayar/dibatalkan individual (409 COMMISSION_IN_PAYOUT)
         created_at:
           type: string
           format: date-time
@@ -4689,3 +5525,224 @@ components:
           type: string
           nullable: true
           example: Closing dibatalkan, komisi tidak jadi dibayarkan
+    CreateCommissionTierRequest:
+      type: object
+      required: [tier_order, min_closings, mode, value]
+      properties:
+        tier_order:
+          type: integer
+          minimum: 1
+          description: Urutan tier (1, 2, 3, ...), harus berurutan tanpa celah
+          example: 1
+        min_closings:
+          type: integer
+          minimum: 1
+          description: Batas bawah jumlah closing confirmed bulanan untuk tier ini. Tier pertama harus mulai dari 1, tier berikutnya harus lanjut tepat setelah max_closings tier sebelumnya
+          example: 1
+        max_closings:
+          type: integer
+          nullable: true
+          description: Batas atas jumlah closing confirmed bulanan untuk tier ini. Null berarti open-ended — WAJIB null pada tier terakhir agar semua jumlah closing punya tier yang cocok
+          example: 3
+        mode:
+          type: string
+          enum: [PERCENTAGE, FIXED]
+          description: Mode rate tier ini (tier tidak bisa nested TIER)
+        value:
+          type: string
+          description: Rate tier ini — persen (0-100) jika PERCENTAGE, nominal jika FIXED
+          example: "2.00"
+    CreateCommissionRuleRequest:
+      type: object
+      required: [mode, effective_from]
+      properties:
+        package_id:
+          type: integer
+          format: int64
+          nullable: true
+          description: Jika diisi, rule ini hanya berlaku untuk closing dengan package tersebut (lebih spesifik daripada rule type-wide). Null berarti berlaku untuk semua package partner_type ini
+          example: 2
+        mode:
+          type: string
+          enum: [PERCENTAGE, FIXED, TIER]
+        value:
+          type: string
+          nullable: true
+          description: Wajib diisi untuk PERCENTAGE/FIXED, wajib kosong (null) untuk TIER — rate TIER ditentukan dari field tiers
+          example: "5.00"
+        effective_from:
+          type: string
+          format: date
+          description: Tanggal rule mulai berlaku (dibandingkan terhadap sales_closings.confirmed_at)
+          example: "2026-07-01"
+        effective_to:
+          type: string
+          format: date
+          nullable: true
+          description: Tanggal rule berhenti berlaku. Null berarti berlaku tanpa batas waktu sampai dinonaktifkan
+        tiers:
+          type: array
+          description: Wajib diisi (minimal 1 tier) jika mode TIER, harus kosong untuk mode lain
+          items:
+            $ref: "#/components/schemas/CreateCommissionTierRequest"
+    CommissionTierResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        tier_order:
+          type: integer
+        min_closings:
+          type: integer
+        max_closings:
+          type: integer
+          nullable: true
+        mode:
+          type: string
+          enum: [PERCENTAGE, FIXED]
+        value:
+          type: string
+    CommissionRuleResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        partner_type_id:
+          type: integer
+          format: int64
+        package_id:
+          type: integer
+          format: int64
+          nullable: true
+        package_code:
+          type: string
+          nullable: true
+        package_name:
+          type: string
+          nullable: true
+        mode:
+          type: string
+          enum: [PERCENTAGE, FIXED, TIER]
+        value:
+          type: string
+          nullable: true
+        effective_from:
+          type: string
+          format: date
+        effective_to:
+          type: string
+          format: date
+          nullable: true
+        active:
+          type: boolean
+        created_by:
+          $ref: "#/components/schemas/PartnerCommissionUserBrief"
+        tiers:
+          type: array
+          items:
+            $ref: "#/components/schemas/CommissionTierResponse"
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    CommissionRuleListResponse:
+      type: array
+      items:
+        $ref: "#/components/schemas/CommissionRuleResponse"
+    PartnerPayoutItemResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        commission_id:
+          type: integer
+          format: int64
+        commission_code:
+          type: string
+          nullable: true
+        amount:
+          type: string
+          example: "50000.00"
+        released_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: Terisi jika payout yang membatch item ini dibatalkan — commission sudah dilepas kembali ke APPROVED
+    PartnerPayoutResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        code:
+          type: string
+          example: "PAYOUT-20260724-000004-000001"
+        partner_id:
+          type: integer
+          format: int64
+        partner_code:
+          type: string
+          nullable: true
+        partner_name:
+          type: string
+          nullable: true
+        total_amount:
+          type: string
+          description: Snapshot jumlah seluruh item saat payout dibuat
+          example: "150000.00"
+        currency:
+          type: string
+          example: IDR
+        status:
+          type: string
+          enum: [PENDING, PAID, CANCELLED]
+        note:
+          type: string
+          nullable: true
+        prepared_by:
+          $ref: "#/components/schemas/PartnerCommissionUserBrief"
+        paid_by:
+          $ref: "#/components/schemas/PartnerCommissionUserBrief"
+        paid_at:
+          type: string
+          format: date-time
+          nullable: true
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/PartnerPayoutItemResponse"
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    PartnerPayoutListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/PartnerPayoutResponse"
+        pagination:
+          type: object
+          properties:
+            page:
+              type: integer
+            limit:
+              type: integer
+            total:
+              type: integer
+              format: int64
+    PayoutActionRequest:
+      type: object
+      properties:
+        note:
+          type: string
+          nullable: true
+          example: Batal karena rekening partner sedang direview

@@ -143,6 +143,110 @@ func TestNewPartnerTypeResponse(t *testing.T) {
 	}
 }
 
+func TestNewCommissionRuleResponse(t *testing.T) {
+	now := time.Now()
+
+	// PERCENTAGE/FIXED rule: Value present, Tiers empty.
+	r := partner.CommissionRule{
+		ID:            1,
+		PartnerTypeID: 2,
+		PackageID:     sql.NullInt64{Int64: 3, Valid: true},
+		PackageCode:   sql.NullString{String: "PRO", Valid: true},
+		PackageName:   sql.NullString{String: "Pro Package", Valid: true},
+		Mode:          partner.CommissionModePercentage,
+		Value:         sql.NullString{String: "7.00", Valid: true},
+		EffectiveFrom: now,
+		Active:        true,
+		CreatedAt:     now,
+		UpdatedAt:     now,
+	}
+	resp := partner.NewCommissionRuleResponse(r)
+	if resp.PackageID == nil || *resp.PackageID != 3 {
+		t.Errorf("expected package_id 3, got %v", resp.PackageID)
+	}
+	if resp.Value == nil || *resp.Value != "7.00" {
+		t.Errorf("expected value 7.00, got %v", resp.Value)
+	}
+	if len(resp.Tiers) != 0 {
+		t.Errorf("expected no tiers for PERCENTAGE rule, got %d", len(resp.Tiers))
+	}
+
+	// TIER rule: Value absent, Tiers populated.
+	r.Mode = partner.CommissionModeTier
+	r.Value = sql.NullString{}
+	r.Tiers = []partner.CommissionTier{
+		{ID: 10, CommissionRuleID: 1, TierOrder: 1, MinClosings: 1, MaxClosings: sql.NullInt64{Int64: 3, Valid: true}, Mode: partner.CommissionModePercentage, Value: "2.00"},
+		{ID: 11, CommissionRuleID: 1, TierOrder: 2, MinClosings: 4, Mode: partner.CommissionModePercentage, Value: "5.00"},
+	}
+	resp = partner.NewCommissionRuleResponse(r)
+	if resp.Value != nil {
+		t.Errorf("expected nil value for TIER rule, got %v", *resp.Value)
+	}
+	if len(resp.Tiers) != 2 {
+		t.Fatalf("expected 2 tiers, got %d", len(resp.Tiers))
+	}
+	if resp.Tiers[0].MaxClosings == nil || *resp.Tiers[0].MaxClosings != 3 {
+		t.Errorf("expected tier 1 max_closings 3, got %v", resp.Tiers[0].MaxClosings)
+	}
+	if resp.Tiers[1].MaxClosings != nil {
+		t.Errorf("expected tier 2 (top tier) max_closings nil, got %v", *resp.Tiers[1].MaxClosings)
+	}
+}
+
+func TestNewPartnerPayoutResponse(t *testing.T) {
+	now := time.Now()
+
+	p := partner.PartnerPayout{
+		ID:          1,
+		Code:        "PAYOUT-20260724-000002-000001",
+		PartnerID:   2,
+		PartnerCode: sql.NullString{String: "PTR-002", Valid: true},
+		PartnerName: sql.NullString{String: "Mitra Dua", Valid: true},
+		TotalAmount: "150000.00",
+		Currency:    "IDR",
+		Status:      partner.PayoutStatusPending,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}
+	resp := partner.NewPartnerPayoutResponse(p)
+	if resp.Status != partner.PayoutStatusPending {
+		t.Errorf("expected status PENDING, got %s", resp.Status)
+	}
+	if resp.PaidBy != nil {
+		t.Errorf("expected nil PaidBy for a PENDING payout, got %v", resp.PaidBy)
+	}
+	if len(resp.Items) != 0 {
+		t.Errorf("expected no items, got %d", len(resp.Items))
+	}
+
+	paidAt := now.Add(time.Hour)
+	p.Status = partner.PayoutStatusPaid
+	p.PaidByUserID = sql.NullInt64{Int64: 5, Valid: true}
+	p.PaidByName = sql.NullString{String: "Admin Utama", Valid: true}
+	p.PaidAt = sql.NullTime{Time: paidAt, Valid: true}
+	p.Items = []partner.PartnerPayoutItem{
+		{ID: 1, PayoutID: 1, CommissionID: 9, CommissionCode: sql.NullString{String: "COM-001", Valid: true}, Amount: "50000.00", CreatedAt: now},
+		{ID: 2, PayoutID: 1, CommissionID: 10, CommissionCode: sql.NullString{String: "COM-002", Valid: true}, Amount: "100000.00", CreatedAt: now},
+	}
+
+	resp = partner.NewPartnerPayoutResponse(p)
+	if resp.PaidBy == nil || resp.PaidBy.ID != 5 || resp.PaidBy.Name != "Admin Utama" {
+		t.Errorf("expected PaidBy {5, Admin Utama}, got %v", resp.PaidBy)
+	}
+	if resp.PaidAt == nil || !resp.PaidAt.Equal(paidAt) {
+		t.Errorf("expected PaidAt %v, got %v", paidAt, resp.PaidAt)
+	}
+	if len(resp.Items) != 2 {
+		t.Fatalf("expected 2 items, got %d", len(resp.Items))
+	}
+	if resp.Items[0].CommissionCode == nil || *resp.Items[0].CommissionCode != "COM-001" {
+		t.Errorf("expected first item commission_code COM-001, got %v", resp.Items[0].CommissionCode)
+	}
+	if resp.Items[0].ReleasedAt != nil {
+		t.Errorf("expected nil ReleasedAt for an active item, got %v", resp.Items[0].ReleasedAt)
+	}
+}
+
 func ptr(s string) *string {
 	return &s
 }

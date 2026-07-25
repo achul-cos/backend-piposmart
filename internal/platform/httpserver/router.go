@@ -11,11 +11,14 @@ import (
 	"backend_crm_piposmart/internal/closing"
 	"backend_crm_piposmart/internal/customer"
 	"backend_crm_piposmart/internal/identity"
+	"backend_crm_piposmart/internal/kpi"
 	"backend_crm_piposmart/internal/lead"
 	"backend_crm_piposmart/internal/partner"
 	"backend_crm_piposmart/internal/platform/config"
 	"backend_crm_piposmart/internal/platform/httpx"
+	"backend_crm_piposmart/internal/platform/jobqueue"
 	"backend_crm_piposmart/internal/subscription"
+	"backend_crm_piposmart/internal/target"
 	"backend_crm_piposmart/internal/wallet"
 
 	"database/sql"
@@ -149,6 +152,19 @@ func NewRouter(cfg config.Config, logger *slog.Logger, connection Connection) *g
 		partnerRoutes := api.Group("")
 		partnerRoutes.Use(identity.AuthMiddleware(identityService))
 		partner.NewHandler(partnerService).RegisterRoutes(partnerRoutes)
+
+		targetRepository := target.NewRepository(connection.SQLDB())
+		targetService := target.NewService(targetRepository)
+		targetRoutes := api.Group("")
+		targetRoutes.Use(identity.AuthMiddleware(identityService))
+		target.NewHandler(targetService).RegisterRoutes(targetRoutes)
+
+		jobRepository := jobqueue.NewRepository(connection.SQLDB())
+		kpiRepository := kpi.NewRepository(connection.SQLDB())
+		kpiService := kpi.NewService(kpiRepository, jobRepository)
+		kpiRoutes := api.Group("")
+		kpiRoutes.Use(identity.AuthMiddleware(identityService))
+		kpi.NewHandler(kpiService).RegisterRoutes(kpiRoutes)
 	}
 
 	router.NoRoute(func(c *gin.Context) {

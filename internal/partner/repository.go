@@ -261,6 +261,51 @@ func (r *Repository) CreatePartnerAssignment(ctx context.Context, a PartnerAssig
 	return id, nil
 }
 
+// AssignPIC atomically deactivates the current active assignment (if any) and
+// inserts the new one, under a row lock on the partner. This serializes
+// concurrent AssignPIC calls for the same partner_id so only one active
+// assignment can ever exist — the uq_partner_assignments_one_active
+// constraint (migration 20260724001100) is the DB-level backstop for the
+// same guarantee.
+func (r *Repository) AssignPIC(ctx context.Context, a PartnerAssignment) (int64, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, `SELECT id FROM partners WHERE id = ? FOR UPDATE`, a.PartnerID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, ErrNotFound
+		}
+		return 0, err
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE partner_assignments
+		SET unassigned_at = NOW(), active = FALSE, updated_at = NOW()
+		WHERE partner_id = ? AND active = TRUE`, a.PartnerID); err != nil {
+		return 0, err
+	}
+
+	result, err := tx.ExecContext(ctx, `
+		INSERT INTO partner_assignments (
+			partner_id, user_id, assigned_by_id, assigned_at, active, created_at, updated_at)
+		VALUES (?, ?, ?, ?, TRUE, NOW(), NOW())`,
+		a.PartnerID, a.UserID, a.AssignedByID, a.AssignedAt)
+	if err != nil {
+		return 0, mapDuplicateError(err, "uq_partner_assignments_one_active")
+	}
+	id, err := result.LastInsertId()
+	if err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return id, nil
+}
+
 func (r *Repository) GetActiveAssignmentForPartner(ctx context.Context, partnerID int64) (*PartnerAssignment, error) {
 	query := `
 		SELECT id, partner_id, user_id, assigned_by_id, assigned_at,
@@ -454,17 +499,22 @@ type commissionSyncCandidate struct {
 	ClosingID       int64
 	FinalAmount     string
 	Currency        string
-	CommissionMode  string
+	PackageID       sql.NullInt64
+	ConfirmedAt     time.Time
+	PartnerTypeID   int64
+	CommissionMode  string // legacy partner_types fallback, used when no commission_rules row matches
 	CommissionValue string
 }
 
 // findSyncableClosings finds CONFIRMED closings tied to this partner's referrals
-// (matched by lead_id) that do not yet have a commission row. The commission rate is
-// read from the partner's partner_type (commission_mode/commission_value), not from the
-// partner itself.
+// (matched by lead_id) that do not yet have a commission row. commission_mode/value here
+// are the legacy partner_type fallback rate; SyncCommissions additionally consults
+// commission_rules (package/effective-dated overlay, resolveCommissionRule) before falling
+// back to these columns.
 func (r *Repository) findSyncableClosings(ctx context.Context, tx *sql.Tx, partnerID int64) ([]commissionSyncCandidate, error) {
 	rows, err := tx.QueryContext(ctx, `
-		SELECT pr.id, sc.id, CAST(sc.final_amount AS CHAR), sc.currency, pt.commission_mode, CAST(pt.commission_value AS CHAR)
+		SELECT pr.id, sc.id, CAST(sc.final_amount AS CHAR), sc.currency, sc.package_id, sc.confirmed_at,
+		       p.partner_type_id, pt.commission_mode, CAST(pt.commission_value AS CHAR)
 		FROM partner_referrals pr
 		JOIN sales_closings sc ON sc.lead_id = pr.lead_id AND sc.status = 'CONFIRMED' AND sc.deleted_at IS NULL
 		JOIN partners p ON p.id = pr.partner_id
@@ -478,7 +528,8 @@ func (r *Repository) findSyncableClosings(ctx context.Context, tx *sql.Tx, partn
 	var list []commissionSyncCandidate
 	for rows.Next() {
 		var c commissionSyncCandidate
-		if err := rows.Scan(&c.ReferralID, &c.ClosingID, &c.FinalAmount, &c.Currency, &c.CommissionMode, &c.CommissionValue); err != nil {
+		if err := rows.Scan(&c.ReferralID, &c.ClosingID, &c.FinalAmount, &c.Currency, &c.PackageID, &c.ConfirmedAt,
+			&c.PartnerTypeID, &c.CommissionMode, &c.CommissionValue); err != nil {
 			return nil, err
 		}
 		list = append(list, c)
@@ -487,6 +538,80 @@ func (r *Repository) findSyncableClosings(ctx context.Context, tx *sql.Tx, partn
 		return nil, err
 	}
 	return list, nil
+}
+
+// resolvedCommissionRule is the outcome of resolveCommissionRule: a specific commission_rules
+// row to apply. Mode may be TIER, requiring a further resolveTier lookup by the caller.
+type resolvedCommissionRule struct {
+	ID    int64
+	Mode  string
+	Value sql.NullString // NULL when Mode == TIER (rate lives in commission_tiers)
+}
+
+// resolveCommissionRule finds the most specific active commission_rules row covering
+// partnerTypeID (+ optional packageID) on asOf's date: a package-specific rule beats a
+// type-wide rule, ties broken by most recent effective_from. Returns (nil, nil) if no rule
+// matches — the caller falls back to the legacy partner_types.commission_mode/value.
+func (r *Repository) resolveCommissionRule(ctx context.Context, tx *sql.Tx, partnerTypeID int64, packageID sql.NullInt64, asOf time.Time) (*resolvedCommissionRule, error) {
+	asOfDate := asOf.Format("2006-01-02")
+	row := tx.QueryRowContext(ctx, `
+		SELECT id, mode, value
+		FROM commission_rules
+		WHERE partner_type_id = ?
+		  AND active = TRUE
+		  AND effective_from <= ?
+		  AND (effective_to IS NULL OR effective_to >= ?)
+		  AND (package_id = ? OR package_id IS NULL)
+		ORDER BY (package_id IS NOT NULL) DESC, effective_from DESC, id DESC
+		LIMIT 1`, partnerTypeID, asOfDate, asOfDate, packageID)
+	var rule resolvedCommissionRule
+	if err := row.Scan(&rule.ID, &rule.Mode, &rule.Value); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &rule, nil
+}
+
+// monthlyClosingOrdinal returns the 1-based rank of closingID among partnerID's CONFIRMED
+// closings within confirmedAt's calendar month (ordered by confirmed_at then id) — the
+// volume count a TIER commission_rule's tiers are bracketed by.
+func (r *Repository) monthlyClosingOrdinal(ctx context.Context, tx *sql.Tx, partnerID int64, closingID int64, confirmedAt time.Time) (int, error) {
+	var ordinal int
+	err := tx.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM sales_closings sc2
+		JOIN partner_referrals pr2 ON pr2.lead_id = sc2.lead_id
+		WHERE pr2.partner_id = ?
+		  AND sc2.status = 'CONFIRMED' AND sc2.deleted_at IS NULL
+		  AND YEAR(sc2.confirmed_at) = YEAR(?) AND MONTH(sc2.confirmed_at) = MONTH(?)
+		  AND (sc2.confirmed_at < ? OR (sc2.confirmed_at = ? AND sc2.id <= ?))`,
+		partnerID, confirmedAt, confirmedAt, confirmedAt, confirmedAt, closingID).Scan(&ordinal)
+	if err != nil {
+		return 0, err
+	}
+	return ordinal, nil
+}
+
+// resolveTier finds the commission_tiers row whose [min_closings, max_closings] range
+// contains ordinal, for the given TIER-mode commission_rule.
+func (r *Repository) resolveTier(ctx context.Context, tx *sql.Tx, ruleID int64, ordinal int) (mode string, value string, err error) {
+	err = tx.QueryRowContext(ctx, `
+		SELECT mode, CAST(value AS CHAR)
+		FROM commission_tiers
+		WHERE commission_rule_id = ?
+		  AND min_closings <= ?
+		  AND (max_closings IS NULL OR max_closings >= ?)
+		ORDER BY tier_order
+		LIMIT 1`, ruleID, ordinal, ordinal).Scan(&mode, &value)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", "", ErrNoMatchingTier
+		}
+		return "", "", err
+	}
+	return mode, value, nil
 }
 
 // SyncCommissions scans confirmed closings tied to partnerID's referrals that don't
@@ -510,7 +635,37 @@ func (r *Repository) SyncCommissions(ctx context.Context, partnerID int64) ([]Pa
 		if err != nil {
 			return nil, err
 		}
-		commissionCents, err := calculateCommissionAmountCents(cand.CommissionMode, cand.CommissionValue, baseCents)
+
+		// Resolve the effective rate: a matching commission_rules row (package-specific >
+		// type-wide, TIER resolved by monthly closing volume) overrides the legacy
+		// partner_types fallback already carried on cand.CommissionMode/Value.
+		effectiveMode, effectiveValue := cand.CommissionMode, cand.CommissionValue
+		var ruleID sql.NullInt64
+		var tierOrdinal sql.NullInt64
+
+		rule, err := r.resolveCommissionRule(ctx, tx, cand.PartnerTypeID, cand.PackageID, cand.ConfirmedAt)
+		if err != nil {
+			return nil, err
+		}
+		if rule != nil {
+			ruleID = sql.NullInt64{Int64: rule.ID, Valid: true}
+			if rule.Mode == CommissionModeTier {
+				ordinal, err := r.monthlyClosingOrdinal(ctx, tx, partnerID, cand.ClosingID, cand.ConfirmedAt)
+				if err != nil {
+					return nil, err
+				}
+				tierMode, tierValue, err := r.resolveTier(ctx, tx, rule.ID, ordinal)
+				if err != nil {
+					return nil, err
+				}
+				effectiveMode, effectiveValue = tierMode, tierValue
+				tierOrdinal = sql.NullInt64{Int64: int64(ordinal), Valid: true}
+			} else {
+				effectiveMode, effectiveValue = rule.Mode, rule.Value.String
+			}
+		}
+
+		commissionCents, err := calculateCommissionAmountCents(effectiveMode, effectiveValue, baseCents)
 		if err != nil {
 			return nil, err
 		}
@@ -519,9 +674,11 @@ func (r *Repository) SyncCommissions(ctx context.Context, partnerID int64) ([]Pa
 		result, err := tx.ExecContext(ctx, `
 			INSERT INTO partner_commissions (
 				code, partner_id, referral_id, closing_id, commission_mode, commission_value,
+				commission_rule_id, tier_ordinal,
 				base_amount, commission_amount, currency, status, created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
-			code, partnerID, cand.ReferralID, cand.ClosingID, cand.CommissionMode, cand.CommissionValue,
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+			code, partnerID, cand.ReferralID, cand.ClosingID, effectiveMode, effectiveValue,
+			ruleID, tierOrdinal,
 			formatCents(baseCents), formatCents(commissionCents), cand.Currency, CommissionStatusPending)
 		if err != nil {
 			return nil, mapDuplicateError(err, "uq_partner_commissions_closing")
@@ -550,9 +707,11 @@ func (r *Repository) SyncCommissions(ctx context.Context, partnerID int64) ([]Pa
 
 const commissionSelectColumns = `
 		pc.id, pc.code, pc.partner_id, p.code, p.name, pc.referral_id, pc.closing_id, sc.code,
-		pc.commission_mode, pc.commission_value, pc.base_amount, pc.commission_amount, pc.currency, pc.status, pc.note,
+		pc.commission_mode, pc.commission_value, pc.commission_rule_id, pc.tier_ordinal,
+		pc.base_amount, pc.commission_amount, pc.currency, pc.status, pc.note,
 		pc.approved_by_user_id, au.name, pc.approved_at,
 		pc.paid_by_user_id, pu.name, pc.paid_at,
+		ppi.payout_id,
 		pc.created_at, pc.updated_at`
 
 const commissionFromJoin = `
@@ -560,7 +719,8 @@ const commissionFromJoin = `
 		JOIN partners p ON p.id = pc.partner_id
 		JOIN sales_closings sc ON sc.id = pc.closing_id
 		LEFT JOIN users au ON au.id = pc.approved_by_user_id
-		LEFT JOIN users pu ON pu.id = pc.paid_by_user_id`
+		LEFT JOIN users pu ON pu.id = pc.paid_by_user_id
+		LEFT JOIN partner_payout_items ppi ON ppi.commission_id = pc.id AND ppi.released_at IS NULL`
 
 func scanCommission(scanner interface {
 	Scan(dest ...any) error
@@ -568,9 +728,11 @@ func scanCommission(scanner interface {
 	var c PartnerCommission
 	err := scanner.Scan(
 		&c.ID, &c.Code, &c.PartnerID, &c.PartnerCode, &c.PartnerName, &c.ReferralID, &c.ClosingID, &c.ClosingCode,
-		&c.CommissionMode, &c.CommissionValue, &c.BaseAmount, &c.CommissionAmount, &c.Currency, &c.Status, &c.Note,
+		&c.CommissionMode, &c.CommissionValue, &c.CommissionRuleID, &c.TierOrdinal,
+		&c.BaseAmount, &c.CommissionAmount, &c.Currency, &c.Status, &c.Note,
 		&c.ApprovedByUserID, &c.ApprovedByName, &c.ApprovedAt,
 		&c.PaidByUserID, &c.PaidByName, &c.PaidAt,
+		&c.ActivePayoutID,
 		&c.CreatedAt, &c.UpdatedAt)
 	return c, err
 }
@@ -659,6 +821,23 @@ func (r *Repository) ApproveCommission(ctx context.Context, id int64, approvedBy
 	return r.GetPartnerCommissionByID(ctx, id)
 }
 
+// ensureCommissionNotInPayout locks (FOR UPDATE) and checks that commissionID has no active
+// (non-released) payout_item row — guards against double-payment via the individual pay/
+// cancel endpoints while the commission sits reserved inside a batch payout. Must be called
+// inside the same transaction as the caller's status lock.
+func (r *Repository) ensureCommissionNotInPayout(ctx context.Context, tx *sql.Tx, commissionID int64) error {
+	var exists int
+	err := tx.QueryRowContext(ctx, `
+		SELECT 1 FROM partner_payout_items WHERE commission_id = ? AND released_at IS NULL FOR UPDATE`, commissionID).Scan(&exists)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		return err
+	}
+	return ErrCommissionInPayout
+}
+
 func (r *Repository) MarkCommissionPaid(ctx context.Context, id int64, paidByID int64) (*PartnerCommission, error) {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -672,6 +851,9 @@ func (r *Repository) MarkCommissionPaid(ctx context.Context, id int64, paidByID 
 	}
 	if status != CommissionStatusApproved {
 		return nil, ErrInvalidCommissionStatus
+	}
+	if err := r.ensureCommissionNotInPayout(ctx, tx, id); err != nil {
+		return nil, err
 	}
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE partner_commissions
@@ -699,6 +881,9 @@ func (r *Repository) CancelCommission(ctx context.Context, id int64, note string
 	if status == CommissionStatusPaid || status == CommissionStatusCancelled {
 		return nil, ErrInvalidCommissionStatus
 	}
+	if err := r.ensureCommissionNotInPayout(ctx, tx, id); err != nil {
+		return nil, err
+	}
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE partner_commissions
 		SET status = ?, note = ?, updated_at = NOW()
@@ -709,6 +894,425 @@ func (r *Repository) CancelCommission(ctx context.Context, id int64, note string
 		return nil, err
 	}
 	return r.GetPartnerCommissionByID(ctx, id)
+}
+
+/* ---------- CommissionRule ---------- */
+
+const commissionRuleSelectColumns = `
+		cr.id, cr.partner_type_id, cr.package_id, sp.code, sp.name,
+		cr.mode, cr.value, cr.effective_from, cr.effective_to, cr.active,
+		cr.created_by_user_id, cu.name, cr.created_at, cr.updated_at`
+
+const commissionRuleFromJoin = `
+		FROM commission_rules cr
+		LEFT JOIN subscription_packages sp ON sp.id = cr.package_id
+		LEFT JOIN users cu ON cu.id = cr.created_by_user_id`
+
+func scanCommissionRule(scanner interface {
+	Scan(dest ...any) error
+}) (CommissionRule, error) {
+	var r CommissionRule
+	err := scanner.Scan(
+		&r.ID, &r.PartnerTypeID, &r.PackageID, &r.PackageCode, &r.PackageName,
+		&r.Mode, &r.Value, &r.EffectiveFrom, &r.EffectiveTo, &r.Active,
+		&r.CreatedByUserID, &r.CreatedByName, &r.CreatedAt, &r.UpdatedAt)
+	return r, err
+}
+
+// CreateCommissionRule inserts a commission_rules row and, when tiers is non-empty (TIER
+// mode), its child commission_tiers rows, in a single transaction.
+func (r *Repository) CreateCommissionRule(ctx context.Context, rule CommissionRule, tiers []CommissionTier) (int64, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+
+	result, err := tx.ExecContext(ctx, `
+		INSERT INTO commission_rules (
+			partner_type_id, package_id, mode, value, effective_from, effective_to, active, created_by_user_id, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, TRUE, ?, NOW(), NOW())`,
+		rule.PartnerTypeID, rule.PackageID, rule.Mode, rule.Value, rule.EffectiveFrom, rule.EffectiveTo, rule.CreatedByUserID)
+	if err != nil {
+		return 0, fmt.Errorf("database partner: %w", err)
+	}
+	ruleID, err := result.LastInsertId()
+	if err != nil {
+		return 0, err
+	}
+	for _, t := range tiers {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO commission_tiers (commission_rule_id, tier_order, min_closings, max_closings, mode, value, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+			ruleID, t.TierOrder, t.MinClosings, t.MaxClosings, t.Mode, t.Value); err != nil {
+			return 0, fmt.Errorf("database partner: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return ruleID, nil
+}
+
+func (r *Repository) listCommissionTiers(ctx context.Context, ruleID int64) ([]CommissionTier, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT id, commission_rule_id, tier_order, min_closings, max_closings, mode, CAST(value AS CHAR), created_at, updated_at
+		FROM commission_tiers WHERE commission_rule_id = ? ORDER BY tier_order`, ruleID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var list []CommissionTier
+	for rows.Next() {
+		var t CommissionTier
+		if err := rows.Scan(&t.ID, &t.CommissionRuleID, &t.TierOrder, &t.MinClosings, &t.MaxClosings, &t.Mode, &t.Value, &t.CreatedAt, &t.UpdatedAt); err != nil {
+			return nil, err
+		}
+		list = append(list, t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return list, nil
+}
+
+func (r *Repository) GetCommissionRuleByID(ctx context.Context, id int64) (*CommissionRule, error) {
+	query := "SELECT " + commissionRuleSelectColumns + commissionRuleFromJoin + " WHERE cr.id = ?"
+	rule, err := scanCommissionRule(r.db.QueryRowContext(ctx, query, id))
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	tiers, err := r.listCommissionTiers(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	rule.Tiers = tiers
+	return &rule, nil
+}
+
+func (r *Repository) ListCommissionRules(ctx context.Context, partnerTypeID int64, packageID *int64, activeOnly bool) ([]CommissionRule, error) {
+	args := []any{partnerTypeID}
+	where := "WHERE cr.partner_type_id = ?"
+	if packageID != nil {
+		where += " AND cr.package_id = ?"
+		args = append(args, *packageID)
+	}
+	if activeOnly {
+		where += " AND cr.active = TRUE"
+	}
+	query := "SELECT " + commissionRuleSelectColumns + commissionRuleFromJoin + " " + where + " ORDER BY cr.effective_from DESC, cr.id DESC"
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var list []CommissionRule
+	for rows.Next() {
+		rule, err := scanCommissionRule(rows)
+		if err != nil {
+			return nil, err
+		}
+		list = append(list, rule)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return list, nil
+}
+
+// DeactivateCommissionRule sets active=FALSE and, if effective_to was still open-ended,
+// closes it to today — rules are superseded (create a new one), never edited in place.
+func (r *Repository) DeactivateCommissionRule(ctx context.Context, id int64) error {
+	result, err := r.db.ExecContext(ctx, `
+		UPDATE commission_rules
+		SET active = FALSE, effective_to = COALESCE(effective_to, CURDATE()), updated_at = NOW()
+		WHERE id = ?`, id)
+	if err != nil {
+		return err
+	}
+	rowsAffected, _ := result.RowsAffected()
+	if rowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+/* ---------- PartnerPayout ---------- */
+
+const payoutSelectColumns = `
+		pp.id, pp.code, pp.partner_id, p.code, p.name,
+		pp.total_amount, pp.currency, pp.status, pp.note,
+		pp.prepared_by_user_id, pru.name, pp.paid_by_user_id, pau.name, pp.paid_at,
+		pp.created_at, pp.updated_at`
+
+const payoutFromJoin = `
+		FROM partner_payouts pp
+		JOIN partners p ON p.id = pp.partner_id
+		LEFT JOIN users pru ON pru.id = pp.prepared_by_user_id
+		LEFT JOIN users pau ON pau.id = pp.paid_by_user_id`
+
+func scanPayout(scanner interface {
+	Scan(dest ...any) error
+}) (PartnerPayout, error) {
+	var p PartnerPayout
+	err := scanner.Scan(
+		&p.ID, &p.Code, &p.PartnerID, &p.PartnerCode, &p.PartnerName,
+		&p.TotalAmount, &p.Currency, &p.Status, &p.Note,
+		&p.PreparedByUserID, &p.PreparedByName, &p.PaidByUserID, &p.PaidByName, &p.PaidAt,
+		&p.CreatedAt, &p.UpdatedAt)
+	return p, err
+}
+
+// CreatePayout locks every APPROVED, not-yet-batched commission for partnerID (FOR UPDATE,
+// serializing against MarkCommissionPaid/CancelCommission/a concurrent CreatePayout on the
+// same partner via ensureCommissionNotInPayout's same NOT EXISTS shape) and batches them
+// into one new PENDING payout. Returns ErrNoPayableCommissions if none are eligible,
+// ErrMixedCurrency if the eligible commissions don't all share one currency.
+func (r *Repository) CreatePayout(ctx context.Context, partnerID int64, preparedByID int64) (int64, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+
+	rows, err := tx.QueryContext(ctx, `
+		SELECT pc.id, pc.commission_amount, pc.currency
+		FROM partner_commissions pc
+		WHERE pc.partner_id = ? AND pc.status = ?
+		  AND NOT EXISTS (
+		    SELECT 1 FROM partner_payout_items ppi
+		    WHERE ppi.commission_id = pc.id AND ppi.released_at IS NULL
+		  )
+		FOR UPDATE`, partnerID, CommissionStatusApproved)
+	if err != nil {
+		return 0, err
+	}
+	type eligibleCommission struct {
+		ID       int64
+		Amount   string
+		Currency string
+	}
+	var items []eligibleCommission
+	for rows.Next() {
+		var e eligibleCommission
+		if err := rows.Scan(&e.ID, &e.Amount, &e.Currency); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		items = append(items, e)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return 0, err
+	}
+	rows.Close()
+
+	if len(items) == 0 {
+		return 0, ErrNoPayableCommissions
+	}
+
+	currency := items[0].Currency
+	totalCents := int64(0)
+	for _, it := range items {
+		if it.Currency != currency {
+			return 0, ErrMixedCurrency
+		}
+		cents, err := parseMoneyToCents(it.Amount)
+		if err != nil {
+			return 0, err
+		}
+		totalCents += cents
+	}
+
+	now := time.Now().UTC()
+	code := fmt.Sprintf("PAYOUT-%s-%06d-%06d", now.Format("20060102"), partnerID, now.Nanosecond()/1000)
+	result, err := tx.ExecContext(ctx, `
+		INSERT INTO partner_payouts (code, partner_id, total_amount, currency, status, prepared_by_user_id, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+		code, partnerID, formatCents(totalCents), currency, PayoutStatusPending, preparedByID)
+	if err != nil {
+		return 0, fmt.Errorf("database partner: %w", err)
+	}
+	payoutID, err := result.LastInsertId()
+	if err != nil {
+		return 0, err
+	}
+
+	for _, it := range items {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO partner_payout_items (payout_id, commission_id, amount, created_at, updated_at)
+			VALUES (?, ?, ?, NOW(), NOW())`, payoutID, it.ID, it.Amount); err != nil {
+			return 0, mapDuplicateError(err, "uq_partner_payout_items_active_commission")
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return payoutID, nil
+}
+
+func (r *Repository) lockPayoutStatus(ctx context.Context, tx *sql.Tx, id int64) (string, error) {
+	var status string
+	err := tx.QueryRowContext(ctx, `SELECT status FROM partner_payouts WHERE id = ? FOR UPDATE`, id).Scan(&status)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", ErrNotFound
+		}
+		return "", err
+	}
+	return status, nil
+}
+
+func (r *Repository) listPayoutItems(ctx context.Context, payoutID int64) ([]PartnerPayoutItem, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT ppi.id, ppi.payout_id, ppi.commission_id, pc.code, ppi.amount, ppi.released_at, ppi.created_at
+		FROM partner_payout_items ppi
+		JOIN partner_commissions pc ON pc.id = ppi.commission_id
+		WHERE ppi.payout_id = ?
+		ORDER BY ppi.id`, payoutID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var list []PartnerPayoutItem
+	for rows.Next() {
+		var it PartnerPayoutItem
+		if err := rows.Scan(&it.ID, &it.PayoutID, &it.CommissionID, &it.CommissionCode, &it.Amount, &it.ReleasedAt, &it.CreatedAt); err != nil {
+			return nil, err
+		}
+		list = append(list, it)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return list, nil
+}
+
+func (r *Repository) GetPayoutByID(ctx context.Context, id int64) (*PartnerPayout, error) {
+	query := "SELECT " + payoutSelectColumns + payoutFromJoin + " WHERE pp.id = ?"
+	p, err := scanPayout(r.db.QueryRowContext(ctx, query, id))
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	items, err := r.listPayoutItems(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	p.Items = items
+	return &p, nil
+}
+
+func (r *Repository) ListPartnerPayouts(ctx context.Context, partnerID int64, status string, limit int, offset int) ([]PartnerPayout, int64, error) {
+	args := []any{partnerID}
+	where := "WHERE pp.partner_id = ?"
+	if status != "" {
+		where += " AND pp.status = ?"
+		args = append(args, status)
+	}
+	var total int64
+	countQuery := "SELECT COUNT(*) FROM partner_payouts pp " + where
+	if err := r.db.QueryRowContext(ctx, countQuery, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	query := "SELECT " + payoutSelectColumns + payoutFromJoin + " " + where + " ORDER BY pp.created_at DESC LIMIT ? OFFSET ?"
+	dataArgs := append(args, limit, offset)
+	rows, err := r.db.QueryContext(ctx, query, dataArgs...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	var list []PartnerPayout
+	for rows.Next() {
+		p, err := scanPayout(rows)
+		if err != nil {
+			return nil, 0, err
+		}
+		list = append(list, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	return list, total, nil
+}
+
+// MarkPayoutPaid transitions a PENDING payout to PAID and cascades PAID status (with
+// paid_by_user_id/paid_at) to every commission still actively linked to it. This is the
+// only place a batched commission's status actually changes — it stays APPROVED for the
+// entire time it merely sits reserved in a PENDING payout.
+func (r *Repository) MarkPayoutPaid(ctx context.Context, id int64, paidByID int64) (*PartnerPayout, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	status, err := r.lockPayoutStatus(ctx, tx, id)
+	if err != nil {
+		return nil, err
+	}
+	if status != PayoutStatusPending {
+		return nil, ErrInvalidPayoutStatus
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE partner_commissions
+		SET status = ?, paid_by_user_id = ?, paid_at = NOW(), updated_at = NOW()
+		WHERE id IN (
+			SELECT commission_id FROM partner_payout_items WHERE payout_id = ? AND released_at IS NULL
+		)`, CommissionStatusPaid, paidByID, id); err != nil {
+		return nil, err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE partner_payouts
+		SET status = ?, paid_by_user_id = ?, paid_at = NOW(), updated_at = NOW()
+		WHERE id = ?`, PayoutStatusPaid, paidByID, id); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return r.GetPayoutByID(ctx, id)
+}
+
+// CancelPayout transitions a PENDING payout to CANCELLED and soft-releases every commission
+// still actively linked to it (released_at = NOW()). Those commissions were never mutated
+// by CreatePayout in the first place, so "released back to APPROVED" is true by
+// construction — nothing needs reverting on partner_commissions itself.
+func (r *Repository) CancelPayout(ctx context.Context, id int64, note string) (*PartnerPayout, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	status, err := r.lockPayoutStatus(ctx, tx, id)
+	if err != nil {
+		return nil, err
+	}
+	if status != PayoutStatusPending {
+		return nil, ErrInvalidPayoutStatus
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE partner_payout_items SET released_at = NOW(), updated_at = NOW()
+		WHERE payout_id = ? AND released_at IS NULL`, id); err != nil {
+		return nil, err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE partner_payouts SET status = ?, note = ?, updated_at = NOW()
+		WHERE id = ?`, PayoutStatusCancelled, nullableString(note), id); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return r.GetPayoutByID(ctx, id)
 }
 
 /* ---------- Helper functions ---------- */
@@ -725,6 +1329,10 @@ func mapDuplicateError(err error, uniqueKey string) error {
 			return ErrDuplicateReferral
 		case "uq_partner_commissions_closing":
 			return ErrCommissionAlreadyExists
+		case "uq_partner_assignments_one_active":
+			return ErrInvalidAssignment
+		case "uq_partner_payout_items_active_commission":
+			return ErrCommissionInPayout
 		}
 	}
 	return fmt.Errorf("database partner: %w", err)

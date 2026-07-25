@@ -27,6 +27,15 @@ const (
 	// Partner type commission mode
 	CommissionModePercentage = "PERCENTAGE"
 	CommissionModeFixed      = "FIXED"
+
+	// Commission rule mode (commission_rules.mode) — adds TIER on top of the legacy
+	// partner_types.commission_mode PERCENTAGE/FIXED pair.
+	CommissionModeTier = "TIER"
+
+	// Partner payout status
+	PayoutStatusPending   = "PENDING"
+	PayoutStatusPaid      = "PAID"
+	PayoutStatusCancelled = "CANCELLED"
 )
 
 // PartnerType represents the type of partner (e.g., Supplier, Distributor, Agent).
@@ -398,7 +407,9 @@ type PartnerCommission struct {
 	ClosingCode      sql.NullString
 	CommissionMode   string
 	CommissionValue  string
-	BaseAmount       string // snapshot of closing.final_amount at calculation time
+	CommissionRuleID sql.NullInt64 // which commission_rules row (if any) produced this snapshot; NULL = legacy partner_types fallback
+	TierOrdinal      sql.NullInt64 // 1-based rank among the partner's CONFIRMED closings that month, when CommissionRuleID's mode is TIER
+	BaseAmount       string        // snapshot of closing.final_amount at calculation time
 	CommissionAmount string
 	Currency         string
 	Status           string // PENDING, APPROVED, PAID, CANCELLED
@@ -409,6 +420,7 @@ type PartnerCommission struct {
 	PaidByUserID     sql.NullInt64
 	PaidByName       sql.NullString
 	PaidAt           sql.NullTime
+	ActivePayoutID   sql.NullInt64 // non-NULL if currently reserved in a PENDING/PAID payout (see partner_payout_items.active_commission_key)
 	CreatedAt        time.Time
 	UpdatedAt        time.Time
 }
@@ -424,6 +436,8 @@ type PartnerCommissionResponse struct {
 	ClosingCode      *string    `json:"closing_code,omitempty"`
 	CommissionMode   string     `json:"commission_mode"`
 	CommissionValue  string     `json:"commission_value"`
+	CommissionRuleID *int64     `json:"commission_rule_id,omitempty"`
+	TierOrdinal      *int64     `json:"tier_ordinal,omitempty"`
 	BaseAmount       string     `json:"base_amount"`
 	CommissionAmount string     `json:"commission_amount"`
 	Currency         string     `json:"currency"`
@@ -433,6 +447,7 @@ type PartnerCommissionResponse struct {
 	ApprovedAt       *time.Time `json:"approved_at,omitempty"`
 	PaidBy           *UserBrief `json:"paid_by,omitempty"`
 	PaidAt           *time.Time `json:"paid_at,omitempty"`
+	ActivePayoutID   *int64     `json:"active_payout_id,omitempty"`
 	CreatedAt        time.Time  `json:"created_at"`
 	UpdatedAt        time.Time  `json:"updated_at"`
 }
@@ -463,6 +478,8 @@ func NewPartnerCommissionResponse(pc PartnerCommission) PartnerCommissionRespons
 		ClosingCode:      nullStringToPtr(pc.ClosingCode),
 		CommissionMode:   pc.CommissionMode,
 		CommissionValue:  pc.CommissionValue,
+		CommissionRuleID: nullInt64ToPtr(pc.CommissionRuleID),
+		TierOrdinal:      nullInt64ToPtr(pc.TierOrdinal),
 		BaseAmount:       pc.BaseAmount,
 		CommissionAmount: pc.CommissionAmount,
 		Currency:         pc.Currency,
@@ -472,9 +489,18 @@ func NewPartnerCommissionResponse(pc PartnerCommission) PartnerCommissionRespons
 		ApprovedAt:       nullableTimePtr(pc.ApprovedAt),
 		PaidBy:           nullableUserBrief(pc.PaidByUserID, pc.PaidByName),
 		PaidAt:           nullableTimePtr(pc.PaidAt),
+		ActivePayoutID:   nullInt64ToPtr(pc.ActivePayoutID),
 		CreatedAt:        pc.CreatedAt,
 		UpdatedAt:        pc.UpdatedAt,
 	}
+}
+
+func nullInt64ToPtr(ni sql.NullInt64) *int64 {
+	if !ni.Valid {
+		return nil
+	}
+	v := ni.Int64
+	return &v
 }
 
 func nullableUserBrief(id sql.NullInt64, name sql.NullString) *UserBrief {
@@ -490,4 +516,248 @@ func nullableTimePtr(t sql.NullTime) *time.Time {
 	}
 	v := t.Time
 	return &v
+}
+
+/* ---------- CommissionRule / CommissionTier ---------- */
+
+// CommissionRule is an optional, effective-dated, optionally package-scoped overlay on top of
+// the legacy partner_types.commission_mode/value flat rate. SyncCommissions resolves the most
+// specific active rule covering a closing's confirmed_at date (package-specific beats
+// type-wide, most recent effective_from wins ties); if none matches, calculation falls back to
+// partner_types.commission_mode/value unchanged from Sprint 12. Mode TIER has no Value of its
+// own — the rate is looked up from Tiers based on the partner's monthly confirmed-closing count.
+type CommissionRule struct {
+	ID              int64
+	PartnerTypeID   int64
+	PackageID       sql.NullInt64
+	PackageCode     sql.NullString
+	PackageName     sql.NullString
+	Mode            string         // PERCENTAGE | FIXED | TIER
+	Value           sql.NullString // required for PERCENTAGE/FIXED, NULL for TIER
+	EffectiveFrom   time.Time
+	EffectiveTo     sql.NullTime
+	Active          bool
+	CreatedByUserID sql.NullInt64
+	CreatedByName   sql.NullString
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+	Tiers           []CommissionTier // populated only when fetching a single TIER-mode rule
+}
+
+// CommissionTier brackets a TIER-mode CommissionRule by the partner's cumulative CONFIRMED
+// closing count within a calendar month. MaxClosings NULL means open-ended (the top tier).
+type CommissionTier struct {
+	ID               int64
+	CommissionRuleID int64
+	TierOrder        int
+	MinClosings      int
+	MaxClosings      sql.NullInt64
+	Mode             string // PERCENTAGE | FIXED
+	Value            string
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+}
+
+type CommissionTierResponse struct {
+	ID          int64  `json:"id"`
+	TierOrder   int    `json:"tier_order"`
+	MinClosings int    `json:"min_closings"`
+	MaxClosings *int   `json:"max_closings,omitempty"`
+	Mode        string `json:"mode"`
+	Value       string `json:"value"`
+}
+
+type CommissionRuleResponse struct {
+	ID            int64                    `json:"id"`
+	PartnerTypeID int64                    `json:"partner_type_id"`
+	PackageID     *int64                   `json:"package_id,omitempty"`
+	PackageCode   *string                  `json:"package_code,omitempty"`
+	PackageName   *string                  `json:"package_name,omitempty"`
+	Mode          string                   `json:"mode"`
+	Value         *string                  `json:"value,omitempty"`
+	EffectiveFrom time.Time                `json:"effective_from"`
+	EffectiveTo   *time.Time               `json:"effective_to,omitempty"`
+	Active        bool                     `json:"active"`
+	CreatedBy     *UserBrief               `json:"created_by,omitempty"`
+	Tiers         []CommissionTierResponse `json:"tiers,omitempty"`
+	CreatedAt     time.Time                `json:"created_at"`
+	UpdatedAt     time.Time                `json:"updated_at"`
+}
+
+type CommissionRuleListResponse struct {
+	Items      []CommissionRuleResponse `json:"items"`
+	Pagination PaginationMeta           `json:"pagination"`
+}
+
+type CreateCommissionTierRequest struct {
+	TierOrder   int    `json:"tier_order" binding:"required,min=1"`
+	MinClosings int    `json:"min_closings" binding:"required,min=1"`
+	MaxClosings *int   `json:"max_closings,omitempty"`
+	Mode        string `json:"mode" binding:"required,oneof=PERCENTAGE FIXED"`
+	Value       string `json:"value" binding:"required"`
+}
+
+type CreateCommissionRuleRequest struct {
+	PackageID     *int64                        `json:"package_id,omitempty"`
+	Mode          string                        `json:"mode" binding:"required,oneof=PERCENTAGE FIXED TIER"`
+	Value         *string                       `json:"value,omitempty"` // required unless mode=TIER
+	EffectiveFrom time.Time                     `json:"effective_from" binding:"required"`
+	EffectiveTo   *time.Time                    `json:"effective_to,omitempty"`
+	Tiers         []CreateCommissionTierRequest `json:"tiers,omitempty"` // required when mode=TIER
+}
+
+func NewCommissionTierResponse(t CommissionTier) CommissionTierResponse {
+	var maxClosings *int
+	if t.MaxClosings.Valid {
+		v := int(t.MaxClosings.Int64)
+		maxClosings = &v
+	}
+	return CommissionTierResponse{
+		ID:          t.ID,
+		TierOrder:   t.TierOrder,
+		MinClosings: t.MinClosings,
+		MaxClosings: maxClosings,
+		Mode:        t.Mode,
+		Value:       t.Value,
+	}
+}
+
+func NewCommissionRuleResponse(r CommissionRule) CommissionRuleResponse {
+	var packageID *int64
+	if r.PackageID.Valid {
+		v := r.PackageID.Int64
+		packageID = &v
+	}
+	var value *string
+	if r.Value.Valid {
+		v := r.Value.String
+		value = &v
+	}
+	tiers := make([]CommissionTierResponse, 0, len(r.Tiers))
+	for _, t := range r.Tiers {
+		tiers = append(tiers, NewCommissionTierResponse(t))
+	}
+	return CommissionRuleResponse{
+		ID:            r.ID,
+		PartnerTypeID: r.PartnerTypeID,
+		PackageID:     packageID,
+		PackageCode:   nullStringToPtr(r.PackageCode),
+		PackageName:   nullStringToPtr(r.PackageName),
+		Mode:          r.Mode,
+		Value:         value,
+		EffectiveFrom: r.EffectiveFrom,
+		EffectiveTo:   nullableTimePtr(r.EffectiveTo),
+		Active:        r.Active,
+		CreatedBy:     nullableUserBrief(r.CreatedByUserID, r.CreatedByName),
+		Tiers:         tiers,
+		CreatedAt:     r.CreatedAt,
+		UpdatedAt:     r.UpdatedAt,
+	}
+}
+
+/* ---------- PartnerPayout / PartnerPayoutItem ---------- */
+
+// PartnerPayout batches one or more APPROVED commissions for a single partner into one
+// payment event. Commissions never change status while reserved in a PENDING payout (see
+// partner_payout_items.released_at) — they flip to PAID only when the payout itself is paid.
+type PartnerPayout struct {
+	ID               int64
+	Code             string
+	PartnerID        int64
+	PartnerCode      sql.NullString
+	PartnerName      sql.NullString
+	TotalAmount      string
+	Currency         string
+	Status           string // PENDING, PAID, CANCELLED
+	Note             sql.NullString
+	PreparedByUserID sql.NullInt64
+	PreparedByName   sql.NullString
+	PaidByUserID     sql.NullInt64
+	PaidByName       sql.NullString
+	PaidAt           sql.NullTime
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+	Items            []PartnerPayoutItem // populated only when fetching a single payout
+}
+
+// PartnerPayoutItem links a commission into a payout. ReleasedAt is set when the owning
+// payout is CANCELLED, freeing the commission (still APPROVED) to be paid individually or
+// batched into a future payout — see the active_commission_key generated column.
+type PartnerPayoutItem struct {
+	ID             int64
+	PayoutID       int64
+	CommissionID   int64
+	CommissionCode sql.NullString
+	Amount         string
+	ReleasedAt     sql.NullTime
+	CreatedAt      time.Time
+}
+
+type PartnerPayoutItemResponse struct {
+	ID             int64      `json:"id"`
+	CommissionID   int64      `json:"commission_id"`
+	CommissionCode *string    `json:"commission_code,omitempty"`
+	Amount         string     `json:"amount"`
+	ReleasedAt     *time.Time `json:"released_at,omitempty"`
+}
+
+type PartnerPayoutResponse struct {
+	ID          int64                       `json:"id"`
+	Code        string                      `json:"code"`
+	PartnerID   int64                       `json:"partner_id"`
+	PartnerCode *string                     `json:"partner_code,omitempty"`
+	PartnerName *string                     `json:"partner_name,omitempty"`
+	TotalAmount string                      `json:"total_amount"`
+	Currency    string                      `json:"currency"`
+	Status      string                      `json:"status"`
+	Note        string                      `json:"note,omitempty"`
+	PreparedBy  *UserBrief                  `json:"prepared_by,omitempty"`
+	PaidBy      *UserBrief                  `json:"paid_by,omitempty"`
+	PaidAt      *time.Time                  `json:"paid_at,omitempty"`
+	Items       []PartnerPayoutItemResponse `json:"items,omitempty"`
+	CreatedAt   time.Time                   `json:"created_at"`
+	UpdatedAt   time.Time                   `json:"updated_at"`
+}
+
+type PartnerPayoutListResponse struct {
+	Items      []PartnerPayoutResponse `json:"items"`
+	Pagination PaginationMeta          `json:"pagination"`
+}
+
+type PayoutActionRequest struct {
+	Note string `json:"note,omitempty"`
+}
+
+func NewPartnerPayoutItemResponse(item PartnerPayoutItem) PartnerPayoutItemResponse {
+	return PartnerPayoutItemResponse{
+		ID:             item.ID,
+		CommissionID:   item.CommissionID,
+		CommissionCode: nullStringToPtr(item.CommissionCode),
+		Amount:         item.Amount,
+		ReleasedAt:     nullableTimePtr(item.ReleasedAt),
+	}
+}
+
+func NewPartnerPayoutResponse(p PartnerPayout) PartnerPayoutResponse {
+	items := make([]PartnerPayoutItemResponse, 0, len(p.Items))
+	for _, it := range p.Items {
+		items = append(items, NewPartnerPayoutItemResponse(it))
+	}
+	return PartnerPayoutResponse{
+		ID:          p.ID,
+		Code:        p.Code,
+		PartnerID:   p.PartnerID,
+		PartnerCode: nullStringToPtr(p.PartnerCode),
+		PartnerName: nullStringToPtr(p.PartnerName),
+		TotalAmount: p.TotalAmount,
+		Currency:    p.Currency,
+		Status:      p.Status,
+		Note:        p.Note.String,
+		PreparedBy:  nullableUserBrief(p.PreparedByUserID, p.PreparedByName),
+		PaidBy:      nullableUserBrief(p.PaidByUserID, p.PaidByName),
+		PaidAt:      nullableTimePtr(p.PaidAt),
+		Items:       items,
+		CreatedAt:   p.CreatedAt,
+		UpdatedAt:   p.UpdatedAt,
+	}
 }

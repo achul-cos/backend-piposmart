@@ -368,17 +368,6 @@ func (s *Service) AssignPIC(ctx context.Context, partnerID int64, userID int64, 
 		return nil, err
 	}
 	// Ensure user exists (could check via identity service, but we trust ID)
-	// Ensure only one active assignment per partner
-	active, err := s.repo.GetActiveAssignmentForPartner(ctx, partnerID)
-	if err != nil && !errors.Is(err, ErrNotFound) {
-		return nil, err
-	}
-	if active != nil {
-		// Deactivate existing active assignment
-		if err := s.repo.DeactivatePartnerAssignment(ctx, active.ID); err != nil {
-			return nil, err
-		}
-	}
 	a := PartnerAssignment{
 		PartnerID:    partnerID,
 		UserID:       userID,
@@ -386,7 +375,11 @@ func (s *Service) AssignPIC(ctx context.Context, partnerID int64, userID int64, 
 		AssignedAt:   time.Now(),
 		Active:       true,
 	}
-	id, err := s.repo.CreatePartnerAssignment(ctx, a)
+	// Deactivate-then-insert happens atomically under a partner row lock
+	// (see Repository.AssignPIC), backstopped by the DB-level
+	// uq_partner_assignments_one_active constraint — this prevents two
+	// concurrent AssignPIC calls for the same partner from both succeeding.
+	id, err := s.repo.AssignPIC(ctx, a)
 	if err != nil {
 		return nil, err
 	}
@@ -611,6 +604,210 @@ func (s *Service) CancelCommission(ctx context.Context, actor identity.User, com
 		return nil, err
 	}
 	resp := NewPartnerCommissionResponse(*c)
+	return &resp, nil
+}
+
+/* ---------- CommissionRule ---------- */
+
+// CreateCommissionRule adds an effective-dated, optionally package-scoped commission rate
+// overlay for a partner_type. When mode is TIER, req.Tiers defines the volume brackets
+// (validated by validateCommissionTiers); when PERCENTAGE/FIXED, req.Value is the flat rate
+// (validated by validateRuleCommissionValue). If no rule matches a closing at sync time,
+// calculation falls back to the legacy partner_types.commission_mode/value unchanged.
+// ADMIN/SUPERVISOR only — rule configuration directly controls partner payouts.
+func (s *Service) CreateCommissionRule(ctx context.Context, actor identity.User, partnerTypeID int64, req CreateCommissionRuleRequest) (*CommissionRuleResponse, error) {
+	if actor.RoleCode != RoleAdmin && actor.RoleCode != RoleSupervisor {
+		return nil, ErrForbidden
+	}
+	if _, err := s.repo.GetPartnerTypeByID(ctx, partnerTypeID); err != nil {
+		return nil, err
+	}
+	if err := validateRuleCommissionValue(req.Mode, req.Value); err != nil {
+		return nil, err
+	}
+
+	var tiers []CommissionTier
+	if req.Mode == CommissionModeTier {
+		if err := validateCommissionTiers(req.Tiers); err != nil {
+			return nil, err
+		}
+		tiers = make([]CommissionTier, len(req.Tiers))
+		for i, t := range req.Tiers {
+			var maxClosings sql.NullInt64
+			if t.MaxClosings != nil {
+				maxClosings = sql.NullInt64{Int64: int64(*t.MaxClosings), Valid: true}
+			}
+			tiers[i] = CommissionTier{
+				TierOrder:   t.TierOrder,
+				MinClosings: t.MinClosings,
+				MaxClosings: maxClosings,
+				Mode:        t.Mode,
+				Value:       t.Value,
+			}
+		}
+	} else if len(req.Tiers) > 0 {
+		return nil, ErrInvalidCommissionTier
+	}
+
+	var packageID sql.NullInt64
+	if req.PackageID != nil {
+		packageID = sql.NullInt64{Int64: *req.PackageID, Valid: true}
+	}
+	var value sql.NullString
+	if req.Value != nil {
+		value = sql.NullString{String: *req.Value, Valid: true}
+	}
+	var effectiveTo sql.NullTime
+	if req.EffectiveTo != nil {
+		effectiveTo = sql.NullTime{Time: *req.EffectiveTo, Valid: true}
+	}
+
+	rule := CommissionRule{
+		PartnerTypeID:   partnerTypeID,
+		PackageID:       packageID,
+		Mode:            req.Mode,
+		Value:           value,
+		EffectiveFrom:   req.EffectiveFrom,
+		EffectiveTo:     effectiveTo,
+		CreatedByUserID: sql.NullInt64{Int64: actor.ID, Valid: true},
+	}
+	id, err := s.repo.CreateCommissionRule(ctx, rule, tiers)
+	if err != nil {
+		return nil, err
+	}
+	created, err := s.repo.GetCommissionRuleByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	resp := NewCommissionRuleResponse(*created)
+	return &resp, nil
+}
+
+func (s *Service) ListCommissionRules(ctx context.Context, partnerTypeID int64, packageID *int64, activeOnly bool) ([]CommissionRuleResponse, error) {
+	if _, err := s.repo.GetPartnerTypeByID(ctx, partnerTypeID); err != nil {
+		return nil, err
+	}
+	list, err := s.repo.ListCommissionRules(ctx, partnerTypeID, packageID, activeOnly)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]CommissionRuleResponse, len(list))
+	for i, r := range list {
+		items[i] = NewCommissionRuleResponse(r)
+	}
+	return items, nil
+}
+
+func (s *Service) GetCommissionRule(ctx context.Context, ruleID int64) (*CommissionRuleResponse, error) {
+	r, err := s.repo.GetCommissionRuleByID(ctx, ruleID)
+	if err != nil {
+		return nil, err
+	}
+	resp := NewCommissionRuleResponse(*r)
+	return &resp, nil
+}
+
+// DeactivateCommissionRule retires a rule (rules are superseded by creating a new one with
+// a later effective_from, never edited in place). ADMIN/SUPERVISOR only.
+func (s *Service) DeactivateCommissionRule(ctx context.Context, actor identity.User, ruleID int64) (*CommissionRuleResponse, error) {
+	if actor.RoleCode != RoleAdmin && actor.RoleCode != RoleSupervisor {
+		return nil, ErrForbidden
+	}
+	if err := s.repo.DeactivateCommissionRule(ctx, ruleID); err != nil {
+		return nil, err
+	}
+	r, err := s.repo.GetCommissionRuleByID(ctx, ruleID)
+	if err != nil {
+		return nil, err
+	}
+	resp := NewCommissionRuleResponse(*r)
+	return &resp, nil
+}
+
+/* ---------- PartnerPayout ---------- */
+
+// CreatePayout batches every APPROVED, not-yet-batched commission for partnerID into one
+// new PENDING payout. ADMIN/SUPERVISOR only — mirrors SyncCommissions/ApproveCommission:
+// supervisors may prepare a payout, only ADMIN executes the actual payment via PayPayout.
+func (s *Service) CreatePayout(ctx context.Context, actor identity.User, partnerID int64) (*PartnerPayoutResponse, error) {
+	if actor.RoleCode != RoleAdmin && actor.RoleCode != RoleSupervisor {
+		return nil, ErrForbidden
+	}
+	if _, err := s.repo.GetPartnerByID(ctx, partnerID); err != nil {
+		return nil, err
+	}
+	id, err := s.repo.CreatePayout(ctx, partnerID, actor.ID)
+	if err != nil {
+		return nil, err
+	}
+	p, err := s.repo.GetPayoutByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	resp := NewPartnerPayoutResponse(*p)
+	return &resp, nil
+}
+
+func (s *Service) ListPayouts(ctx context.Context, partnerID int64, status string, page int, limit int) (PartnerPayoutListResponse, error) {
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 {
+		limit = 10
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	offset := (page - 1) * limit
+	list, total, err := s.repo.ListPartnerPayouts(ctx, partnerID, status, limit, offset)
+	if err != nil {
+		return PartnerPayoutListResponse{}, err
+	}
+	items := make([]PartnerPayoutResponse, len(list))
+	for i, p := range list {
+		items[i] = NewPartnerPayoutResponse(p)
+	}
+	return PartnerPayoutListResponse{
+		Items:      items,
+		Pagination: PaginationMeta{Page: page, Limit: limit, Total: total},
+	}, nil
+}
+
+func (s *Service) GetPayout(ctx context.Context, payoutID int64) (*PartnerPayoutResponse, error) {
+	p, err := s.repo.GetPayoutByID(ctx, payoutID)
+	if err != nil {
+		return nil, err
+	}
+	resp := NewPartnerPayoutResponse(*p)
+	return &resp, nil
+}
+
+// PayPayout moves a PENDING payout (and every commission still batched in it) to PAID.
+// Restricted to ADMIN since it represents money actually leaving the business — same
+// reasoning as PayCommission.
+func (s *Service) PayPayout(ctx context.Context, actor identity.User, payoutID int64) (*PartnerPayoutResponse, error) {
+	if actor.RoleCode != RoleAdmin {
+		return nil, ErrForbidden
+	}
+	p, err := s.repo.MarkPayoutPaid(ctx, payoutID, actor.ID)
+	if err != nil {
+		return nil, err
+	}
+	resp := NewPartnerPayoutResponse(*p)
+	return &resp, nil
+}
+
+// CancelPayout voids a PENDING payout, releasing its batched commissions back to APPROVED
+// (payable individually or batchable into a future payout again).
+func (s *Service) CancelPayout(ctx context.Context, actor identity.User, payoutID int64, note string) (*PartnerPayoutResponse, error) {
+	if actor.RoleCode != RoleAdmin && actor.RoleCode != RoleSupervisor {
+		return nil, ErrForbidden
+	}
+	p, err := s.repo.CancelPayout(ctx, payoutID, note)
+	if err != nil {
+		return nil, err
+	}
+	resp := NewPartnerPayoutResponse(*p)
 	return &resp, nil
 }
 

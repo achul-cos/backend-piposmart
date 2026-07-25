@@ -2,6 +2,7 @@ package partner
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -123,4 +124,58 @@ func calculateCommissionAmountCents(mode string, value string, baseCents int64) 
 	default:
 		return 0, ErrInvalidCommissionMode
 	}
+}
+
+// validateRuleCommissionValue checks a commission_rules row's mode/value combination:
+// PERCENTAGE/FIXED require a valid value (same rules as validateCommissionValue), TIER
+// forbids a value since the rate lives in commission_tiers instead.
+func validateRuleCommissionValue(mode string, value *string) error {
+	switch mode {
+	case CommissionModePercentage, CommissionModeFixed:
+		if value == nil {
+			return ErrInvalidCommissionRate
+		}
+		return validateCommissionValue(mode, *value)
+	case CommissionModeTier:
+		if value != nil {
+			return ErrInvalidCommissionTier
+		}
+		return nil
+	default:
+		return ErrInvalidCommissionMode
+	}
+}
+
+// validateCommissionTiers checks a TIER-mode commission_rule's tier list: tier_order must
+// be sequential starting at 1, min_closings must start at 1 and be contiguous with the
+// previous tier's max_closings (no gaps, no overlaps), and the last tier must be
+// open-ended (max_closings == nil) so every possible closing count has a matching tier.
+func validateCommissionTiers(tiers []CreateCommissionTierRequest) error {
+	if len(tiers) == 0 {
+		return ErrInvalidCommissionTier
+	}
+	sorted := make([]CreateCommissionTierRequest, len(tiers))
+	copy(sorted, tiers)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i].TierOrder < sorted[j].TierOrder })
+
+	expectedMin := 1
+	for i, t := range sorted {
+		if t.TierOrder != i+1 || t.MinClosings != expectedMin {
+			return ErrInvalidCommissionTier
+		}
+		if i == len(sorted)-1 {
+			if t.MaxClosings != nil {
+				return ErrInvalidCommissionTier
+			}
+		} else {
+			if t.MaxClosings == nil || *t.MaxClosings < t.MinClosings {
+				return ErrInvalidCommissionTier
+			}
+			expectedMin = *t.MaxClosings + 1
+		}
+		if err := validateCommissionValue(t.Mode, t.Value); err != nil {
+			return err
+		}
+	}
+	return nil
 }
