@@ -22,6 +22,8 @@ func NewHandler(service *Service) *Handler {
 
 func (h *Handler) RegisterRoutes(api *gin.RouterGroup) {
 	api.GET("/closings", h.listClosings)
+	api.GET("/closings/trash", h.listClosingsTrash)
+	api.GET("/closings/unscoped", h.listClosingsUnscoped)
 	api.DELETE("/closings/bulk", h.bulkDeleteClosings)
 	api.PATCH("/closings/bulk/restore", h.bulkRestoreClosings)
 	api.DELETE("/closings/bulk/force", h.bulkForceDeleteClosings)
@@ -35,11 +37,24 @@ func (h *Handler) RegisterRoutes(api *gin.RouterGroup) {
 }
 
 func (h *Handler) listClosings(c *gin.Context) {
+	h.listClosingsWithScope(c, ScopeActive)
+}
+
+func (h *Handler) listClosingsTrash(c *gin.Context) {
+	h.listClosingsWithScope(c, ScopeDeleted)
+}
+
+func (h *Handler) listClosingsUnscoped(c *gin.Context) {
+	h.listClosingsWithScope(c, ScopeAll)
+}
+
+func (h *Handler) listClosingsWithScope(c *gin.Context, scope string) {
 	user, _ := identity.CurrentUser(c)
 	params, ok := listParams(c)
 	if !ok {
 		return
 	}
+	params.Scope = scope
 	response, err := h.service.ListClosings(c.Request.Context(), user, params)
 	if err != nil {
 		writeError(c, err)

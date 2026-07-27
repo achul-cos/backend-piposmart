@@ -806,7 +806,9 @@ ke customer miliknya akan masuk melalui modul Lead/Assignment.
 
 | Nama Route | Method | Path | Fungsi |
 | --- | --- | --- | --- |
-| List Owner | GET | `/api/v1/owners` | Melihat daftar owner aktif. |
+| List Owner | GET | /api/v1/owners | Melihat daftar owner aktif. |
+| List Owner Trash | GET | /api/v1/owners/trash | Melihat daftar owner yang soft delete. |
+| List Owner Unscoped | GET | /api/v1/owners/unscoped | Melihat seluruh owner aktif + terhapus. |
 | Create Owner | POST | `/api/v1/owners` | Membuat owner baru. |
 | Bulk Create Owner | POST | `/api/v1/owners/bulk` | Membuat banyak owner dalam satu request. |
 | Bulk Update Owner | PATCH | `/api/v1/owners/bulk` | Mengubah banyak owner dalam satu request. |
@@ -1242,7 +1244,14 @@ outlet melalui nested route.
 
 | Nama Route | Method | Path | Fungsi |
 | --- | --- | --- | --- |
-| List Outlet | GET | `/api/v1/owners/{owner_id}/outlets` | Melihat daftar outlet aktif milik owner. |
+| List Outlet | GET | /api/v1/owners/{owner_id}/outlets | Melihat daftar outlet aktif milik owner. |
+| List Outlet Trash (per Owner) | GET | /api/v1/owners/{owner_id}/outlets/trash | Melihat outlet soft delete milik owner. |
+| List Outlet Unscoped (per Owner) | GET | /api/v1/owners/{owner_id}/outlets/unscoped | Melihat semua outlet milik owner, termasuk soft delete. |
+| List Global Outlet | GET | /api/v1/outlets | Melihat semua outlet aktif lintas owner sesuai visibility actor. |
+| List Global Outlet Trash | GET | /api/v1/outlets/trash | Melihat semua outlet soft delete lintas owner. |
+| List Global Outlet Unscoped | GET | /api/v1/outlets/unscoped | Melihat semua outlet aktif + soft delete lintas owner. |
+| Detail Global Outlet | GET | /api/v1/outlets/{outlet_id} | Detail outlet global berisi info owner, wallet owner, dan ringkasan subscription. |
+| Outlet Subscription Status Recap | GET | /api/v1/outlets/subscription-statuses | Rekap status langganan outlet per bulan, termasuk outlet yang belum pernah subscribe. |
 | Create Outlet | POST | `/api/v1/owners/{owner_id}/outlets` | Membuat outlet untuk owner. |
 | Bulk Create Outlet | POST | `/api/v1/owners/{owner_id}/outlets/bulk` | Membuat banyak outlet. |
 | Bulk Update Outlet | PATCH | `/api/v1/owners/{owner_id}/outlets/bulk` | Mengubah banyak outlet. |
@@ -2017,7 +2026,9 @@ Aturan utama:
 
 | Nama Route | Method | Path | Fungsi |
 | --- | --- | --- | --- |
-| List Package | GET | `/api/v1/catalog/packages` | List paket. |
+| List Package | GET | /api/v1/catalog/packages | List paket aktif. |
+| List Package Trash | GET | /api/v1/catalog/packages/trash | List paket soft delete. |
+| List Package Unscoped | GET | /api/v1/catalog/packages/unscoped | List paket aktif + terhapus. |
 | Create Package | POST | `/api/v1/catalog/packages` | Membuat paket. |
 | Detail Package | GET | `/api/v1/catalog/packages/{package_id}` | Detail paket. |
 | Update Package | PATCH | `/api/v1/catalog/packages/{package_id}` | Update paket. |
@@ -2119,7 +2130,9 @@ Accept: application/json
 
 | Nama Route | Method | Path | Fungsi |
 | --- | --- | --- | --- |
-| List Closing | GET | `/api/v1/closings` | List closing sesuai role actor. |
+| List Closing | GET | /api/v1/closings | List closing aktif sesuai role actor. |
+| List Closing Trash | GET | /api/v1/closings/trash | List closing soft delete sesuai role actor. |
+| List Closing Unscoped | GET | /api/v1/closings/unscoped | List closing aktif + terhapus sesuai role actor. |
 | Detail Closing | GET | `/api/v1/closings/{closing_id}` | Detail closing dan snapshot transaksi. |
 | Create Lead Closing | POST | `/api/v1/leads/{lead_id}/closings` | Sales membuat closing untuk lead miliknya. |
 | Confirm Closing | POST | `/api/v1/closings/{closing_id}/confirm` | Admin/Supervisor confirm closing pending. |
@@ -2282,7 +2295,7 @@ Aturan penting:
 
 | Nama Route | Method | Path | Fungsi |
 | --- | --- | --- | --- |
-| List Wallet | GET | `/api/v1/wallets` | Melihat wallet owner sesuai role user. |
+| List Wallet | GET | `/api/v1/wallets` | Melihat wallet seluruh owner sesuai role user, termasuk owner yang belum pernah top-up (saldo `0.00`). |
 | Detail Owner Wallet | GET | `/api/v1/owners/{owner_id}/wallet` | Melihat saldo wallet satu owner. |
 | List Payment | GET | `/api/v1/wallet-payments` | Rekap payment/top-up owner berdasarkan `paid_at`. |
 | Detail Payment | GET | `/api/v1/wallet-payments/{payment_id}` | Detail top-up/payment. |
@@ -3488,3 +3501,5 @@ internal/partner/      Partner, PIC, referral, commission, payout (Sprint 11, 12
 internal/target/       Sales target — bulk & override (Sprint 13)
 internal/kpi/          KPI definition, recompute, ranking (Sprint 13)
 ```
+
+

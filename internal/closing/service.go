@@ -149,8 +149,20 @@ func normalizeListParams(params ListParams) ListParams {
 	}
 	params.Query = strings.TrimSpace(params.Query)
 	params.Status = normalizeStatus(params.Status)
+	params.Scope = normalizeScope(params.Scope)
 	params.Sort = strings.TrimSpace(params.Sort)
 	return params
+}
+
+func normalizeScope(scope string) string {
+	switch strings.ToUpper(strings.TrimSpace(scope)) {
+	case ScopeDeleted:
+		return ScopeDeleted
+	case ScopeAll:
+		return ScopeAll
+	default:
+		return ScopeActive
+	}
 }
 
 func normalizeIDs(ids []int64) ([]int64, error) {

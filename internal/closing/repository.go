@@ -20,7 +20,7 @@ func NewRepository(db *sql.DB) *Repository {
 }
 
 func (r *Repository) ListClosings(ctx context.Context, actor identity.User, params ListParams) ([]Closing, int64, error) {
-	where, args := closingWhere(actor, params, false)
+	where, args := closingWhere(actor, params)
 	var total int64
 	if err := r.db.QueryRowContext(ctx, `
 		SELECT COUNT(*)
@@ -49,7 +49,7 @@ func (r *Repository) ListClosings(ctx context.Context, actor identity.User, para
 }
 
 func (r *Repository) FindClosingByID(ctx context.Context, actor identity.User, id int64) (Closing, error) {
-	where, args := closingWhere(actor, ListParams{}, false)
+	where, args := closingWhere(actor, ListParams{Scope: ScopeActive})
 	args = append([]any{id}, args...)
 	item, err := scanClosing(r.db.QueryRowContext(ctx, closingSelect()+`
 		WHERE sc.id = ? AND `+where+`
@@ -586,9 +586,14 @@ func closingSelect() string {
 		LEFT JOIN users ubu ON ubu.id = sc.updated_by_user_id`
 }
 
-func closingWhere(actor identity.User, params ListParams, includeDeleted bool) (string, []any) {
+func closingWhere(actor identity.User, params ListParams) (string, []any) {
 	where := []string{}
-	if !includeDeleted {
+	switch params.Scope {
+	case ScopeDeleted:
+		where = append(where, "sc.deleted_at IS NOT NULL")
+	case ScopeAll:
+		where = append(where, "1 = 1")
+	default:
 		where = append(where, "sc.deleted_at IS NULL")
 	}
 	visibility, visibilityArgs := visibilityWhere(actor)

@@ -22,6 +22,8 @@ func NewHandler(service *Service) *Handler {
 func (h *Handler) RegisterRoutes(api *gin.RouterGroup) {
 	owners := api.Group("/owners")
 	owners.GET("", h.listOwners)
+	owners.GET("/trash", h.listOwnersTrash)
+	owners.GET("/unscoped", h.listOwnersUnscoped)
 	owners.POST("", h.createOwner)
 	owners.POST("/bulk", h.bulkCreateOwners)
 	owners.PATCH("/bulk", h.bulkUpdateOwners)
@@ -34,6 +36,8 @@ func (h *Handler) RegisterRoutes(api *gin.RouterGroup) {
 	owners.DELETE("/:owner_id/force", h.forceDeleteOwner)
 
 	owners.GET("/:owner_id/outlets", h.listOutlets)
+	owners.GET("/:owner_id/outlets/trash", h.listOutletsTrash)
+	owners.GET("/:owner_id/outlets/unscoped", h.listOutletsUnscoped)
 	owners.POST("/:owner_id/outlets", h.createOutlet)
 	owners.POST("/:owner_id/outlets/bulk", h.bulkCreateOutlets)
 	owners.PATCH("/:owner_id/outlets/bulk", h.bulkUpdateOutlets)
@@ -44,10 +48,31 @@ func (h *Handler) RegisterRoutes(api *gin.RouterGroup) {
 	owners.DELETE("/:owner_id/outlets/:outlet_id", h.deleteOutlet)
 	owners.PATCH("/:owner_id/outlets/:outlet_id/restore", h.restoreOutlet)
 	owners.DELETE("/:owner_id/outlets/:outlet_id/force", h.forceDeleteOutlet)
+
+	outlets := api.Group("/outlets")
+	outlets.GET("", h.listGlobalOutlets)
+	outlets.GET("/trash", h.listGlobalOutletsTrash)
+	outlets.GET("/unscoped", h.listGlobalOutletsUnscoped)
+	outlets.GET("/subscription-statuses", h.listOutletSubscriptionStatuses)
+	outlets.GET("/:outlet_id", h.getGlobalOutlet)
 }
 
 func (h *Handler) listOwners(c *gin.Context) {
-	response, err := h.service.ListOwners(c.Request.Context(), currentActor(c), listParams(c))
+	h.listOwnersWithScope(c, ScopeActive)
+}
+
+func (h *Handler) listOwnersTrash(c *gin.Context) {
+	h.listOwnersWithScope(c, ScopeDeleted)
+}
+
+func (h *Handler) listOwnersUnscoped(c *gin.Context) {
+	h.listOwnersWithScope(c, ScopeAll)
+}
+
+func (h *Handler) listOwnersWithScope(c *gin.Context, scope string) {
+	params := listParams(c)
+	params.Scope = scope
+	response, err := h.service.ListOwners(c.Request.Context(), currentActor(c), params)
 	if err != nil {
 		writeError(c, err)
 		return
@@ -188,11 +213,48 @@ func (h *Handler) bulkForceDeleteOwners(c *gin.Context) {
 }
 
 func (h *Handler) listOutlets(c *gin.Context) {
+	h.listOwnerOutletsWithScope(c, ScopeActive)
+}
+
+func (h *Handler) listOutletsTrash(c *gin.Context) {
+	h.listOwnerOutletsWithScope(c, ScopeDeleted)
+}
+
+func (h *Handler) listOutletsUnscoped(c *gin.Context) {
+	h.listOwnerOutletsWithScope(c, ScopeAll)
+}
+
+func (h *Handler) listOwnerOutletsWithScope(c *gin.Context, scope string) {
 	ownerID, ok := parseParamID(c, "owner_id")
 	if !ok {
 		return
 	}
-	response, err := h.service.ListOutlets(c.Request.Context(), currentActor(c), ownerID, listParams(c))
+	params := listParams(c)
+	params.Scope = scope
+	response, err := h.service.ListOutlets(c.Request.Context(), currentActor(c), ownerID, params)
+	if err != nil {
+		writeError(c, err)
+		return
+	}
+	httpx.Success(c, http.StatusOK, response)
+}
+
+func (h *Handler) listGlobalOutlets(c *gin.Context) {
+	h.listGlobalOutletsWithScope(c, ScopeActive)
+}
+
+func (h *Handler) listGlobalOutletsTrash(c *gin.Context) {
+	h.listGlobalOutletsWithScope(c, ScopeDeleted)
+}
+
+func (h *Handler) listGlobalOutletsUnscoped(c *gin.Context) {
+	h.listGlobalOutletsWithScope(c, ScopeAll)
+}
+
+func (h *Handler) listGlobalOutletsWithScope(c *gin.Context, scope string) {
+	params := listParams(c)
+	params.Scope = scope
+	response, err := h.service.ListGlobalOutlets(c.Request.Context(), currentActor(c), params)
 	if err != nil {
 		writeError(c, err)
 		return
@@ -240,6 +302,19 @@ func (h *Handler) getOutlet(c *gin.Context) {
 		return
 	}
 	response, err := h.service.GetOutlet(c.Request.Context(), currentActor(c), ownerID, outletID)
+	if err != nil {
+		writeError(c, err)
+		return
+	}
+	httpx.Success(c, http.StatusOK, response)
+}
+
+func (h *Handler) getGlobalOutlet(c *gin.Context) {
+	outletID, ok := parseParamID(c, "outlet_id")
+	if !ok {
+		return
+	}
+	response, err := h.service.GetGlobalOutlet(c.Request.Context(), currentActor(c), outletID)
 	if err != nil {
 		writeError(c, err)
 		return
@@ -384,18 +459,24 @@ func parseParamID(c *gin.Context, name string) (int64, bool) {
 func listParams(c *gin.Context) ListParams {
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))
-	return ListParams{
-		Query:     c.Query("q"),
-		Code:      c.Query("code"),
-		Name:      c.Query("name"),
-		Phone:     c.Query("phone"),
-		BrandName: c.Query("brand_name"),
-		Province:  c.Query("province"),
-		City:      c.Query("city"),
-		Page:      page,
-		Limit:     limit,
-		Sort:      c.Query("sort"),
+	params := ListParams{
+		Query:              c.Query("q"),
+		Code:               c.Query("code"),
+		Name:               c.Query("name"),
+		Phone:              c.Query("phone"),
+		BrandName:          c.Query("brand_name"),
+		Province:           c.Query("province"),
+		City:               c.Query("city"),
+		SubscriptionStatus: c.Query("subscription_status"),
+		SubscriptionMonth:  c.Query("subscription_month"),
+		Page:               page,
+		Limit:              limit,
+		Sort:               c.Query("sort"),
 	}
+	if ownerID, err := strconv.ParseInt(c.Query("owner_id"), 10, 64); err == nil && ownerID > 0 {
+		params.OwnerID = &ownerID
+	}
+	return params
 }
 
 func currentActor(c *gin.Context) Actor {

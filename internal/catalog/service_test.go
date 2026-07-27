@@ -1,6 +1,10 @@
 package catalog
 
-import "testing"
+import (
+	"testing"
+
+	"backend_crm_piposmart/internal/identity"
+)
 
 func TestValidateCreatePlanUsesDecimalMoney(t *testing.T) {
 	err := validateCreatePlan(CreatePlanRequest{
@@ -45,5 +49,17 @@ func TestPromotionChargeTypeValidation(t *testing.T) {
 	}
 	if err := validateChargeType("AUTO"); err != ErrInvalidCharge {
 		t.Fatalf("ingin ErrInvalidCharge, dapat %v", err)
+	}
+}
+
+func TestCanManageCatalogAdminOnly(t *testing.T) {
+	if !canManageCatalog(identity.User{RoleCode: identity.RoleAdmin}) {
+		t.Fatal("admin seharusnya bisa mengelola catalog")
+	}
+	if canManageCatalog(identity.User{RoleCode: identity.RoleSupervisor}) {
+		t.Fatal("supervisor tidak boleh lagi mengelola catalog")
+	}
+	if canManageCatalog(identity.User{RoleCode: identity.RoleSales}) {
+		t.Fatal("sales tidak boleh mengelola catalog")
 	}
 }

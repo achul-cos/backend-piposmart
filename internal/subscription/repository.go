@@ -1332,6 +1332,10 @@ func subscriptionWhere(actor identity.User, params ListParams) (string, []any) {
 		where = append(where, "s.owner_id = ?")
 		args = append(args, *params.OwnerID)
 	}
+	if params.OutletID != nil {
+		where = append(where, "s.outlet_id = ?")
+		args = append(args, *params.OutletID)
+	}
 	if params.OrderID != nil {
 		where = append(where, "s.order_id = ?")
 		args = append(args, *params.OrderID)

@@ -237,7 +237,7 @@ func supportedMetricQuery(metricCode string) (string, bool) {
 			WHERE sales_id IN (%s) AND status = 'CONFIRMED' AND deleted_at IS NULL
 			AND confirmed_at >= ? AND confirmed_at < ? GROUP BY sales_id`, true
 	case "CONFIRMED_CLOSING_AMOUNT":
-		return `SELECT sales_id, COALESCE(SUM(final_amount), 0) FROM sales_closings
+		return `SELECT sales_id, COALESCE(SUM(base_price - discount_amount + additional_charge), 0) FROM sales_closings
 			WHERE sales_id IN (%s) AND status = 'CONFIRMED' AND deleted_at IS NULL
 			AND confirmed_at >= ? AND confirmed_at < ? GROUP BY sales_id`, true
 	case "CALL_CUSTOMER_COUNT":

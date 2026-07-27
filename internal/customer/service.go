@@ -223,6 +223,32 @@ func (s *Service) ListOutlets(ctx context.Context, actor Actor, ownerID int64, p
 	}, nil
 }
 
+func (s *Service) ListGlobalOutlets(ctx context.Context, actor Actor, params ListParams) (OutletOverviewListResponse, error) {
+	params = normalizeListParams(params)
+	if params.Phone != "" {
+		phone, err := NormalizePhone(params.Phone)
+		if err == nil {
+			params.Phone = phone
+		}
+	}
+	items, total, err := s.repo.ListGlobalOutlets(ctx, actor, params)
+	if err != nil {
+		return OutletOverviewListResponse{}, err
+	}
+	responses := make([]OutletOverviewResponse, 0, len(items))
+	for _, item := range items {
+		responses = append(responses, NewOutletOverviewResponse(item))
+	}
+	return OutletOverviewListResponse{
+		Items: responses,
+		Pagination: PaginationMeta{
+			Page:  params.Page,
+			Limit: params.Limit,
+			Total: total,
+		},
+	}, nil
+}
+
 func (s *Service) CreateOutlet(ctx context.Context, actor Actor, ownerID int64, req CreateOutletRequest) (OutletResponse, error) {
 	if !actorCanManageOwners(actor) {
 		return OutletResponse{}, ErrForbidden
@@ -266,6 +292,14 @@ func (s *Service) GetOutlet(ctx context.Context, actor Actor, ownerID, outletID 
 		return OutletResponse{}, err
 	}
 	return NewOutletResponse(outlet), nil
+}
+
+func (s *Service) GetGlobalOutlet(ctx context.Context, actor Actor, outletID int64) (OutletDetailResponse, error) {
+	item, err := s.repo.FindGlobalOutletByID(ctx, actor, outletID)
+	if err != nil {
+		return OutletDetailResponse{}, err
+	}
+	return NewOutletDetailResponse(item), nil
 }
 
 func (s *Service) RestoreOutlet(ctx context.Context, actor Actor, ownerID, outletID int64) (OutletResponse, error) {
@@ -396,8 +430,22 @@ func normalizeListParams(params ListParams) ListParams {
 	params.BrandName = strings.TrimSpace(params.BrandName)
 	params.Province = strings.TrimSpace(params.Province)
 	params.City = strings.TrimSpace(params.City)
+	params.SubscriptionStatus = strings.ToUpper(strings.TrimSpace(params.SubscriptionStatus))
+	params.SubscriptionMonth = strings.TrimSpace(params.SubscriptionMonth)
+	params.Scope = normalizeScope(params.Scope)
 	params.Sort = strings.TrimSpace(params.Sort)
 	return params
+}
+
+func normalizeScope(scope string) string {
+	switch strings.ToUpper(strings.TrimSpace(scope)) {
+	case ScopeDeleted:
+		return ScopeDeleted
+	case ScopeAll:
+		return ScopeAll
+	default:
+		return ScopeActive
+	}
 }
 
 func normalizeIDs(ids []int64) ([]int64, error) {

@@ -20,6 +20,10 @@ const (
 
 	InteractionCall = "CALL"
 	InteractionChat = "CHAT"
+
+	ScopeActive  = "ACTIVE"
+	ScopeDeleted = "DELETED"
+	ScopeAll     = "ALL"
 )
 
 type LeadState struct {
@@ -225,6 +229,7 @@ type ListParams struct {
 	SalesID      *int64
 	SupervisorID *int64
 	PlanID       *int64
+	Scope        string
 	ClosedFrom   *time.Time
 	ClosedTo     *time.Time
 	Page         int

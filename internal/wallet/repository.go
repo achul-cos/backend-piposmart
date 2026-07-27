@@ -36,8 +36,8 @@ func (r *Repository) ListWallets(ctx context.Context, actor identity.User, param
 	var total int64
 	if err := r.db.QueryRowContext(ctx, `
 		SELECT COUNT(*)
-		FROM wallet_accounts wa
-		LEFT JOIN owners o ON o.id = wa.owner_id AND o.deleted_at IS NULL
+		FROM owners o
+		LEFT JOIN wallet_accounts wa ON wa.owner_id = o.id AND wa.deleted_at IS NULL
 		WHERE `+where, args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
@@ -49,7 +49,6 @@ func (r *Repository) ListWallets(ctx context.Context, actor identity.User, param
 	args = append(args, params.Limit, offset)
 	rows, err := r.db.QueryContext(ctx, walletSelect()+`
 		WHERE `+where+`
-		GROUP BY wa.id
 		ORDER BY `+orderBy+`
 		LIMIT ? OFFSET ?`, args...)
 	if err != nil {
@@ -63,7 +62,6 @@ func (r *Repository) FindWalletByOwner(ctx context.Context, actor identity.User,
 	where, args := walletWhere(actor, ListParams{OwnerID: &ownerID})
 	item, err := scanWallet(r.db.QueryRowContext(ctx, walletSelect()+`
 		WHERE `+where+`
-		GROUP BY wa.id
 		LIMIT 1`, args...))
 	if err == sql.ErrNoRows {
 		return WalletAccount{}, ErrNotFound
@@ -504,12 +502,28 @@ func (r *Repository) findTransactionByIdempotency(ctx context.Context, q queryEx
 
 func walletSelect() string {
 	return `
-		SELECT wa.id, wa.owner_id, o.code, o.name, wa.account_code, wa.currency, CAST(wa.balance AS CHAR),
-			CAST(COALESCE(SUM(CASE WHEN wt.direction = 'CREDIT' THEN wt.amount ELSE -wt.amount END), 0) AS CHAR) AS ledger_balance,
-			wa.status, wa.created_at, wa.updated_at
-		FROM wallet_accounts wa
-		LEFT JOIN owners o ON o.id = wa.owner_id AND o.deleted_at IS NULL
-		LEFT JOIN wallet_transactions wt ON wt.wallet_account_id = wa.id AND wt.deleted_at IS NULL`
+		SELECT
+			COALESCE(wa.id, 0) AS wallet_id,
+			o.id,
+			o.code,
+			o.name,
+			COALESCE(wa.account_code, CONCAT('WALLET-OWNER-', LPAD(o.id, 6, '0'))) AS account_code,
+			COALESCE(wa.currency, 'IDR') AS currency,
+			COALESCE(CAST(wa.balance AS CHAR), '0.00') AS balance,
+			COALESCE(CAST(wtl.ledger_balance AS CHAR), COALESCE(CAST(wa.balance AS CHAR), '0.00')) AS ledger_balance,
+			COALESCE(wa.status, 'ACTIVE') AS status,
+			COALESCE(wa.created_at, o.created_at) AS created_at,
+			COALESCE(wa.updated_at, o.updated_at) AS updated_at
+		FROM owners o
+		LEFT JOIN wallet_accounts wa ON wa.owner_id = o.id AND wa.deleted_at IS NULL
+		LEFT JOIN (
+			SELECT
+				wt.wallet_account_id,
+				COALESCE(SUM(CASE WHEN wt.direction = 'CREDIT' THEN wt.amount ELSE -wt.amount END), 0) AS ledger_balance
+			FROM wallet_transactions wt
+			WHERE wt.deleted_at IS NULL
+			GROUP BY wt.wallet_account_id
+		) wtl ON wtl.wallet_account_id = wa.id`
 }
 
 func paymentSelect() string {
@@ -536,22 +550,22 @@ func transactionSelect() string {
 }
 
 func walletWhere(actor identity.User, params ListParams) (string, []any) {
-	where := []string{"wa.deleted_at IS NULL"}
+	where := []string{"o.deleted_at IS NULL"}
 	args := []any{}
-	visibility, visibilityArgs := ownerVisibilityWhere(actor, "wa.owner_id")
+	visibility, visibilityArgs := ownerVisibilityWhere(actor, "o.id")
 	where = append(where, visibility)
 	args = append(args, visibilityArgs...)
 	if params.Query != "" {
 		pattern := like(params.Query)
-		where = append(where, "(wa.account_code LIKE ? OR o.code LIKE ? OR o.name LIKE ?)")
+		where = append(where, "(COALESCE(wa.account_code, CONCAT('WALLET-OWNER-', LPAD(o.id, 6, '0'))) LIKE ? OR o.code LIKE ? OR o.name LIKE ?)")
 		args = append(args, pattern, pattern, pattern)
 	}
 	if params.OwnerID != nil {
-		where = append(where, "wa.owner_id = ?")
+		where = append(where, "o.id = ?")
 		args = append(args, *params.OwnerID)
 	}
 	if params.Status != "" {
-		where = append(where, "wa.status = ?")
+		where = append(where, "COALESCE(wa.status, 'ACTIVE') = ?")
 		args = append(args, params.Status)
 	}
 	return strings.Join(where, " AND "), args
@@ -651,11 +665,11 @@ func ownerVisibilityWhere(actor identity.User, ownerColumn string) (string, []an
 
 func walletOrderBy(sort string) (string, error) {
 	return orderBy(sort, map[string]string{
-		"created_at": "wa.created_at",
-		"updated_at": "wa.updated_at",
-		"balance":    "wa.balance",
-		"code":       "wa.account_code",
-	}, "wa.created_at DESC, wa.id DESC")
+		"created_at": "COALESCE(wa.created_at, o.created_at)",
+		"updated_at": "COALESCE(wa.updated_at, o.updated_at)",
+		"balance":    "COALESCE(wa.balance, 0)",
+		"code":       "COALESCE(wa.account_code, CONCAT('WALLET-OWNER-', LPAD(o.id, 6, '0')))",
+	}, "COALESCE(wa.created_at, o.created_at) DESC, o.id DESC")
 }
 
 func paymentOrderBy(sort string) (string, error) {

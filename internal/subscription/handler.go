@@ -151,7 +151,7 @@ func listParams(c *gin.Context) (ListParams, bool) {
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))
 	params := ListParams{Query: c.Query("q"), Status: c.Query("status"), IssueType: c.Query("issue_type"), Page: page, Limit: limit, Sort: c.Query("sort")}
-	if !parseOptionalInt64Query(c, "owner_id", &params.OwnerID) || !parseOptionalInt64Query(c, "order_id", &params.OrderID) || !parseOptionalInt64Query(c, "closing_id", &params.ClosingID) || !parseOptionalInt64Query(c, "sales_id", &params.SalesID) || !parseOptionalInt64Query(c, "supervisor_id", &params.SupervisorID) || !parseOptionalInt64Query(c, "plan_id", &params.PlanID) {
+	if !parseOptionalInt64Query(c, "owner_id", &params.OwnerID) || !parseOptionalInt64Query(c, "outlet_id", &params.OutletID) || !parseOptionalInt64Query(c, "order_id", &params.OrderID) || !parseOptionalInt64Query(c, "closing_id", &params.ClosingID) || !parseOptionalInt64Query(c, "sales_id", &params.SalesID) || !parseOptionalInt64Query(c, "supervisor_id", &params.SupervisorID) || !parseOptionalInt64Query(c, "plan_id", &params.PlanID) {
 		return ListParams{}, false
 	}
 	var err error

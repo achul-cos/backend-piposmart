@@ -481,6 +481,24 @@ func (r *Repository) SetEligibility(ctx context.Context, promotionID int64, plan
 	return tx.Commit()
 }
 
+func (r *Repository) EligiblePlans(ctx context.Context, promotionID int64) ([]Plan, error) {
+	rows, err := r.db.QueryContext(ctx, planSelect()+`
+		JOIN promotion_plan_eligibilities ppe ON ppe.plan_id = spl.id
+		WHERE ppe.promotion_id = ? AND spl.deleted_at IS NULL
+		ORDER BY spl.id ASC`,
+		promotionID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items, _, err := scanPlans(rows, 0)
+	if err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 func (r *Repository) EligiblePromotions(ctx context.Context, planID int64, asOf time.Time) ([]Promotion, error) {
 	rows, err := r.db.QueryContext(ctx, promotionSelect()+`
 		JOIN promotion_plan_eligibilities ppe ON ppe.promotion_id = p.id
@@ -589,7 +607,7 @@ func benefitSelect() string {
 }
 
 func packageWhere(params ListParams) (string, []any) {
-	where := []string{"sp.deleted_at IS NULL"}
+	where := []string{scopeCondition("sp.deleted_at", params.Scope)}
 	args := []any{}
 	if params.Query != "" {
 		pattern := like(params.Query)
@@ -604,7 +622,7 @@ func packageWhere(params ListParams) (string, []any) {
 }
 
 func planWhere(params ListParams) (string, []any) {
-	where := []string{"spl.deleted_at IS NULL", "sp.deleted_at IS NULL"}
+	where := []string{scopeCondition("spl.deleted_at", params.Scope), scopeCondition("sp.deleted_at", params.Scope)}
 	args := []any{}
 	if params.Query != "" {
 		pattern := like(params.Query)
@@ -627,7 +645,7 @@ func planWhere(params ListParams) (string, []any) {
 }
 
 func promotionWhere(params ListParams) (string, []any) {
-	where := []string{"p.deleted_at IS NULL"}
+	where := []string{scopeCondition("p.deleted_at", params.Scope)}
 	args := []any{}
 	if params.Query != "" {
 		pattern := like(params.Query)
@@ -647,6 +665,17 @@ func promotionWhere(params ListParams) (string, []any) {
 		args = append(args, *params.AsOf, *params.AsOf)
 	}
 	return strings.Join(where, " AND "), args
+}
+
+func scopeCondition(column, scope string) string {
+	switch scope {
+	case ScopeDeleted:
+		return column + " IS NOT NULL"
+	case ScopeAll:
+		return "1 = 1"
+	default:
+		return column + " IS NULL"
+	}
 }
 
 func packageOrderBy(sort string) (string, error) {

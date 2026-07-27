@@ -616,7 +616,7 @@ func (s *Service) CancelCommission(ctx context.Context, actor identity.User, com
 // calculation falls back to the legacy partner_types.commission_mode/value unchanged.
 // ADMIN/SUPERVISOR only — rule configuration directly controls partner payouts.
 func (s *Service) CreateCommissionRule(ctx context.Context, actor identity.User, partnerTypeID int64, req CreateCommissionRuleRequest) (*CommissionRuleResponse, error) {
-	if actor.RoleCode != RoleAdmin && actor.RoleCode != RoleSupervisor {
+	if actor.RoleCode != RoleAdmin {
 		return nil, ErrForbidden
 	}
 	if _, err := s.repo.GetPartnerTypeByID(ctx, partnerTypeID); err != nil {
@@ -710,7 +710,7 @@ func (s *Service) GetCommissionRule(ctx context.Context, ruleID int64) (*Commiss
 // DeactivateCommissionRule retires a rule (rules are superseded by creating a new one with
 // a later effective_from, never edited in place). ADMIN/SUPERVISOR only.
 func (s *Service) DeactivateCommissionRule(ctx context.Context, actor identity.User, ruleID int64) (*CommissionRuleResponse, error) {
-	if actor.RoleCode != RoleAdmin && actor.RoleCode != RoleSupervisor {
+	if actor.RoleCode != RoleAdmin {
 		return nil, ErrForbidden
 	}
 	if err := s.repo.DeactivateCommissionRule(ctx, ruleID); err != nil {

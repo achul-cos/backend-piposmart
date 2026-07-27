@@ -1,8 +1,8 @@
 openapi: 3.0.3
 info:
   title: Backend CRM Piposmart
-  version: 0.15.0-sprint-14
-  description: API CRM Piposmart dengan Partner Type, Partner (Encrypted & Masked Bank Account), PIC Assignment, Call Interactions, Lead Referrals, Subscription Order, Reconciliation Sprint 11, dan Partner Commission Sprint 12.
+  version: 0.15.1-sprint-14c
+  description: API CRM Piposmart dengan Partner Type, Partner (Encrypted & Masked Bank Account), PIC Assignment, Call Interactions, Lead Referrals, Subscription Order, Reconciliation Sprint 11, Partner Commission Sprint 12, serta penambahan route trash/unscoped owner-outlet dan rekap status langganan outlet Sprint 14b/14c.
 servers:
   - url: http://localhost:8080
 paths:
@@ -4147,6 +4147,564 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelope"
+  /api/v1/owners/trash:
+    get:
+      summary: List owner laundry yang soft deleted
+      operationId: listOwnersTrash
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/SearchQuery"
+        - $ref: "#/components/parameters/CodeQuery"
+        - $ref: "#/components/parameters/NameQuery"
+        - $ref: "#/components/parameters/PhoneQuery"
+        - $ref: "#/components/parameters/BrandNameQuery"
+        - $ref: "#/components/parameters/ProvinceQuery"
+        - $ref: "#/components/parameters/CityQuery"
+        - $ref: "#/components/parameters/PageQuery"
+        - $ref: "#/components/parameters/LimitQuery"
+        - name: sort
+          in: query
+          required: false
+          schema:
+            type: string
+            example: "-updated_at"
+      responses:
+        "200":
+          description: List owner dalam trash
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/owners/unscoped:
+    get:
+      summary: List semua owner laundry termasuk soft deleted
+      operationId: listOwnersUnscoped
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/SearchQuery"
+        - $ref: "#/components/parameters/CodeQuery"
+        - $ref: "#/components/parameters/NameQuery"
+        - $ref: "#/components/parameters/PhoneQuery"
+        - $ref: "#/components/parameters/BrandNameQuery"
+        - $ref: "#/components/parameters/ProvinceQuery"
+        - $ref: "#/components/parameters/CityQuery"
+        - $ref: "#/components/parameters/PageQuery"
+        - $ref: "#/components/parameters/LimitQuery"
+        - name: sort
+          in: query
+          required: false
+          schema:
+            type: string
+            example: "-updated_at"
+      responses:
+        "200":
+          description: List owner aktif + terhapus
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/owners/{owner_id}/outlets/trash:
+    get:
+      summary: List outlet owner yang soft deleted
+      operationId: listOwnerOutletsTrash
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OwnerID"
+        - $ref: "#/components/parameters/SearchQuery"
+        - $ref: "#/components/parameters/CodeQuery"
+        - $ref: "#/components/parameters/NameQuery"
+        - $ref: "#/components/parameters/PhoneQuery"
+        - $ref: "#/components/parameters/ProvinceQuery"
+        - $ref: "#/components/parameters/CityQuery"
+        - $ref: "#/components/parameters/PageQuery"
+        - $ref: "#/components/parameters/LimitQuery"
+        - name: sort
+          in: query
+          required: false
+          schema:
+            type: string
+            example: "-updated_at"
+      responses:
+        "200":
+          description: List outlet owner dalam trash
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/owners/{owner_id}/outlets/unscoped:
+    get:
+      summary: List semua outlet owner termasuk soft deleted
+      operationId: listOwnerOutletsUnscoped
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OwnerID"
+        - $ref: "#/components/parameters/SearchQuery"
+        - $ref: "#/components/parameters/CodeQuery"
+        - $ref: "#/components/parameters/NameQuery"
+        - $ref: "#/components/parameters/PhoneQuery"
+        - $ref: "#/components/parameters/ProvinceQuery"
+        - $ref: "#/components/parameters/CityQuery"
+        - $ref: "#/components/parameters/PageQuery"
+        - $ref: "#/components/parameters/LimitQuery"
+        - name: sort
+          in: query
+          required: false
+          schema:
+            type: string
+            example: "-updated_at"
+      responses:
+        "200":
+          description: List outlet owner aktif + terhapus
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/outlets:
+    get:
+      summary: List semua outlet global
+      operationId: listGlobalOutlets
+      description: Menampilkan semua outlet dalam cakupan actor, termasuk owner brief, wallet brief, dan ringkasan subscription terakhir.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/SearchQuery"
+        - $ref: "#/components/parameters/CodeQuery"
+        - $ref: "#/components/parameters/NameQuery"
+        - $ref: "#/components/parameters/PhoneQuery"
+        - $ref: "#/components/parameters/BrandNameQuery"
+        - $ref: "#/components/parameters/ProvinceQuery"
+        - $ref: "#/components/parameters/CityQuery"
+        - name: owner_id
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+        - name: subscription_status
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Filter berdasarkan nilai status record subscription yang overlap dengan subscription_month.
+        - name: subscription_month
+          in: query
+          required: false
+          schema:
+            type: string
+            example: "2026-07"
+          description: Bulan overlap subscription pada list outlet global dalam format YYYY-MM.
+        - $ref: "#/components/parameters/PageQuery"
+        - $ref: "#/components/parameters/LimitQuery"
+        - name: sort
+          in: query
+          required: false
+          schema:
+            type: string
+            example: "-created_at"
+      responses:
+        "200":
+          description: List outlet global
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/outlets/trash:
+    get:
+      summary: List outlet global yang soft deleted
+      operationId: listGlobalOutletsTrash
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/SearchQuery"
+        - $ref: "#/components/parameters/CodeQuery"
+        - $ref: "#/components/parameters/NameQuery"
+        - $ref: "#/components/parameters/PhoneQuery"
+        - $ref: "#/components/parameters/BrandNameQuery"
+        - $ref: "#/components/parameters/ProvinceQuery"
+        - $ref: "#/components/parameters/CityQuery"
+        - name: owner_id
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+        - $ref: "#/components/parameters/PageQuery"
+        - $ref: "#/components/parameters/LimitQuery"
+        - name: sort
+          in: query
+          required: false
+          schema:
+            type: string
+            example: "-updated_at"
+      responses:
+        "200":
+          description: List outlet global dalam trash
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/outlets/unscoped:
+    get:
+      summary: List semua outlet global termasuk soft deleted
+      operationId: listGlobalOutletsUnscoped
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/SearchQuery"
+        - $ref: "#/components/parameters/CodeQuery"
+        - $ref: "#/components/parameters/NameQuery"
+        - $ref: "#/components/parameters/PhoneQuery"
+        - $ref: "#/components/parameters/BrandNameQuery"
+        - $ref: "#/components/parameters/ProvinceQuery"
+        - $ref: "#/components/parameters/CityQuery"
+        - name: owner_id
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+        - $ref: "#/components/parameters/PageQuery"
+        - $ref: "#/components/parameters/LimitQuery"
+        - name: sort
+          in: query
+          required: false
+          schema:
+            type: string
+            example: "-updated_at"
+      responses:
+        "200":
+          description: List outlet global aktif + terhapus
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/outlets/subscription-statuses:
+    get:
+      summary: Rekap status langganan outlet per bulan
+      operationId: listOutletSubscriptionStatuses
+      description: Menampilkan seluruh outlet aktif dalam cakupan actor, termasuk outlet yang belum pernah subscribe. Status dihitung terhadap akhir bulan filter.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/SearchQuery"
+        - $ref: "#/components/parameters/CodeQuery"
+        - $ref: "#/components/parameters/NameQuery"
+        - $ref: "#/components/parameters/PhoneQuery"
+        - $ref: "#/components/parameters/BrandNameQuery"
+        - $ref: "#/components/parameters/ProvinceQuery"
+        - $ref: "#/components/parameters/CityQuery"
+        - name: owner_id
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+        - name: month
+          in: query
+          required: false
+          schema:
+            type: string
+            example: "2026-06"
+          description: Bulan referensi rekap dalam format YYYY-MM. Default menggunakan bulan UTC saat ini.
+        - name: subscription_status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [NOT_SUBSCRIBE, EXPIRED, JATUH_TEMPO, BERLANGGANAN, NEW]
+          description: Filter berdasarkan status rekap langganan outlet.
+        - $ref: "#/components/parameters/PageQuery"
+        - $ref: "#/components/parameters/LimitQuery"
+        - name: sort
+          in: query
+          required: false
+          schema:
+            type: string
+            example: "-subscription_end_date"
+          description: Field sorting yang didukung `created_at`, `updated_at`, `code`, `name`, `city`, `province`, `subscription_start_date`, `subscription_end_date`.
+      responses:
+        "200":
+          description: Rekap status langganan outlet per bulan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+        "400":
+          description: Format month tidak valid
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+  /api/v1/outlets/{outlet_id}:
+    get:
+      summary: Detail outlet global
+      operationId: getGlobalOutlet
+      description: Detail outlet dari tabel outlet global, lengkap dengan owner brief, wallet brief, dan ringkasan subscription.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OutletID"
+      responses:
+        "200":
+          description: Detail outlet global
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/catalog/packages/trash:
+    get:
+      summary: List subscription package yang soft deleted
+      operationId: listCatalogPackagesTrash
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/SearchQuery"
+        - name: active
+          in: query
+          schema:
+            type: boolean
+        - $ref: "#/components/parameters/PageQuery"
+        - $ref: "#/components/parameters/LimitQuery"
+      responses:
+        "200":
+          description: List package dalam trash
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/catalog/packages/unscoped:
+    get:
+      summary: List semua subscription package termasuk soft deleted
+      operationId: listCatalogPackagesUnscoped
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/SearchQuery"
+        - name: active
+          in: query
+          schema:
+            type: boolean
+        - $ref: "#/components/parameters/PageQuery"
+        - $ref: "#/components/parameters/LimitQuery"
+      responses:
+        "200":
+          description: List package aktif + terhapus
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/catalog/plans/trash:
+    get:
+      summary: List subscription plan yang soft deleted
+      operationId: listCatalogPlansTrash
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/SearchQuery"
+        - name: package_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: as_of
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: active
+          in: query
+          schema:
+            type: boolean
+        - $ref: "#/components/parameters/PageQuery"
+        - $ref: "#/components/parameters/LimitQuery"
+      responses:
+        "200":
+          description: List plan dalam trash
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/catalog/plans/unscoped:
+    get:
+      summary: List semua subscription plan termasuk soft deleted
+      operationId: listCatalogPlansUnscoped
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/SearchQuery"
+        - name: package_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: as_of
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: active
+          in: query
+          schema:
+            type: boolean
+        - $ref: "#/components/parameters/PageQuery"
+        - $ref: "#/components/parameters/LimitQuery"
+      responses:
+        "200":
+          description: List plan aktif + terhapus
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/catalog/promotions/trash:
+    get:
+      summary: List promotion yang soft deleted
+      operationId: listCatalogPromotionsTrash
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/SearchQuery"
+        - name: charge_type
+          in: query
+          schema:
+            type: string
+            enum: [FREE, PAID]
+        - name: as_of
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: active
+          in: query
+          schema:
+            type: boolean
+        - $ref: "#/components/parameters/PageQuery"
+        - $ref: "#/components/parameters/LimitQuery"
+      responses:
+        "200":
+          description: List promotion dalam trash
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/catalog/promotions/unscoped:
+    get:
+      summary: List semua promotion termasuk soft deleted
+      operationId: listCatalogPromotionsUnscoped
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/SearchQuery"
+        - name: charge_type
+          in: query
+          schema:
+            type: string
+            enum: [FREE, PAID]
+        - name: as_of
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: active
+          in: query
+          schema:
+            type: boolean
+        - $ref: "#/components/parameters/PageQuery"
+        - $ref: "#/components/parameters/LimitQuery"
+      responses:
+        "200":
+          description: List promotion aktif + terhapus
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/closings/trash:
+    get:
+      summary: List closing yang soft deleted
+      operationId: listSalesClosingsTrash
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/SearchQuery"
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [PENDING_RECONCILIATION, CONFIRMED, REJECTED]
+        - name: sales_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: supervisor_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: closed_from
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: closed_to
+          in: query
+          schema:
+            type: string
+            format: date
+        - $ref: "#/components/parameters/PageQuery"
+        - $ref: "#/components/parameters/LimitQuery"
+      responses:
+        "200":
+          description: List closing dalam trash
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/closings/unscoped:
+    get:
+      summary: List semua closing termasuk soft deleted
+      operationId: listSalesClosingsUnscoped
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/SearchQuery"
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [PENDING_RECONCILIATION, CONFIRMED, REJECTED]
+        - name: sales_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: supervisor_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: closed_from
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: closed_to
+          in: query
+          schema:
+            type: string
+            format: date
+        - $ref: "#/components/parameters/PageQuery"
+        - $ref: "#/components/parameters/LimitQuery"
+      responses:
+        "200":
+          description: List closing aktif + terhapus
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
 components:
   securitySchemes:
     bearerAuth:

@@ -258,6 +258,7 @@ type ListParams struct {
 	Query         string
 	Status        string
 	OwnerID       *int64
+	OutletID      *int64
 	OrderID       *int64
 	ClosingID     *int64
 	SalesID       *int64

@@ -297,6 +297,14 @@ func (s *Service) SetEligibility(ctx context.Context, actor identity.User, promo
 	return s.GetPromotion(ctx, promotionID)
 }
 
+func (s *Service) EligiblePlans(ctx context.Context, promotionID int64) (EligiblePlanResponse, error) {
+	items, err := s.repo.EligiblePlans(ctx, promotionID)
+	if err != nil {
+		return EligiblePlanResponse{}, err
+	}
+	return EligiblePlanResponse{Items: planResponses(items)}, nil
+}
+
 func (s *Service) EligiblePromotions(ctx context.Context, planID int64, asOf *time.Time) (EligiblePromotionResponse, error) {
 	date := time.Now().UTC()
 	if asOf != nil {
@@ -411,12 +419,24 @@ func normalizeListParams(params ListParams) ListParams {
 	}
 	params.Query = strings.TrimSpace(params.Query)
 	params.ChargeType = normalizeCode(params.ChargeType)
+	params.Scope = normalizeScope(params.Scope)
 	params.Sort = strings.TrimSpace(params.Sort)
 	return params
 }
 
+func normalizeScope(scope string) string {
+	switch strings.ToUpper(strings.TrimSpace(scope)) {
+	case ScopeDeleted:
+		return ScopeDeleted
+	case ScopeAll:
+		return ScopeAll
+	default:
+		return ScopeActive
+	}
+}
+
 func canManageCatalog(actor identity.User) bool {
-	return actor.RoleCode == RoleAdmin || actor.RoleCode == RoleSupervisor
+	return actor.RoleCode == RoleAdmin
 }
 
 func packageResponses(items []Package) []PackageResponse {

@@ -1,6 +1,9 @@
 package kpi
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestClassify(t *testing.T) {
 	cases := []struct {
@@ -65,5 +68,18 @@ func TestSupportedMetricQuery(t *testing.T) {
 	}
 	if _, ok := supportedMetricQuery("UNKNOWN_METRIC"); ok {
 		t.Fatal("unknown metric must not be supported")
+	}
+}
+
+func TestConfirmedClosingAmountQueryExcludesUniqueTransferCode(t *testing.T) {
+	query, ok := supportedMetricQuery("CONFIRMED_CLOSING_AMOUNT")
+	if !ok {
+		t.Fatal("CONFIRMED_CLOSING_AMOUNT harus didukung")
+	}
+	if !strings.Contains(query, "SUM(base_price - discount_amount + additional_charge)") {
+		t.Fatalf("query harus menghitung omzet tanpa unique_transfer_code, got: %s", query)
+	}
+	if strings.Contains(query, "SUM(final_amount)") {
+		t.Fatalf("query tidak boleh lagi memakai final_amount, got: %s", query)
 	}
 }

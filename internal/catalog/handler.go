@@ -26,10 +26,13 @@ func (h *Handler) RegisterRoutes(api *gin.RouterGroup) {
 
 	packages := catalog.Group("/packages")
 	packages.GET("", h.listPackages)
+	packages.GET("/trash", h.listPackagesTrash)
+	packages.GET("/unscoped", h.listPackagesUnscoped)
 	packages.POST("", h.createPackage)
 	packages.DELETE("/bulk", h.bulkDeletePackages)
 	packages.PATCH("/bulk/restore", h.bulkRestorePackages)
 	packages.DELETE("/bulk/force", h.bulkForceDeletePackages)
+	packages.GET("/:package_id/histories", h.listPackageHistories)
 	packages.GET("/:package_id", h.getPackage)
 	packages.PATCH("/:package_id", h.updatePackage)
 	packages.DELETE("/:package_id", h.deletePackage)
@@ -38,10 +41,13 @@ func (h *Handler) RegisterRoutes(api *gin.RouterGroup) {
 
 	plans := catalog.Group("/plans")
 	plans.GET("", h.listPlans)
+	plans.GET("/trash", h.listPlansTrash)
+	plans.GET("/unscoped", h.listPlansUnscoped)
 	plans.POST("", h.createPlan)
 	plans.DELETE("/bulk", h.bulkDeletePlans)
 	plans.PATCH("/bulk/restore", h.bulkRestorePlans)
 	plans.DELETE("/bulk/force", h.bulkForceDeletePlans)
+	plans.GET("/:plan_id/histories", h.listPlanHistories)
 	plans.GET("/:plan_id", h.getPlan)
 	plans.PATCH("/:plan_id", h.updatePlan)
 	plans.DELETE("/:plan_id", h.deletePlan)
@@ -51,10 +57,13 @@ func (h *Handler) RegisterRoutes(api *gin.RouterGroup) {
 
 	promotions := catalog.Group("/promotions")
 	promotions.GET("", h.listPromotions)
+	promotions.GET("/trash", h.listPromotionsTrash)
+	promotions.GET("/unscoped", h.listPromotionsUnscoped)
 	promotions.POST("", h.createPromotion)
 	promotions.DELETE("/bulk", h.bulkDeletePromotions)
 	promotions.PATCH("/bulk/restore", h.bulkRestorePromotions)
 	promotions.DELETE("/bulk/force", h.bulkForceDeletePromotions)
+	promotions.GET("/:promotion_id/histories", h.listPromotionHistories)
 	promotions.GET("/:promotion_id", h.getPromotion)
 	promotions.PATCH("/:promotion_id", h.updatePromotion)
 	promotions.DELETE("/:promotion_id", h.deletePromotion)
@@ -63,14 +72,28 @@ func (h *Handler) RegisterRoutes(api *gin.RouterGroup) {
 	promotions.GET("/:promotion_id/benefits", h.listBenefits)
 	promotions.POST("/:promotion_id/benefits", h.createBenefit)
 	promotions.DELETE("/:promotion_id/benefits/:benefit_id", h.deleteBenefit)
+	promotions.GET("/:promotion_id/eligible-plans", h.eligiblePlans)
 	promotions.PUT("/:promotion_id/eligible-plans", h.setEligibility)
 }
 
 func (h *Handler) listPackages(c *gin.Context) {
+	h.listPackagesWithScope(c, ScopeActive)
+}
+
+func (h *Handler) listPackagesTrash(c *gin.Context) {
+	h.listPackagesWithScope(c, ScopeDeleted)
+}
+
+func (h *Handler) listPackagesUnscoped(c *gin.Context) {
+	h.listPackagesWithScope(c, ScopeAll)
+}
+
+func (h *Handler) listPackagesWithScope(c *gin.Context, scope string) {
 	params, ok := listParams(c)
 	if !ok {
 		return
 	}
+	params.Scope = scope
 	response, err := h.service.ListPackages(c.Request.Context(), params)
 	writeResult(c, http.StatusOK, response, err)
 }
@@ -81,8 +104,17 @@ func (h *Handler) createPackage(c *gin.Context) {
 	if !bindJSON(c, &req) {
 		return
 	}
-	response, err := h.service.CreatePackage(c.Request.Context(), user, req)
+	response, err := h.service.CreatePackageWithMeta(c.Request.Context(), user, req, requestMeta(c))
 	writeResult(c, http.StatusCreated, response, err)
+}
+
+func (h *Handler) listPackageHistories(c *gin.Context) {
+	id, ok := parseID(c, "package_id")
+	if !ok {
+		return
+	}
+	response, err := h.service.ListPackageHistories(c.Request.Context(), id)
+	writeResult(c, http.StatusOK, response, err)
 }
 
 func (h *Handler) getPackage(c *gin.Context) {
@@ -104,39 +136,64 @@ func (h *Handler) updatePackage(c *gin.Context) {
 	if !bindJSON(c, &req) {
 		return
 	}
-	response, err := h.service.UpdatePackage(c.Request.Context(), user, id, req)
+	response, err := h.service.UpdatePackageWithMeta(c.Request.Context(), user, id, req, requestMeta(c))
 	writeResult(c, http.StatusOK, response, err)
 }
 
 func (h *Handler) deletePackage(c *gin.Context) {
-	h.packageBulkAction(c, []int64FromParam{{Name: "package_id"}}, h.service.DeletePackages)
+	h.packageBulkAction(c, []int64FromParam{{Name: "package_id"}}, func(ctx context.Context, user identity.User, ids []int64) (BulkActionResponse, error) {
+		return h.service.DeletePackagesWithMeta(ctx, user, ids, requestMeta(c))
+	})
 }
 
 func (h *Handler) restorePackage(c *gin.Context) {
-	h.packageBulkAction(c, []int64FromParam{{Name: "package_id"}}, h.service.RestorePackages)
+	h.packageBulkAction(c, []int64FromParam{{Name: "package_id"}}, func(ctx context.Context, user identity.User, ids []int64) (BulkActionResponse, error) {
+		return h.service.RestorePackagesWithMeta(ctx, user, ids, requestMeta(c))
+	})
 }
 
 func (h *Handler) forceDeletePackage(c *gin.Context) {
-	h.packageBulkAction(c, []int64FromParam{{Name: "package_id"}}, h.service.ForceDeletePackages)
+	h.packageBulkAction(c, []int64FromParam{{Name: "package_id"}}, func(ctx context.Context, user identity.User, ids []int64) (BulkActionResponse, error) {
+		return h.service.ForceDeletePackagesWithMeta(ctx, user, ids, requestMeta(c))
+	})
 }
 
 func (h *Handler) bulkDeletePackages(c *gin.Context) {
-	h.packageBulkFromBody(c, h.service.DeletePackages)
+	h.packageBulkFromBody(c, func(ctx context.Context, user identity.User, ids []int64) (BulkActionResponse, error) {
+		return h.service.DeletePackagesWithMeta(ctx, user, ids, requestMeta(c))
+	})
 }
 
 func (h *Handler) bulkRestorePackages(c *gin.Context) {
-	h.packageBulkFromBody(c, h.service.RestorePackages)
+	h.packageBulkFromBody(c, func(ctx context.Context, user identity.User, ids []int64) (BulkActionResponse, error) {
+		return h.service.RestorePackagesWithMeta(ctx, user, ids, requestMeta(c))
+	})
 }
 
 func (h *Handler) bulkForceDeletePackages(c *gin.Context) {
-	h.packageBulkFromBody(c, h.service.ForceDeletePackages)
+	h.packageBulkFromBody(c, func(ctx context.Context, user identity.User, ids []int64) (BulkActionResponse, error) {
+		return h.service.ForceDeletePackagesWithMeta(ctx, user, ids, requestMeta(c))
+	})
 }
 
 func (h *Handler) listPlans(c *gin.Context) {
+	h.listPlansWithScope(c, ScopeActive)
+}
+
+func (h *Handler) listPlansTrash(c *gin.Context) {
+	h.listPlansWithScope(c, ScopeDeleted)
+}
+
+func (h *Handler) listPlansUnscoped(c *gin.Context) {
+	h.listPlansWithScope(c, ScopeAll)
+}
+
+func (h *Handler) listPlansWithScope(c *gin.Context, scope string) {
 	params, ok := listParams(c)
 	if !ok {
 		return
 	}
+	params.Scope = scope
 	if !optionalInt64(c, "package_id", &params.PackageID) {
 		return
 	}
@@ -150,8 +207,17 @@ func (h *Handler) createPlan(c *gin.Context) {
 	if !bindJSON(c, &req) {
 		return
 	}
-	response, err := h.service.CreatePlan(c.Request.Context(), user, req)
+	response, err := h.service.CreatePlanWithMeta(c.Request.Context(), user, req, requestMeta(c))
 	writeResult(c, http.StatusCreated, response, err)
+}
+
+func (h *Handler) listPlanHistories(c *gin.Context) {
+	id, ok := parseID(c, "plan_id")
+	if !ok {
+		return
+	}
+	response, err := h.service.ListPlanHistories(c.Request.Context(), id)
+	writeResult(c, http.StatusOK, response, err)
 }
 
 func (h *Handler) getPlan(c *gin.Context) {
@@ -173,32 +239,44 @@ func (h *Handler) updatePlan(c *gin.Context) {
 	if !bindJSON(c, &req) {
 		return
 	}
-	response, err := h.service.UpdatePlan(c.Request.Context(), user, id, req)
+	response, err := h.service.UpdatePlanWithMeta(c.Request.Context(), user, id, req, requestMeta(c))
 	writeResult(c, http.StatusOK, response, err)
 }
 
 func (h *Handler) deletePlan(c *gin.Context) {
-	h.planBulkAction(c, []int64FromParam{{Name: "plan_id"}}, h.service.DeletePlans)
+	h.planBulkAction(c, []int64FromParam{{Name: "plan_id"}}, func(ctx context.Context, user identity.User, ids []int64) (BulkActionResponse, error) {
+		return h.service.DeletePlansWithMeta(ctx, user, ids, requestMeta(c))
+	})
 }
 
 func (h *Handler) restorePlan(c *gin.Context) {
-	h.planBulkAction(c, []int64FromParam{{Name: "plan_id"}}, h.service.RestorePlans)
+	h.planBulkAction(c, []int64FromParam{{Name: "plan_id"}}, func(ctx context.Context, user identity.User, ids []int64) (BulkActionResponse, error) {
+		return h.service.RestorePlansWithMeta(ctx, user, ids, requestMeta(c))
+	})
 }
 
 func (h *Handler) forceDeletePlan(c *gin.Context) {
-	h.planBulkAction(c, []int64FromParam{{Name: "plan_id"}}, h.service.ForceDeletePlans)
+	h.planBulkAction(c, []int64FromParam{{Name: "plan_id"}}, func(ctx context.Context, user identity.User, ids []int64) (BulkActionResponse, error) {
+		return h.service.ForceDeletePlansWithMeta(ctx, user, ids, requestMeta(c))
+	})
 }
 
 func (h *Handler) bulkDeletePlans(c *gin.Context) {
-	h.planBulkFromBody(c, h.service.DeletePlans)
+	h.planBulkFromBody(c, func(ctx context.Context, user identity.User, ids []int64) (BulkActionResponse, error) {
+		return h.service.DeletePlansWithMeta(ctx, user, ids, requestMeta(c))
+	})
 }
 
 func (h *Handler) bulkRestorePlans(c *gin.Context) {
-	h.planBulkFromBody(c, h.service.RestorePlans)
+	h.planBulkFromBody(c, func(ctx context.Context, user identity.User, ids []int64) (BulkActionResponse, error) {
+		return h.service.RestorePlansWithMeta(ctx, user, ids, requestMeta(c))
+	})
 }
 
 func (h *Handler) bulkForceDeletePlans(c *gin.Context) {
-	h.planBulkFromBody(c, h.service.ForceDeletePlans)
+	h.planBulkFromBody(c, func(ctx context.Context, user identity.User, ids []int64) (BulkActionResponse, error) {
+		return h.service.ForceDeletePlansWithMeta(ctx, user, ids, requestMeta(c))
+	})
 }
 
 func (h *Handler) eligiblePromotions(c *gin.Context) {
@@ -215,10 +293,23 @@ func (h *Handler) eligiblePromotions(c *gin.Context) {
 }
 
 func (h *Handler) listPromotions(c *gin.Context) {
+	h.listPromotionsWithScope(c, ScopeActive)
+}
+
+func (h *Handler) listPromotionsTrash(c *gin.Context) {
+	h.listPromotionsWithScope(c, ScopeDeleted)
+}
+
+func (h *Handler) listPromotionsUnscoped(c *gin.Context) {
+	h.listPromotionsWithScope(c, ScopeAll)
+}
+
+func (h *Handler) listPromotionsWithScope(c *gin.Context, scope string) {
 	params, ok := listParams(c)
 	if !ok {
 		return
 	}
+	params.Scope = scope
 	params.ChargeType = c.Query("charge_type")
 	response, err := h.service.ListPromotions(c.Request.Context(), params)
 	writeResult(c, http.StatusOK, response, err)
@@ -230,8 +321,17 @@ func (h *Handler) createPromotion(c *gin.Context) {
 	if !bindJSON(c, &req) {
 		return
 	}
-	response, err := h.service.CreatePromotion(c.Request.Context(), user, req)
+	response, err := h.service.CreatePromotionWithMeta(c.Request.Context(), user, req, requestMeta(c))
 	writeResult(c, http.StatusCreated, response, err)
+}
+
+func (h *Handler) listPromotionHistories(c *gin.Context) {
+	id, ok := parseID(c, "promotion_id")
+	if !ok {
+		return
+	}
+	response, err := h.service.ListPromotionHistories(c.Request.Context(), id)
+	writeResult(c, http.StatusOK, response, err)
 }
 
 func (h *Handler) getPromotion(c *gin.Context) {
@@ -253,32 +353,44 @@ func (h *Handler) updatePromotion(c *gin.Context) {
 	if !bindJSON(c, &req) {
 		return
 	}
-	response, err := h.service.UpdatePromotion(c.Request.Context(), user, id, req)
+	response, err := h.service.UpdatePromotionWithMeta(c.Request.Context(), user, id, req, requestMeta(c))
 	writeResult(c, http.StatusOK, response, err)
 }
 
 func (h *Handler) deletePromotion(c *gin.Context) {
-	h.promotionBulkAction(c, []int64FromParam{{Name: "promotion_id"}}, h.service.DeletePromotions)
+	h.promotionBulkAction(c, []int64FromParam{{Name: "promotion_id"}}, func(ctx context.Context, user identity.User, ids []int64) (BulkActionResponse, error) {
+		return h.service.DeletePromotionsWithMeta(ctx, user, ids, requestMeta(c))
+	})
 }
 
 func (h *Handler) restorePromotion(c *gin.Context) {
-	h.promotionBulkAction(c, []int64FromParam{{Name: "promotion_id"}}, h.service.RestorePromotions)
+	h.promotionBulkAction(c, []int64FromParam{{Name: "promotion_id"}}, func(ctx context.Context, user identity.User, ids []int64) (BulkActionResponse, error) {
+		return h.service.RestorePromotionsWithMeta(ctx, user, ids, requestMeta(c))
+	})
 }
 
 func (h *Handler) forceDeletePromotion(c *gin.Context) {
-	h.promotionBulkAction(c, []int64FromParam{{Name: "promotion_id"}}, h.service.ForceDeletePromotions)
+	h.promotionBulkAction(c, []int64FromParam{{Name: "promotion_id"}}, func(ctx context.Context, user identity.User, ids []int64) (BulkActionResponse, error) {
+		return h.service.ForceDeletePromotionsWithMeta(ctx, user, ids, requestMeta(c))
+	})
 }
 
 func (h *Handler) bulkDeletePromotions(c *gin.Context) {
-	h.promotionBulkFromBody(c, h.service.DeletePromotions)
+	h.promotionBulkFromBody(c, func(ctx context.Context, user identity.User, ids []int64) (BulkActionResponse, error) {
+		return h.service.DeletePromotionsWithMeta(ctx, user, ids, requestMeta(c))
+	})
 }
 
 func (h *Handler) bulkRestorePromotions(c *gin.Context) {
-	h.promotionBulkFromBody(c, h.service.RestorePromotions)
+	h.promotionBulkFromBody(c, func(ctx context.Context, user identity.User, ids []int64) (BulkActionResponse, error) {
+		return h.service.RestorePromotionsWithMeta(ctx, user, ids, requestMeta(c))
+	})
 }
 
 func (h *Handler) bulkForceDeletePromotions(c *gin.Context) {
-	h.promotionBulkFromBody(c, h.service.ForceDeletePromotions)
+	h.promotionBulkFromBody(c, func(ctx context.Context, user identity.User, ids []int64) (BulkActionResponse, error) {
+		return h.service.ForceDeletePromotionsWithMeta(ctx, user, ids, requestMeta(c))
+	})
 }
 
 func (h *Handler) listBenefits(c *gin.Context) {
@@ -300,7 +412,7 @@ func (h *Handler) createBenefit(c *gin.Context) {
 	if !bindJSON(c, &req) {
 		return
 	}
-	response, err := h.service.CreateBenefit(c.Request.Context(), user, id, req)
+	response, err := h.service.CreateBenefitWithMeta(c.Request.Context(), user, id, req, requestMeta(c))
 	writeResult(c, http.StatusCreated, response, err)
 }
 
@@ -314,7 +426,16 @@ func (h *Handler) deleteBenefit(c *gin.Context) {
 	if !ok {
 		return
 	}
-	response, err := h.service.DeleteBenefit(c.Request.Context(), user, promotionID, benefitID)
+	response, err := h.service.DeleteBenefitWithMeta(c.Request.Context(), user, promotionID, benefitID, requestMeta(c))
+	writeResult(c, http.StatusOK, response, err)
+}
+
+func (h *Handler) eligiblePlans(c *gin.Context) {
+	id, ok := parseID(c, "promotion_id")
+	if !ok {
+		return
+	}
+	response, err := h.service.EligiblePlans(c.Request.Context(), id)
 	writeResult(c, http.StatusOK, response, err)
 }
 
@@ -328,7 +449,7 @@ func (h *Handler) setEligibility(c *gin.Context) {
 	if !bindJSON(c, &req) {
 		return
 	}
-	response, err := h.service.SetEligibility(c.Request.Context(), user, id, req)
+	response, err := h.service.SetEligibilityWithMeta(c.Request.Context(), user, id, req, requestMeta(c))
 	writeResult(c, http.StatusOK, response, err)
 }
 
@@ -457,6 +578,14 @@ func bindJSON(c *gin.Context, target any) bool {
 		return false
 	}
 	return true
+}
+
+func requestMeta(c *gin.Context) RequestMeta {
+	return RequestMeta{
+		IPAddress: c.ClientIP(),
+		UserAgent: c.Request.UserAgent(),
+		RequestID: httpx.RequestID(c),
+	}
 }
 
 func writeResult(c *gin.Context, status int, data any, err error) {

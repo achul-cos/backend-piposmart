@@ -12,6 +12,10 @@ const (
 
 	ChargeFree = "FREE"
 	ChargePaid = "PAID"
+
+	ScopeActive  = "ACTIVE"
+	ScopeDeleted = "DELETED"
+	ScopeAll     = "ALL"
 )
 
 type Package struct {
@@ -162,6 +166,10 @@ type EligiblePromotionResponse struct {
 	Recommended *PromotionResponse  `json:"recommended_promotion,omitempty"`
 }
 
+type EligiblePlanResponse struct {
+	Items []PlanResponse `json:"items"`
+}
+
 type BulkActionResponse struct {
 	IDs      []int64 `json:"ids"`
 	Affected int64   `json:"affected"`
@@ -255,6 +263,7 @@ type ListParams struct {
 	PackageID  *int64
 	Active     *bool
 	ChargeType string
+	Scope      string
 	AsOf       *time.Time
 	Page       int
 	Limit      int

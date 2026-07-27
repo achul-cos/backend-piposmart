@@ -394,7 +394,14 @@ func (r *Repository) findOutletByID(ctx context.Context, q queryExecutor, ownerI
 }
 
 func (r *Repository) ListOutlets(ctx context.Context, actor Actor, ownerID int64, params ListParams) ([]Outlet, int64, error) {
-	if _, err := r.FindOwnerByID(ctx, actor, ownerID); err != nil {
+	includeDeletedOwner := params.Scope != ScopeActive
+	var err error
+	if actor.RoleCode == RoleAdmin {
+		_, err = r.findOwnerByID(ctx, r.db, ownerID, includeDeletedOwner)
+	} else {
+		_, err = r.findOwnerByIDVisible(ctx, r.db, actor, ownerID, includeDeletedOwner)
+	}
+	if err != nil {
 		return nil, 0, err
 	}
 	where, args := outletWhere(ownerID, params)
@@ -432,6 +439,47 @@ func (r *Repository) ListOutlets(ctx context.Context, actor Actor, ownerID int64
 		return nil, 0, err
 	}
 	return outlets, total, nil
+}
+
+func (r *Repository) ListGlobalOutlets(ctx context.Context, actor Actor, params ListParams) ([]OutletOverview, int64, error) {
+	where, args := globalOutletWhere(actor, params)
+	var total int64
+	if err := r.db.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM outlets ot
+		LEFT JOIN owners o ON o.id = ot.owner_id
+		WHERE `+where, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	orderBy, err := outletOrderBy(params.Sort)
+	if err != nil {
+		return nil, 0, err
+	}
+	offset := (params.Page - 1) * params.Limit
+	args = append(args, params.Limit, offset)
+	rows, err := r.db.QueryContext(ctx, outletOverviewSelect()+`
+		WHERE `+where+`
+		ORDER BY `+orderBy+`
+		LIMIT ? OFFSET ?`, args...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	return scanOutletOverviews(rows, total)
+}
+
+func (r *Repository) FindGlobalOutletByID(ctx context.Context, actor Actor, outletID int64) (OutletOverview, error) {
+	params := ListParams{Scope: ScopeActive}
+	where, args := globalOutletWhere(actor, params)
+	args = append([]any{outletID}, args...)
+	item, err := scanOutletOverview(r.db.QueryRowContext(ctx, outletOverviewSelect()+`
+		WHERE ot.id = ? AND `+where+`
+		LIMIT 1`, args...))
+	if err == sql.ErrNoRows {
+		return OutletOverview{}, ErrNotFound
+	}
+	return item, err
 }
 
 func (r *Repository) UpdateOutlet(ctx context.Context, ownerID, outletID int64, req UpdateOutletRequest, normalizedPhone *string) (Outlet, error) {
@@ -637,8 +685,58 @@ func scanOutlet(row scanner) (Outlet, error) {
 	return outlet, err
 }
 
+func scanOutletOverviews(rows *sql.Rows, total int64) ([]OutletOverview, int64, error) {
+	items := []OutletOverview{}
+	for rows.Next() {
+		item, err := scanOutletOverview(rows)
+		if err != nil {
+			return nil, 0, err
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	return items, total, nil
+}
+
+func scanOutletOverview(row scanner) (OutletOverview, error) {
+	var item OutletOverview
+	err := row.Scan(
+		&item.ID,
+		&item.OwnerID,
+		&item.OwnerCode,
+		&item.OwnerName,
+		&item.OwnerPhone,
+		&item.OwnerEmail,
+		&item.OwnerBrandName,
+		&item.AccountCode,
+		&item.WalletID,
+		&item.WalletBalance,
+		&item.WalletLedgerBalance,
+		&item.WalletStatus,
+		&item.WalletCreatedAt,
+		&item.WalletUpdatedAt,
+		&item.Code,
+		&item.Name,
+		&item.Phone,
+		&item.Province,
+		&item.City,
+		&item.Address,
+		&item.Status,
+		&item.SubscriptionCount,
+		&item.ActiveSubscriptionCount,
+		&item.LatestSubscriptionStatus,
+		&item.LatestSubscriptionStart,
+		&item.LatestSubscriptionUntil,
+		&item.CreatedAt,
+		&item.UpdatedAt,
+	)
+	return item, err
+}
+
 func ownerWhere(actor Actor, params ListParams) (string, []any) {
-	where := []string{"o.deleted_at IS NULL"}
+	where := []string{scopeCondition("o.deleted_at", params.Scope)}
 	var args []any
 	visibility, visibilityArgs := ownerVisibilityWhere(actor)
 	where = append(where, visibility)
@@ -676,6 +774,10 @@ func ownerWhere(actor Actor, params ListParams) (string, []any) {
 }
 
 func ownerVisibilityWhere(actor Actor) (string, []any) {
+	return ownerVisibilityWhereByColumn(actor, "o.id")
+}
+
+func ownerVisibilityWhereByColumn(actor Actor, ownerColumn string) (string, []any) {
 	switch actor.RoleCode {
 	case RoleAdmin:
 		return "1 = 1", nil
@@ -683,7 +785,7 @@ func ownerVisibilityWhere(actor Actor) (string, []any) {
 		return `EXISTS (
 			SELECT 1
 			FROM customer_leads cl
-			WHERE cl.owner_id = o.id
+			WHERE cl.owner_id = ` + ownerColumn + `
 				AND cl.deleted_at IS NULL
 				AND (cl.current_owner_user_id = ? OR cl.supervisor_id = ?)
 		)`, []any{actor.ID, actor.ID}
@@ -691,7 +793,7 @@ func ownerVisibilityWhere(actor Actor) (string, []any) {
 		return `EXISTS (
 			SELECT 1
 			FROM customer_leads cl
-			WHERE cl.owner_id = o.id
+			WHERE cl.owner_id = ` + ownerColumn + `
 				AND cl.deleted_at IS NULL
 				AND cl.current_owner_role = 'SALES'
 				AND cl.current_owner_user_id = ?
@@ -702,7 +804,7 @@ func ownerVisibilityWhere(actor Actor) (string, []any) {
 }
 
 func outletWhere(ownerID int64, params ListParams) (string, []any) {
-	where := []string{"ot.owner_id = ?", "ot.deleted_at IS NULL"}
+	where := []string{"ot.owner_id = ?", scopeCondition("ot.deleted_at", params.Scope)}
 	args := []any{ownerID}
 	if params.Query != "" {
 		pattern := like(params.Query)
@@ -730,6 +832,140 @@ func outletWhere(ownerID int64, params ListParams) (string, []any) {
 		args = append(args, like(params.City))
 	}
 	return strings.Join(where, " AND "), args
+}
+
+func globalOutletWhere(actor Actor, params ListParams) (string, []any) {
+	where := []string{scopeCondition("ot.deleted_at", params.Scope)}
+	args := []any{}
+	visibility, visibilityArgs := ownerVisibilityWhereByColumn(actor, "ot.owner_id")
+	where = append(where, visibility)
+	args = append(args, visibilityArgs...)
+	if params.Query != "" {
+		pattern := like(params.Query)
+		where = append(where, "(ot.code LIKE ? OR ot.name LIKE ? OR ot.phone LIKE ? OR ot.city LIKE ? OR ot.province LIKE ? OR o.code LIKE ? OR o.name LIKE ? OR o.brand_name LIKE ?)")
+		args = append(args, pattern, pattern, pattern, pattern, pattern, pattern, pattern, pattern)
+	}
+	if params.OwnerID != nil {
+		where = append(where, "ot.owner_id = ?")
+		args = append(args, *params.OwnerID)
+	}
+	if params.Code != "" {
+		where = append(where, "ot.code LIKE ?")
+		args = append(args, like(params.Code))
+	}
+	if params.Name != "" {
+		where = append(where, "ot.name LIKE ?")
+		args = append(args, like(params.Name))
+	}
+	if params.Phone != "" {
+		where = append(where, "ot.phone LIKE ?")
+		args = append(args, like(params.Phone))
+	}
+	if params.BrandName != "" {
+		where = append(where, "o.brand_name LIKE ?")
+		args = append(args, like(params.BrandName))
+	}
+	if params.Province != "" {
+		where = append(where, "ot.province LIKE ?")
+		args = append(args, like(params.Province))
+	}
+	if params.City != "" {
+		where = append(where, "ot.city LIKE ?")
+		args = append(args, like(params.City))
+	}
+	if params.SubscriptionStatus != "" || params.SubscriptionMonth != "" {
+		subQuery := []string{"s.outlet_id = ot.id", "s.deleted_at IS NULL"}
+		subArgs := []any{}
+		if params.SubscriptionStatus != "" {
+			subQuery = append(subQuery, "s.status = ?")
+			subArgs = append(subArgs, params.SubscriptionStatus)
+		}
+		if params.SubscriptionMonth != "" {
+			subQuery = append(subQuery, "STR_TO_DATE(CONCAT(?, '-01'), '%Y-%m-%d') <= s.active_until")
+			subQuery = append(subQuery, "LAST_DAY(STR_TO_DATE(CONCAT(?, '-01'), '%Y-%m-%d')) >= s.active_from")
+			subArgs = append(subArgs, params.SubscriptionMonth, params.SubscriptionMonth)
+		}
+		where = append(where, "EXISTS (SELECT 1 FROM subscriptions s WHERE "+strings.Join(subQuery, " AND ")+")")
+		args = append(args, subArgs...)
+	}
+	return strings.Join(where, " AND "), args
+}
+
+func scopeCondition(column, scope string) string {
+	switch scope {
+	case ScopeDeleted:
+		return column + " IS NOT NULL"
+	case ScopeAll:
+		return "1 = 1"
+	default:
+		return column + " IS NULL"
+	}
+}
+
+func outletOverviewSelect() string {
+	return `
+		SELECT
+			ot.id,
+			ot.owner_id,
+			o.code,
+			o.name,
+			o.phone,
+			o.email,
+			o.brand_name,
+			COALESCE(wa.account_code, CONCAT('WALLET-OWNER-', LPAD(COALESCE(ot.owner_id, 0), 6, '0'))) AS account_code,
+			COALESCE(wa.id, 0) AS wallet_id,
+			COALESCE(CAST(wa.balance AS CHAR), '0.00') AS wallet_balance,
+			COALESCE(CAST((
+				SELECT COALESCE(SUM(CASE WHEN wt.direction = 'CREDIT' THEN wt.amount ELSE -wt.amount END), 0)
+				FROM wallet_transactions wt
+				WHERE wt.wallet_account_id = wa.id AND wt.deleted_at IS NULL
+			) AS CHAR), '0.00') AS wallet_ledger_balance,
+			COALESCE(wa.status, CASE WHEN ot.owner_id IS NULL THEN 'UNAVAILABLE' ELSE 'ACTIVE' END) AS wallet_status,
+			COALESCE(wa.created_at, o.created_at, ot.created_at) AS wallet_created_at,
+			COALESCE(wa.updated_at, o.updated_at, ot.updated_at) AS wallet_updated_at,
+			ot.code,
+			ot.name,
+			ot.phone,
+			ot.province,
+			ot.city,
+			ot.address,
+			ot.status,
+			(
+				SELECT COUNT(*)
+				FROM subscriptions s
+				WHERE s.outlet_id = ot.id AND s.deleted_at IS NULL
+			) AS subscription_count,
+			(
+				SELECT COUNT(*)
+				FROM subscriptions s
+				WHERE s.outlet_id = ot.id AND s.deleted_at IS NULL AND s.status = 'ACTIVE'
+			) AS active_subscription_count,
+			(
+				SELECT s.status
+				FROM subscriptions s
+				WHERE s.outlet_id = ot.id AND s.deleted_at IS NULL
+				ORDER BY s.active_until DESC, s.id DESC
+				LIMIT 1
+			) AS latest_subscription_status,
+			(
+				SELECT s.active_from
+				FROM subscriptions s
+				WHERE s.outlet_id = ot.id AND s.deleted_at IS NULL
+				ORDER BY s.active_until DESC, s.id DESC
+				LIMIT 1
+			) AS latest_subscription_start,
+			(
+				SELECT s.active_until
+				FROM subscriptions s
+				WHERE s.outlet_id = ot.id AND s.deleted_at IS NULL
+				ORDER BY s.active_until DESC, s.id DESC
+				LIMIT 1
+			) AS latest_subscription_until,
+			ot.created_at,
+			ot.updated_at
+		FROM outlets ot
+		LEFT JOIN owners o ON o.id = ot.owner_id
+		LEFT JOIN wallet_accounts wa ON wa.owner_id = ot.owner_id AND wa.deleted_at IS NULL`
 }
 
 func ownerOrderBy(sort string) (string, error) {

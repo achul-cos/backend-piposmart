@@ -27,6 +27,7 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	{
 		partnerTypes.POST("", h.CreatePartnerType)
 		partnerTypes.GET("/:id", h.GetPartnerTypeByID)
+		partnerTypes.GET("/:id/histories", h.ListPartnerTypeHistories)
 		partnerTypes.GET("", h.ListPartnerTypes)
 		partnerTypes.PUT("/:id", h.UpdatePartnerType)
 
@@ -98,9 +99,12 @@ func (h *Handler) CreatePartnerType(c *gin.Context) {
 		httpx.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", "Payload request tidak valid", gin.H{"error": err.Error()})
 		return
 	}
-	resp, err := h.service.CreatePartnerType(c.Request.Context(), req)
+	actor, _ := identity.CurrentUser(c)
+	resp, err := h.service.CreatePartnerTypeWithMeta(c.Request.Context(), actor, req, requestMeta(c))
 	if err != nil {
 		switch err {
+		case ErrForbidden:
+			httpx.Error(c, http.StatusForbidden, "FORBIDDEN", "not allowed to perform this action", nil)
 		case ErrDuplicateType:
 			httpx.Error(c, http.StatusConflict, "PARTNER_TYPE_CODE_EXISTS", "partner type code already exists", nil)
 		case ErrInvalidCommissionRate, ErrInvalidMoney, ErrInvalidCommissionMode:
@@ -135,6 +139,34 @@ func (h *Handler) GetPartnerTypeByID(c *gin.Context) {
 			httpx.Error(c, http.StatusNotFound, "NOT_FOUND", "partner type not found", nil)
 		} else {
 			httpx.Error(c, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to get partner type", nil)
+		}
+		return
+	}
+	httpx.Success(c, http.StatusOK, resp)
+}
+
+// ListPartnerTypeHistories godoc
+// @Summary List partner type histories
+// @Description Retrieve audit history of partner type commission value and related master changes
+// @Tags partner-types
+// @Accept json
+// @Produce json
+// @Param id path int64 true "Partner type ID"
+// @Success 200 {object} PartnerTypeHistoryListResponse
+// @Failure 404 {object} httpx.ErrorEnvelope
+// @Router /partner-types/{id}/histories [get]
+func (h *Handler) ListPartnerTypeHistories(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		httpx.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", "ID tidak valid", nil)
+		return
+	}
+	resp, err := h.service.ListPartnerTypeHistories(c.Request.Context(), id)
+	if err != nil {
+		if err == ErrNotFound {
+			httpx.Error(c, http.StatusNotFound, "NOT_FOUND", "partner type not found", nil)
+		} else {
+			httpx.Error(c, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to get partner type histories", nil)
 		}
 		return
 	}
@@ -188,11 +220,14 @@ func (h *Handler) UpdatePartnerType(c *gin.Context) {
 		httpx.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", "Payload request tidak valid", gin.H{"error": err.Error()})
 		return
 	}
-	resp, err := h.service.UpdatePartnerType(c.Request.Context(), id, req)
+	actor, _ := identity.CurrentUser(c)
+	resp, err := h.service.UpdatePartnerTypeWithMeta(c.Request.Context(), actor, id, req, requestMeta(c))
 	if err != nil {
 		switch err {
 		case ErrNotFound:
 			httpx.Error(c, http.StatusNotFound, "NOT_FOUND", "partner type not found", nil)
+		case ErrForbidden:
+			httpx.Error(c, http.StatusForbidden, "FORBIDDEN", "not allowed to perform this action", nil)
 		case ErrInvalidCommissionRate, ErrInvalidMoney, ErrInvalidCommissionMode:
 			httpx.Error(c, http.StatusBadRequest, "INVALID_COMMISSION_VALUE", err.Error(), nil)
 		default:
@@ -1191,5 +1226,13 @@ func writeCommissionError(c *gin.Context, err error) {
 		httpx.Error(c, http.StatusBadRequest, "INVALID_PAYOUT_STATUS", err.Error(), nil)
 	default:
 		httpx.Error(c, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to process commission request", nil)
+	}
+}
+
+func requestMeta(c *gin.Context) RequestMeta {
+	return RequestMeta{
+		IPAddress: c.ClientIP(),
+		UserAgent: c.Request.UserAgent(),
+		RequestID: httpx.RequestID(c),
 	}
 }
