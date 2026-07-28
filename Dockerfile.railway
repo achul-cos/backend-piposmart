@@ -1,0 +1,44 @@
+FROM golang:1.26.5-alpine AS builder
+
+WORKDIR /src
+
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+
+ARG VERSION=dev
+ARG COMMIT=unknown
+ARG BUILD_TIME=unknown
+
+RUN CGO_ENABLED=0 GOOS=linux go build \
+    -trimpath \
+    -ldflags="-s -w -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.buildTime=${BUILD_TIME}" \
+    -o /out/crm \
+    .
+
+FROM alpine:3.22
+
+# bash is required for `wait -n` in the entrypoint (busybox ash doesn't support it).
+RUN apk add --no-cache ca-certificates tzdata bash \
+    && addgroup -S crm \
+    && adduser -S -G crm crm \
+    && mkdir -p /app/storage/uploads /app/storage/exports \
+    && chown -R crm:crm /app
+
+WORKDIR /app
+
+COPY --from=builder /out/crm /app/crm
+COPY migrations /app/migrations
+COPY docker-entrypoint.railway.sh /app/docker-entrypoint.railway.sh
+RUN chmod +x /app/docker-entrypoint.railway.sh
+
+USER crm
+
+# Railway assigns the port dynamically via $PORT; entrypoint maps it to APP_PORT.
+EXPOSE 8080
+
+HEALTHCHECK --interval=10s --timeout=3s --start-period=15s --retries=3 \
+    CMD wget -q -O - "http://127.0.0.1:${APP_PORT:-8080}/health/live" || exit 1
+
+ENTRYPOINT ["/app/docker-entrypoint.railway.sh"]
