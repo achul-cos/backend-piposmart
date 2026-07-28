@@ -73,13 +73,19 @@ func ValidateHandler(repo *Repository) jobqueue.Handler {
 		}
 
 		total, valid, invalid := 0, 0, 0
+		dataRows := [][]string{}
+		// Pre-collect non-blank rows to know total upfront
 		for i := headerRowIdx + 1; i < len(rows); i++ {
 			row := rows[i]
-			if isBlankRow(row) {
-				continue
+			if !isBlankRow(row) {
+				dataRows = append(dataRows, row)
 			}
+		}
+		totalData := len(dataRows)
+
+		for idx, row := range dataRows {
 			total++
-			rowIndex := i + 1 // 1-based Excel row number, for admin-facing reference
+			rowIndex := headerRowIdx + 2 + idx // 1-based Excel row number, for admin-facing reference
 
 			var payloadData any
 			var errs []string
@@ -99,6 +105,15 @@ func ValidateHandler(repo *Repository) jobqueue.Handler {
 			}
 			if err := repo.InsertRow(ctx, tx, p.BatchID, rowIndex, status, payloadData, errs); err != nil {
 				return err
+			}
+
+			// Update progress every 100 rows or 10% of data
+			if totalData > 0 && (total%100 == 0 || (totalData <= 100 && total == totalData)) {
+				percentage := int(float64(total) / float64(totalData) * 100)
+				if percentage > 100 {
+					percentage = 100
+				}
+				_ = repo.UpdateProgress(ctx, p.BatchID, percentage)
 			}
 		}
 
@@ -131,9 +146,10 @@ func CommitHandler(repo *Repository, customerService *customer.Service, leadServ
 		}
 
 		customerActor := customer.Actor{ID: p.TriggeredByUserID, RoleCode: RoleAdmin}
+		totalRows := len(validRows)
 
 		committed := 0
-		for _, row := range validRows {
+		for idx, row := range validRows {
 			var commitErr error
 			switch batch.Profile {
 			case ProfileOwnerOutlet:
@@ -150,6 +166,15 @@ func CommitHandler(repo *Repository, customerService *customer.Service, leadServ
 				continue
 			}
 			committed++
+
+			// Update progress every 100 rows or 10% of data
+			if totalRows > 0 && ((idx+1)%100 == 0 || (totalRows <= 100 && idx+1 == totalRows)) {
+				percentage := int(float64(idx+1) / float64(totalRows) * 100)
+				if percentage > 100 {
+					percentage = 100
+				}
+				_ = repo.UpdateProgress(ctx, p.BatchID, percentage)
+			}
 		}
 
 		return repo.SetCommitResult(ctx, tx, p.BatchID, committed, p.TriggeredByUserID)

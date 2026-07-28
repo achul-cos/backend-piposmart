@@ -20,7 +20,7 @@ func NewRepository(db *sql.DB) *Repository {
 
 const batchSelectColumns = `
 	ib.id, ib.code, ib.profile, ib.original_filename, ib.file_sha256, ib.file_path, ib.status,
-	ib.total_rows, ib.valid_rows, ib.invalid_rows, ib.committed_rows,
+	ib.total_rows, ib.valid_rows, ib.invalid_rows, ib.committed_rows, ib.progress_percentage,
 	ib.validate_job_id, ib.commit_job_id, ib.error_message,
 	ib.uploaded_by_user_id, ub.name, ib.committed_by_user_id, cb.name,
 	ib.uploaded_at, ib.validated_at, ib.committed_at, ib.created_at, ib.updated_at`
@@ -36,7 +36,7 @@ func scanBatch(scanner interface {
 	var b ImportBatch
 	err := scanner.Scan(
 		&b.ID, &b.Code, &b.Profile, &b.OriginalFilename, &b.FileSHA256, &b.FilePath, &b.Status,
-		&b.TotalRows, &b.ValidRows, &b.InvalidRows, &b.CommittedRows,
+		&b.TotalRows, &b.ValidRows, &b.InvalidRows, &b.CommittedRows, &b.ProgressPercentage,
 		&b.ValidateJobID, &b.CommitJobID, &b.ErrorMessage,
 		&b.UploadedByUserID, &b.UploadedByName, &b.CommittedByUserID, &b.CommittedByName,
 		&b.UploadedAt, &b.ValidatedAt, &b.CommittedAt, &b.CreatedAt, &b.UpdatedAt,
@@ -140,15 +140,27 @@ func (r *Repository) SetCommitJobID(ctx context.Context, batchID, jobID int64) e
 
 // SetBatchValidating marks the batch as being processed by the validate job.
 func (r *Repository) SetBatchValidating(ctx context.Context, exec execer, batchID int64) error {
-	_, err := exec.ExecContext(ctx, `UPDATE import_batches SET status = ? WHERE id = ?`, BatchStatusValidating, batchID)
+	_, err := exec.ExecContext(ctx, `UPDATE import_batches SET status = ?, progress_percentage = 0 WHERE id = ?`, BatchStatusValidating, batchID)
 	return err
 }
 
-// SetValidationResult records the outcome of a successful validation pass.
+// UpdateProgress updates the batch's progress_percentage during processing.
+func (r *Repository) UpdateProgress(ctx context.Context, batchID int64, percentage int) error {
+	if percentage < 0 {
+		percentage = 0
+	}
+	if percentage > 100 {
+		percentage = 100
+	}
+	_, err := r.db.ExecContext(ctx, `UPDATE import_batches SET progress_percentage = ? WHERE id = ?`, percentage, batchID)
+	return err
+}
+
+// SetValidationResult records the outcome of a successful validation pass and sets progress to 100%.
 func (r *Repository) SetValidationResult(ctx context.Context, exec execer, batchID int64, total, valid, invalid int) error {
 	_, err := exec.ExecContext(ctx, `
 		UPDATE import_batches
-		SET status = ?, total_rows = ?, valid_rows = ?, invalid_rows = ?, validated_at = NOW()
+		SET status = ?, total_rows = ?, valid_rows = ?, invalid_rows = ?, progress_percentage = 100, validated_at = NOW()
 		WHERE id = ?`,
 		BatchStatusValidated, total, valid, invalid, batchID,
 	)
@@ -176,11 +188,11 @@ func (r *Repository) SetBatchCommitting(ctx context.Context, batchID int64) erro
 	return err
 }
 
-// SetCommitResult records the outcome of a commit pass.
+// SetCommitResult records the outcome of a commit pass and sets progress to 100%.
 func (r *Repository) SetCommitResult(ctx context.Context, exec execer, batchID int64, committedRows int, committedByUserID int64) error {
 	_, err := exec.ExecContext(ctx, `
 		UPDATE import_batches
-		SET status = ?, committed_rows = ?, committed_by_user_id = ?, committed_at = NOW()
+		SET status = ?, committed_rows = ?, committed_by_user_id = ?, progress_percentage = 100, committed_at = NOW()
 		WHERE id = ?`,
 		BatchStatusCommitted, committedRows, committedByUserID, batchID,
 	)

@@ -17,11 +17,15 @@ Fondasi saat ini menyediakan:
 - Dockerfile multi-stage dan Docker Compose;
 - pipeline test, vet, build, dan container build.
 
-Status progres mengikuti roadmap `BACKEND_PLAN_SPRINT.md` (18 Sprint) — Sprint 1 s.d. 13 selesai dan
-terdokumentasi di `docs/sprint-01/` s.d. `docs/sprint-13/`. Sprint 11b/11c menambah preset seeder
+Status progres mengikuti roadmap `BACKEND_PLAN_SPRINT.md` (18 Sprint) — Sprint 1 s.d. 14 selesai dan
+terdokumentasi di `docs/sprint-01/` s.d. `docs/sprint-14/`. Sprint 11b/11c menambah preset seeder
 `large` (data skala besar untuk load test) tanpa endpoint API baru; Sprint 12 diperluas hari yang
 sama dengan addendum TIER commission, effective-dated/package-scoped commission rule, dan
-Payout/PayoutItem batching (`docs/sprint-12/ADDENDUM_02_commission_rules_payouts.md`).
+Payout/PayoutItem batching (`docs/sprint-12/ADDENDUM_02_commission_rules_payouts.md`); Sprint 14
+adalah framework import Excel reusable dengan dua profil awal (OWNER_OUTLET, NON_REGISTER) dan async
+validation/commit via job queue, disertai patch Sprint 14d yang menambah progress tracking (0–100%)
+untuk UX improvement (`docs/sprint-14d/` — progress updates setiap 100 rows, frontend dapat
+menampilkan loading progress dan reduce polling dari 1s ke 5s interval).
 
 > 📖 **Baru di project ini atau bingung dengan istilah teknis** (idempotent, row lock, snapshot,
 > effective dating, job queue, RBAC, dll)? Lihat **[`docs/GLOSARIUM.md`](docs/GLOSARIUM.md)** —
