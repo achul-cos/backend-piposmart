@@ -1,8 +1,8 @@
-openapi: 3.0.3
+﻿openapi: 3.0.3
 info:
   title: Backend CRM Piposmart
-  version: 0.15.1-sprint-14c
-  description: API CRM Piposmart dengan Partner Type, Partner (Encrypted & Masked Bank Account), PIC Assignment, Call Interactions, Lead Referrals, Subscription Order, Reconciliation Sprint 11, Partner Commission Sprint 12, serta penambahan route trash/unscoped owner-outlet dan rekap status langganan outlet Sprint 14b/14c.
+  version: 0.15.2-sprint-14-history
+  description: API CRM Piposmart dengan Partner Type, Partner (Encrypted & Masked Bank Account), PIC Assignment, Call Interactions, Lead Referrals, Subscription Order, Reconciliation Sprint 11, Partner Commission Sprint 12, penambahan route trash/unscoped owner-outlet dan rekap status langganan outlet Sprint 14b/14c, serta histori import persisten dengan viewer/download file asli Sprint 14 history.
 servers:
   - url: http://localhost:8080
 paths:
@@ -3811,7 +3811,7 @@ paths:
       tags: [KPI Definition]
       summary: Nonaktifkan KPI definition
       operationId: deactivateKpiDefinition
-      description: Effective-dating berarti supersede via definisi baru, bukan update di tempat — sama seperti commission_rules Sprint 12. Hanya ADMIN dan SUPERVISOR.
+      description: Effective-dating berarti supersede via definisi baru, bukan update di tempat â€” sama seperti commission_rules Sprint 12. Hanya ADMIN dan SUPERVISOR.
       security:
         - bearerAuth: []
       parameters:
@@ -3841,7 +3841,7 @@ paths:
       tags: [KPI]
       summary: Enqueue KPI recompute untuk satu periode
       operationId: recomputeKpi
-      description: Asinkron — diproses background worker (job_queue, MySQL, tanpa Redis). Idempoten, aman dijalankan berulang untuk periode yang sama. Hanya ADMIN dan SUPERVISOR.
+      description: Asinkron â€” diproses background worker (job_queue, MySQL, tanpa Redis). Idempoten, aman dijalankan berulang untuk periode yang sama. Hanya ADMIN dan SUPERVISOR.
       security:
         - bearerAuth: []
       requestBody:
@@ -3963,7 +3963,7 @@ paths:
       tags: [Imports]
       summary: Upload Excel file untuk import
       operationId: uploadImport
-      description: Hanya ADMIN. Dedup berdasarkan SHA-256 file — upload file yang sama mengembalikan batch yang sudah ada. Validasi berjalan async lewat worker (job_queue). Profil (OWNER_OUTLET/NON_REGISTER) bisa dideklarasikan eksplisit atau dibiarkan auto-detect dari header kolom.
+      description: Hanya ADMIN. Dedup berdasarkan SHA-256 file â€” upload file yang sama mengembalikan batch yang sudah ada. Validasi berjalan async lewat worker (job_queue). Profil (OWNER_OUTLET/NON_REGISTER) bisa dideklarasikan eksplisit atau dibiarkan auto-detect dari header kolom.
       security:
         - bearerAuth: []
       requestBody:
@@ -4057,6 +4057,64 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelope"
+  /api/v1/imports/{id}/file:
+    get:
+      tags: [Imports]
+      summary: Buka file Excel asli dari batch import
+      operationId: viewImportOriginalFile
+      description: Hanya ADMIN. Mengembalikan workbook asli yang pernah diupload agar frontend dapat merender halaman viewer Excel sendiri.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: File workbook asli
+          content:
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+              schema:
+                type: string
+                format: binary
+        "404":
+          description: Batch tidak ditemukan atau file asli sudah tidak tersedia
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+  /api/v1/imports/{id}/file/download:
+    get:
+      tags: [Imports]
+      summary: Unduh file Excel asli dari batch import
+      operationId: downloadImportOriginalFile
+      description: Hanya ADMIN. Mengembalikan workbook asli sebagai attachment unduhan.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: File workbook asli sebagai attachment
+          content:
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+              schema:
+                type: string
+                format: binary
+        "404":
+          description: Batch tidak ditemukan atau file asli sudah tidak tersedia
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
   /api/v1/imports/{id}/rows:
     get:
       tags: [Imports]
@@ -4118,7 +4176,7 @@ paths:
       tags: [Imports]
       summary: Commit batch yang sudah divalidasi
       operationId: commitImportBatch
-      description: Hanya ADMIN. Ditolak kalau batch belum berstatus VALIDATED atau sudah pernah di-commit — inilah gerbang "preview harus disetujui dulu". Berjalan async; poll GET /imports/{id} untuk status.
+      description: Hanya ADMIN. Commit pertama hanya boleh saat batch berstatus VALIDATED. Retry aman untuk status COMMITTING atau COMMITTED. Berjalan async; poll GET /imports/{id} untuk status.
       security:
         - bearerAuth: []
       parameters:
@@ -4822,22 +4880,45 @@ components:
         minimum: 1
         maximum: 100
   schemas:
+    ImportActorResponse:
+      type: object
+      properties:
+        id: { type: integer, format: int64 }
+        name: { type: string }
+    ImportBatchFileResponse:
+      type: object
+      properties:
+        original_filename: { type: string }
+        sha256: { type: string, description: Hash SHA-256 file asli untuk dedup dan audit histori }
+        view_path: { type: string, description: Path API untuk membuka workbook asli pada viewer frontend }
+        download_path: { type: string, description: Path API untuk mengunduh workbook asli }
     ImportBatchResponse:
       type: object
       properties:
         id: { type: integer, format: int64 }
         code: { type: string }
-        profile: { type: string, enum: [OWNER_OUTLET, NON_REGISTER] }
+        profile: { type: string, enum: [OWNER_OUTLET, NON_REGISTER, PENDING_DETECTION] }
         original_filename: { type: string }
+        file:
+          $ref: "#/components/schemas/ImportBatchFileResponse"
         status: { type: string, enum: [UPLOADED, VALIDATING, VALIDATED, VALIDATION_FAILED, COMMITTING, COMMITTED, COMMIT_FAILED] }
         total_rows: { type: integer }
         valid_rows: { type: integer }
         invalid_rows: { type: integer }
         committed_rows: { type: integer }
+        progress_percentage: { type: integer, minimum: 0, maximum: 100 }
         error_message: { type: string, nullable: true }
+        uploaded_by:
+          $ref: "#/components/schemas/ImportActorResponse"
+        committed_by:
+          allOf:
+            - $ref: "#/components/schemas/ImportActorResponse"
+          nullable: true
         uploaded_at: { type: string, format: date-time }
         validated_at: { type: string, format: date-time, nullable: true }
         committed_at: { type: string, format: date-time, nullable: true }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
     ImportRowResponse:
       type: object
       properties:
@@ -6203,7 +6284,7 @@ components:
         commission_mode:
           type: string
           enum: [PERCENTAGE, FIXED]
-          description: Mode efektif saat komisi dihitung — snapshot dari commission_rules yang cocok (bisa hasil resolusi TIER), atau fallback ke rate flat partner_type jika tidak ada rule yang cocok
+          description: Mode efektif saat komisi dihitung â€” snapshot dari commission_rules yang cocok (bisa hasil resolusi TIER), atau fallback ke rate flat partner_type jika tidak ada rule yang cocok
         commission_value:
           type: string
           description: Snapshot value efektif saat komisi dihitung (lihat commission_mode)
@@ -6320,7 +6401,7 @@ components:
         max_closings:
           type: integer
           nullable: true
-          description: Batas atas jumlah closing confirmed bulanan untuk tier ini. Null berarti open-ended — WAJIB null pada tier terakhir agar semua jumlah closing punya tier yang cocok
+          description: Batas atas jumlah closing confirmed bulanan untuk tier ini. Null berarti open-ended â€” WAJIB null pada tier terakhir agar semua jumlah closing punya tier yang cocok
           example: 3
         mode:
           type: string
@@ -6328,7 +6409,7 @@ components:
           description: Mode rate tier ini (tier tidak bisa nested TIER)
         value:
           type: string
-          description: Rate tier ini — persen (0-100) jika PERCENTAGE, nominal jika FIXED
+          description: Rate tier ini â€” persen (0-100) jika PERCENTAGE, nominal jika FIXED
           example: "2.00"
     CreateCommissionRuleRequest:
       type: object
@@ -6346,7 +6427,7 @@ components:
         value:
           type: string
           nullable: true
-          description: Wajib diisi untuk PERCENTAGE/FIXED, wajib kosong (null) untuk TIER — rate TIER ditentukan dari field tiers
+          description: Wajib diisi untuk PERCENTAGE/FIXED, wajib kosong (null) untuk TIER â€” rate TIER ditentukan dari field tiers
           example: "5.00"
         effective_from:
           type: string
@@ -6450,7 +6531,7 @@ components:
           type: string
           format: date-time
           nullable: true
-          description: Terisi jika payout yang membatch item ini dibatalkan — commission sudah dilepas kembali ke APPROVED
+          description: Terisi jika payout yang membatch item ini dibatalkan â€” commission sudah dilepas kembali ke APPROVED
     PartnerPayoutResponse:
       type: object
       properties:
@@ -6524,3 +6605,4 @@ components:
           type: string
           nullable: true
           example: Batal karena rekening partner sedang direview
+
