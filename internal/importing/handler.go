@@ -1,6 +1,7 @@
 package importing
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -27,6 +28,8 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 		imports.POST("", h.Upload)
 		imports.GET("", h.ListBatches)
 		imports.GET("/:id", h.GetBatch)
+		imports.GET("/:id/file", h.ViewOriginalFile)
+		imports.GET("/:id/file/download", h.DownloadOriginalFile)
 		imports.GET("/:id/rows", h.ListRows)
 		imports.GET("/:id/rejected-rows/export", h.ExportRejectedRows)
 		imports.POST("/:id/commit", h.Commit)
@@ -117,6 +120,53 @@ func (h *Handler) GetBatch(c *gin.Context) {
 	httpx.Success(c, http.StatusOK, resp)
 }
 
+// ViewOriginalFile godoc
+// @Summary View the originally uploaded Excel file
+// @Description Admin only. Returns the same uploaded workbook so frontend can render its own Excel viewer page.
+// @Tags imports
+// @Produce application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
+// @Param id path int64 true "Batch ID"
+// @Success 200 {file} file
+// @Failure 404 {object} httpx.ErrorEnvelope
+// @Router /imports/{id}/file [get]
+func (h *Handler) ViewOriginalFile(c *gin.Context) {
+	id, ok := parseBatchID(c)
+	if !ok {
+		return
+	}
+	actor, _ := identity.CurrentUser(c)
+	file, err := h.service.GetOriginalFile(c.Request.Context(), actor, id)
+	if err != nil {
+		writeImportError(c, err)
+		return
+	}
+	c.Header("Content-Disposition", `inline; filename="`+file.OriginalFilename+`"`)
+	c.File(file.Path)
+}
+
+// DownloadOriginalFile godoc
+// @Summary Download the originally uploaded Excel file
+// @Description Admin only. Returns the raw workbook as an attachment.
+// @Tags imports
+// @Produce application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
+// @Param id path int64 true "Batch ID"
+// @Success 200 {file} file
+// @Failure 404 {object} httpx.ErrorEnvelope
+// @Router /imports/{id}/file/download [get]
+func (h *Handler) DownloadOriginalFile(c *gin.Context) {
+	id, ok := parseBatchID(c)
+	if !ok {
+		return
+	}
+	actor, _ := identity.CurrentUser(c)
+	file, err := h.service.GetOriginalFile(c.Request.Context(), actor, id)
+	if err != nil {
+		writeImportError(c, err)
+		return
+	}
+	c.FileAttachment(file.Path, file.OriginalFilename)
+}
+
 // ListRows godoc
 // @Summary List rows within an import batch
 // @Tags imports
@@ -187,7 +237,11 @@ func (h *Handler) Commit(c *gin.Context) {
 		writeImportError(c, err)
 		return
 	}
-	httpx.Success(c, http.StatusAccepted, resp)
+	statusCode := http.StatusAccepted
+	if resp.Status == BatchStatusCommitted {
+		statusCode = http.StatusOK
+	}
+	httpx.Success(c, statusCode, resp)
 }
 
 func parseBatchID(c *gin.Context) (int64, bool) {
@@ -200,24 +254,35 @@ func parseBatchID(c *gin.Context) (int64, bool) {
 }
 
 func writeImportError(c *gin.Context, err error) {
-	switch err {
-	case ErrNotFound:
+	var batchStatusErr *BatchStatusActionError
+
+	switch {
+	case errors.Is(err, ErrNotFound):
 		httpx.Error(c, http.StatusNotFound, "NOT_FOUND", err.Error(), nil)
-	case ErrForbidden:
+	case errors.Is(err, ErrForbidden):
 		httpx.Error(c, http.StatusForbidden, "FORBIDDEN", err.Error(), nil)
-	case ErrInvalidFileType:
+	case errors.Is(err, ErrInvalidFileType):
 		httpx.Error(c, http.StatusBadRequest, "INVALID_FILE_TYPE", err.Error(), nil)
-	case ErrFileTooLarge:
+	case errors.Is(err, ErrFileTooLarge):
 		httpx.Error(c, http.StatusBadRequest, "FILE_TOO_LARGE", err.Error(), nil)
-	case ErrEmptyFile:
+	case errors.Is(err, ErrFileUnavailable):
+		httpx.Error(c, http.StatusNotFound, "FILE_UNAVAILABLE", err.Error(), nil)
+	case errors.Is(err, ErrEmptyFile):
 		httpx.Error(c, http.StatusBadRequest, "EMPTY_FILE", err.Error(), nil)
-	case ErrProfileRequired:
+	case errors.Is(err, ErrProfileRequired):
 		httpx.Error(c, http.StatusBadRequest, "PROFILE_REQUIRED", err.Error(), nil)
-	case ErrProfileHeaderMismatch:
+	case errors.Is(err, ErrProfileHeaderMismatch):
 		httpx.Error(c, http.StatusBadRequest, "PROFILE_HEADER_MISMATCH", err.Error(), nil)
-	case ErrUnknownProfile:
+	case errors.Is(err, ErrUnknownProfile):
 		httpx.Error(c, http.StatusBadRequest, "UNKNOWN_PROFILE", err.Error(), nil)
-	case ErrInvalidBatchStatus:
+	case errors.As(err, &batchStatusErr):
+		httpx.Error(c, http.StatusBadRequest, "INVALID_BATCH_STATUS", err.Error(), gin.H{
+			"action":           batchStatusErr.Action,
+			"current_status":   batchStatusErr.CurrentStatus,
+			"allowed_statuses": batchStatusErr.AllowedStatuses,
+			"hint":             "poll GET /imports/{id} until status VALIDATED before first commit; retry commit safely if status COMMITTING or COMMITTED",
+		})
+	case errors.Is(err, ErrInvalidBatchStatus):
 		httpx.Error(c, http.StatusBadRequest, "INVALID_BATCH_STATUS", err.Error(), nil)
 	default:
 		httpx.Error(c, http.StatusInternalServerError, "INTERNAL_ERROR", "unexpected error", nil)

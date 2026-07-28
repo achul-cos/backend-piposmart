@@ -184,7 +184,7 @@ func (r *Repository) SetBatchProfile(ctx context.Context, exec execer, batchID i
 }
 
 func (r *Repository) SetBatchCommitting(ctx context.Context, batchID int64) error {
-	_, err := r.db.ExecContext(ctx, `UPDATE import_batches SET status = ? WHERE id = ?`, BatchStatusCommitting, batchID)
+	_, err := r.db.ExecContext(ctx, `UPDATE import_batches SET status = ?, progress_percentage = 0 WHERE id = ?`, BatchStatusCommitting, batchID)
 	return err
 }
 

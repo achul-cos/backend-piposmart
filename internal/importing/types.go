@@ -5,6 +5,7 @@ package importing
 import (
 	"database/sql"
 	"encoding/json"
+	"strconv"
 	"time"
 )
 
@@ -35,30 +36,30 @@ const (
 
 // ImportBatch is one uploaded file and its processing lifecycle.
 type ImportBatch struct {
-	ID                  int64
-	Code                string
-	Profile             string
-	OriginalFilename    string
-	FileSHA256          string
-	FilePath            string
-	Status              string
-	TotalRows           int
-	ValidRows           int
-	InvalidRows         int
-	CommittedRows       int
-	ProgressPercentage  int
-	ValidateJobID       sql.NullInt64
-	CommitJobID         sql.NullInt64
-	ErrorMessage        sql.NullString
-	UploadedByUserID    int64
-	UploadedByName      sql.NullString
-	CommittedByUserID   sql.NullInt64
-	CommittedByName     sql.NullString
-	UploadedAt          time.Time
-	ValidatedAt         sql.NullTime
-	CommittedAt         sql.NullTime
-	CreatedAt           time.Time
-	UpdatedAt           time.Time
+	ID                 int64
+	Code               string
+	Profile            string
+	OriginalFilename   string
+	FileSHA256         string
+	FilePath           string
+	Status             string
+	TotalRows          int
+	ValidRows          int
+	InvalidRows        int
+	CommittedRows      int
+	ProgressPercentage int
+	ValidateJobID      sql.NullInt64
+	CommitJobID        sql.NullInt64
+	ErrorMessage       sql.NullString
+	UploadedByUserID   int64
+	UploadedByName     sql.NullString
+	CommittedByUserID  sql.NullInt64
+	CommittedByName    sql.NullString
+	UploadedAt         time.Time
+	ValidatedAt        sql.NullTime
+	CommittedAt        sql.NullTime
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
 }
 
 // ImportRow is one parsed Excel data row within a batch.
@@ -82,33 +83,47 @@ type ActorRef struct {
 	Name string `json:"name"`
 }
 
+type ImportBatchFileResponse struct {
+	OriginalFilename string `json:"original_filename"`
+	SHA256           string `json:"sha256"`
+	ViewPath         string `json:"view_path"`
+	DownloadPath     string `json:"download_path"`
+}
+
 type ImportBatchResponse struct {
-	ID                 int64      `json:"id"`
-	Code               string     `json:"code"`
-	Profile            string     `json:"profile"`
-	OriginalFilename   string     `json:"original_filename"`
-	Status             string     `json:"status"`
-	TotalRows          int        `json:"total_rows"`
-	ValidRows          int        `json:"valid_rows"`
-	InvalidRows        int        `json:"invalid_rows"`
-	CommittedRows      int        `json:"committed_rows"`
-	ProgressPercentage int        `json:"progress_percentage"`
-	ErrorMessage       *string    `json:"error_message,omitempty"`
-	UploadedBy         ActorRef   `json:"uploaded_by"`
-	CommittedBy        *ActorRef  `json:"committed_by,omitempty"`
-	UploadedAt         time.Time  `json:"uploaded_at"`
-	ValidatedAt        *time.Time `json:"validated_at,omitempty"`
-	CommittedAt        *time.Time `json:"committed_at,omitempty"`
-	CreatedAt          time.Time  `json:"created_at"`
-	UpdatedAt          time.Time  `json:"updated_at"`
+	ID                 int64                   `json:"id"`
+	Code               string                  `json:"code"`
+	Profile            string                  `json:"profile"`
+	OriginalFilename   string                  `json:"original_filename"`
+	File               ImportBatchFileResponse `json:"file"`
+	Status             string                  `json:"status"`
+	TotalRows          int                     `json:"total_rows"`
+	ValidRows          int                     `json:"valid_rows"`
+	InvalidRows        int                     `json:"invalid_rows"`
+	CommittedRows      int                     `json:"committed_rows"`
+	ProgressPercentage int                     `json:"progress_percentage"`
+	ErrorMessage       *string                 `json:"error_message,omitempty"`
+	UploadedBy         ActorRef                `json:"uploaded_by"`
+	CommittedBy        *ActorRef               `json:"committed_by,omitempty"`
+	UploadedAt         time.Time               `json:"uploaded_at"`
+	ValidatedAt        *time.Time              `json:"validated_at,omitempty"`
+	CommittedAt        *time.Time              `json:"committed_at,omitempty"`
+	CreatedAt          time.Time               `json:"created_at"`
+	UpdatedAt          time.Time               `json:"updated_at"`
 }
 
 func NewImportBatchResponse(b ImportBatch) ImportBatchResponse {
 	resp := ImportBatchResponse{
-		ID:                 b.ID,
-		Code:               b.Code,
-		Profile:            b.Profile,
-		OriginalFilename:   b.OriginalFilename,
+		ID:               b.ID,
+		Code:             b.Code,
+		Profile:          b.Profile,
+		OriginalFilename: b.OriginalFilename,
+		File: ImportBatchFileResponse{
+			OriginalFilename: b.OriginalFilename,
+			SHA256:           b.FileSHA256,
+			ViewPath:         importBatchViewPath(b.ID),
+			DownloadPath:     importBatchDownloadPath(b.ID),
+		},
 		Status:             b.Status,
 		TotalRows:          b.TotalRows,
 		ValidRows:          b.ValidRows,
@@ -133,6 +148,18 @@ func NewImportBatchResponse(b ImportBatch) ImportBatchResponse {
 		resp.CommittedAt = &b.CommittedAt.Time
 	}
 	return resp
+}
+
+func importBatchViewPath(batchID int64) string {
+	return "/api/v1/imports/" + formatBatchID(batchID) + "/file"
+}
+
+func importBatchDownloadPath(batchID int64) string {
+	return "/api/v1/imports/" + formatBatchID(batchID) + "/file/download"
+}
+
+func formatBatchID(batchID int64) string {
+	return strconv.FormatInt(batchID, 10)
 }
 
 type ImportBatchListResponse struct {

@@ -489,7 +489,10 @@ func writeError(c *gin.Context, err error) {
 	case errors.Is(err, ErrNotFound):
 		httpx.Error(c, http.StatusNotFound, "NOT_FOUND", err.Error(), nil)
 	case errors.Is(err, ErrCodeAlreadyUsed):
-		httpx.Error(c, http.StatusConflict, "CODE_ALREADY_USED", err.Error(), nil)
+		httpx.Error(c, http.StatusConflict, "CODE_ALREADY_USED", err.Error(), gin.H{
+			"possible_cause": "kode yang dikirim sudah dipakai oleh data lain atau data yang dimasukkan kemungkinan adalah duplikat dari owner/outlet yang sudah ada",
+			"hint":           "jika ini memang data baru yang mirip owner lama, frontend boleh meminta user mengganti kode menjadi kode baru yang unik sebelum mengirim ulang",
+		})
 	case errors.Is(err, ErrInvalidPhone):
 		httpx.Error(c, http.StatusBadRequest, "INVALID_PHONE", err.Error(), nil)
 	case errors.Is(err, ErrInvalidSort):

@@ -136,8 +136,13 @@ func CommitHandler(repo *Repository, customerService *customer.Service, leadServ
 		if err != nil {
 			return err
 		}
-		if batch.Status != BatchStatusCommitting {
-			return fmt.Errorf("importing: batch %d is not COMMITTING (status=%s)", p.BatchID, batch.Status)
+		if !canWorkerProcessCommit(batch.Status) {
+			return fmt.Errorf("importing: batch %d is not commitable by worker (status=%s)", p.BatchID, batch.Status)
+		}
+		if batch.Status == BatchStatusValidated {
+			if err := repo.SetBatchCommitting(ctx, p.BatchID); err != nil {
+				return err
+			}
 		}
 
 		validRows, err := repo.ListRowsByStatus(ctx, p.BatchID, RowStatusValid)

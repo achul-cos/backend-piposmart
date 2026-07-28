@@ -6,6 +6,7 @@ import (
 	"encoding/csv"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -221,8 +222,12 @@ func (s *Service) TriggerCommit(ctx context.Context, actor identity.User, batchI
 	if err != nil {
 		return nil, err
 	}
-	if batch.Status != BatchStatusValidated {
-		return nil, ErrInvalidBatchStatus
+	if canReuseCommitResult(batch.Status) {
+		resp := NewImportBatchResponse(*batch)
+		return &resp, nil
+	}
+	if err := validateCommitStatus(batch.Status); err != nil {
+		return nil, err
 	}
 
 	jobID, err := s.jobs.Enqueue(ctx, JobTypeCommit, CommitJobPayload{BatchID: batchID, TriggeredByUserID: actor.ID}, &actor.ID)
@@ -242,4 +247,32 @@ func (s *Service) TriggerCommit(ctx context.Context, actor identity.User, batchI
 	}
 	resp := NewImportBatchResponse(*updated)
 	return &resp, nil
+}
+
+type OriginalFilePayload struct {
+	Path             string
+	OriginalFilename string
+}
+
+func (s *Service) GetOriginalFile(ctx context.Context, actor identity.User, batchID int64) (*OriginalFilePayload, error) {
+	if !isAdmin(actor) {
+		return nil, ErrForbidden
+	}
+	batch, err := s.repo.GetBatchByID(ctx, batchID)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(batch.FilePath) == "" {
+		return nil, ErrFileUnavailable
+	}
+	if _, err := os.Stat(batch.FilePath); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, ErrFileUnavailable
+		}
+		return nil, fmt.Errorf("importing: stat original file: %w", err)
+	}
+	return &OriginalFilePayload{
+		Path:             batch.FilePath,
+		OriginalFilename: batch.OriginalFilename,
+	}, nil
 }
