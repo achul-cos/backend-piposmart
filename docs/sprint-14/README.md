@@ -817,6 +817,44 @@ Arti bisnisnya: backend tidak menjalankan commit kedua, hanya mengembalikan hasi
 }
 ```
 
+### Format detail error import terbaru
+
+Mulai patch ini, response error modul import dapat mengandung `details` yang lebih kaya agar frontend
+bisa membantu user mencegah error yang sama:
+
+```json
+{
+  "error": {
+    "code": "INTERNAL_ERROR",
+    "message": "unexpected error",
+    "details": {
+      "request_id": "1685f7efdcda05898d8c654ed3353390",
+      "technical_error": "importing: find batch by sha256: Error 1054 (42S22): Unknown column 'ib.progress_percentage' in 'field list'",
+      "root_cause": "Skema database production belum sesuai dengan kode backend terbaru; kolom progress_percentage belum ada.",
+      "solution": "Jalankan migration terbaru di environment production sampai versi 20260728000100 atau lebih baru.",
+      "frontend_prevent": "Frontend tidak perlu retry buta; tampilkan pesan maintenance/server mismatch dan arahkan user menghubungi admin sistem."
+    },
+    "request_id": "1685f7efdcda05898d8c654ed3353390"
+  }
+}
+```
+
+Makna field:
+
+| Field | Arti |
+| --- | --- |
+| `technical_error` | pesan error teknis asli dari backend, untuk debugging cepat |
+| `root_cause` | inti masalah dalam bahasa lebih mudah dipahami |
+| `solution` | langkah perbaikan yang disarankan untuk tim backend/devops/admin |
+| `frontend_prevent` | saran agar frontend tidak mengulangi pola request yang salah atau bisa menampilkan pesan yang lebih tepat |
+
+Saran frontend:
+
+- tampilkan `root_cause` sebagai pesan utama yang ramah user office;
+- simpan `technical_error` dan `request_id` untuk kebutuhan laporan bug;
+- tampilkan `solution` atau `frontend_prevent` pada mode debug/admin/help text;
+- untuk `INTERNAL_ERROR`, hindari auto retry tanpa batas.
+
 #### C. Commit dipanggil saat validasi total gagal
 
 **Status:** `400 Bad Request`

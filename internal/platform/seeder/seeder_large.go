@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"math"
 	"math/rand"
 	"os"
 	"sort"
@@ -12,34 +13,61 @@ import (
 	"backend_crm_piposmart/internal/platform/factory"
 )
 
-// NOTE: `customer_leads.owner_id` memiliki UNIQUE KEY (uq_customer_leads_owner_id,
-// lihat migrations/20260723000400_lead_ownership_assignment.sql). Artinya setiap
-// owner (customer) hanya boleh memiliki TEPAT SATU lead aktif yang merepresentasikan
-// status pipeline-nya. Volume data yang besar dicapai lewat banyaknya interactions
-// per lead dan jumlah owner, BUKAN lewat banyak lead per owner.
 const (
-	largeOwnerCount         = 18000
-	largeSalesCount         = 45
-	largeSupervisorCount    = 9
+	defaultLargeSeedScale   = 10
 	interactionsPerLeadMin  = 5
 	interactionsPerLeadSpan = 11 // interactions = min + rand(0..span) => 5-15
 	closingRatePercent      = 12
 )
 
+var largeSeedScaleOwnerCounts = map[int]int{
+	1:  50,
+	2:  100,
+	3:  200,
+	4:  500,
+	5:  1000,
+	6:  2000,
+	7:  3000,
+	8:  5000,
+	9:  1000,
+	10: 18000,
+}
+
+type largeClosingScenario struct {
+	PlanCode      string
+	PromotionCode string
+	Status        string
+	TopupAmount   string
+}
+
+var largeClosingScenarios = []largeClosingScenario{
+	{PlanCode: "BASIC_01_MONTHS", PromotionCode: "", Status: "PENDING_RECONCILIATION", TopupAmount: "500000.00"},
+	{PlanCode: "BASIC_09_MONTHS", PromotionCode: "", Status: "CONFIRMED", TopupAmount: "1500000.00"},
+	{PlanCode: "BUSINESS_12_MONTHS", PromotionCode: "FREE_1_MONTH_BUSINESS_12", Status: "CONFIRMED", TopupAmount: "2500000.00"},
+	{PlanCode: "PRO_12_MONTHS", PromotionCode: "", Status: "CONFIRMED", TopupAmount: "3500000.00"},
+	{PlanCode: "PRO_12_MONTHS", PromotionCode: "PRO_12_ANDROID_POS_BUNDLE", Status: "PENDING_RECONCILIATION", TopupAmount: "5000000.00"},
+	{PlanCode: "PRO_24_MONTHS", PromotionCode: "FREE_2_MONTHS_PRO_24", Status: "CONFIRMED", TopupAmount: "7000000.00"},
+}
+
 func seedDemoLarge(ctx context.Context, tx *sql.Tx, options Options) error {
 	fake := factory.New(options.Seed, options.AsOf)
 	rng := rand.New(rand.NewSource(options.Seed))
 
-	// 1. Create users: supervisors & sales team
-	for i := 1; i <= largeSupervisorCount; i++ {
+	ownerCount, err := largeSeedOwnerCountForScale(options.Scale)
+	if err != nil {
+		return err
+	}
+	supervisorCount, salesCount := largeSeedTeamCounts(ownerCount)
+
+	for i := 1; i <= supervisorCount; i++ {
 		user := fake.BuildUser("SUPERVISOR", i)
 		if _, err := fake.CreateUser(ctx, tx, user); err != nil {
 			return err
 		}
 	}
 
-	salesEmails := make([]string, 0, largeSalesCount)
-	for i := 1; i <= largeSalesCount; i++ {
+	salesEmails := make([]string, 0, salesCount)
+	for i := 1; i <= salesCount; i++ {
 		user := fake.BuildUser("SALES", i)
 		if _, err := fake.CreateUser(ctx, tx, user); err != nil {
 			return err
@@ -47,16 +75,9 @@ func seedDemoLarge(ctx context.Context, tx *sql.Tx, options Options) error {
 		salesEmails = append(salesEmails, user.Email)
 	}
 
-	// 2. Generate temporal distribution: 2020-01-01 to asOf with growth curve
-	timeline := generateGrowthTimeline(time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC), options.AsOf, largeOwnerCount, rng)
-
-	closingPlans := []string{"BASIC_01_MONTHS", "BUSINESS_12_MONTHS", "PRO_12_MONTHS"}
-	closingPromos := []string{"", "", "FREE_1_MONTH_BUSINESS_12", "PRO_12_ANDROID_POS_BUNDLE"}
-	closingStatuses := []string{"PENDING_RECONCILIATION", "CONFIRMED", "CONFIRMED"}
-
+	timeline := generateGrowthTimeline(options.From, options.To, ownerCount, options.Variation, rng)
 	progress := newProgressBar(len(timeline))
 
-	// 3. Create owners with temporal distribution, each with exactly one lead
 	for idx, createdAt := range timeline {
 		ownerIndex := idx + 1
 		owner := buildLargeOwner(ownerIndex, createdAt, rng)
@@ -65,55 +86,133 @@ func seedDemoLarge(ctx context.Context, tx *sql.Tx, options Options) error {
 			return fmt.Errorf("create owner %d: %w", ownerIndex, err)
 		}
 
-		outlet := fake.BuildOutlet(owner.Code, 1, owner)
-		outletID, err := fake.CreateOutlet(ctx, tx, ownerID, outlet)
-		if err != nil {
-			return fmt.Errorf("create outlet owner=%d: %w", ownerIndex, err)
+		outletCount := largeSeedOutletCount(rng)
+		var firstOutletID int64
+		for outletIndex := 1; outletIndex <= outletCount; outletIndex++ {
+			outlet := fake.BuildOutlet(owner.Code, outletIndex, owner)
+			outletID, err := fake.CreateOutlet(ctx, tx, ownerID, outlet)
+			if err != nil {
+				return fmt.Errorf("create outlet owner=%d outlet=%d: %w", ownerIndex, outletIndex, err)
+			}
+			if outletIndex == 1 {
+				firstOutletID = outletID
+			}
 		}
 
 		salesEmail := salesEmails[rng.Intn(len(salesEmails))]
-		leadCreatedAt := createdAt.AddDate(0, 0, rng.Intn(7)+1)
+		leadCreatedAt := clampToAsOf(createdAt.AddDate(0, 0, rng.Intn(7)+1), options.AsOf)
 		lead := fake.BuildLead(owner.Code, 1, salesEmail)
+		lead.NextFollowUpAt = clampToAsOf(leadCreatedAt.AddDate(0, 0, 3+rng.Intn(6)), options.AsOf)
 
-		leadID, err := fake.CreateLead(ctx, tx, ownerID, outletID, lead)
+		leadID, err := fake.CreateLead(ctx, tx, ownerID, firstOutletID, lead)
 		if err != nil {
 			return fmt.Errorf("create lead owner=%d: %w", ownerIndex, err)
 		}
 
-		// Interactions: random 5-15 per lead, spread over time after lead creation
+		willClose := rng.Intn(100) < closingRatePercent
 		interactionCount := interactionsPerLeadMin + rng.Intn(interactionsPerLeadSpan)
-		for iIdx := 1; iIdx <= interactionCount; iIdx++ {
-			remarkScore := rng.Intn(4)
-			interaction := fake.BuildInteraction(iIdx, remarkScore)
-
-			daysOffset := (iIdx - 1) * (rng.Intn(10) + 3)
-			interaction.InteractionAt = clampToAsOf(leadCreatedAt.AddDate(0, 0, daysOffset), options.AsOf)
-			interaction.FollowUpAt = interaction.InteractionAt.AddDate(0, 0, 3+rng.Intn(8))
-
+		trainingCreated := false
+		for interactionIndex := 1; interactionIndex <= interactionCount; interactionIndex++ {
+			remarkScore := largeSeedRemarkScore(rng, willClose, interactionIndex, interactionCount)
+			interaction := fake.BuildInteraction(interactionIndex, remarkScore)
+			interactionDaysOffset := (interactionIndex - 1) * (rng.Intn(9) + 3)
+			interaction.InteractionAt = clampToAsOf(leadCreatedAt.AddDate(0, 0, interactionDaysOffset), options.AsOf)
+			interaction.FollowUpAt = clampToAsOf(interaction.InteractionAt.AddDate(0, 0, 3+rng.Intn(8)), options.AsOf)
 			if _, err := fake.CreateInteraction(ctx, tx, leadID, interaction); err != nil {
-				return fmt.Errorf("create interaction owner=%d lead=%d: %w", ownerIndex, leadID, err)
+				return fmt.Errorf("create interaction owner=%d lead=%d idx=%d: %w", ownerIndex, leadID, interactionIndex, err)
+			}
+
+			if !trainingCreated && remarkScore == 2 && rng.Intn(100) < 35 {
+				training := fake.BuildTrainingReport(interactionIndex, rng.Intn(100) < 55)
+				training.ScheduledAt = clampToAsOf(interaction.InteractionAt.AddDate(0, 0, 2+rng.Intn(7)).Add(10*time.Hour), options.AsOf)
+				if training.CompletedAt.Valid {
+					completedAt := clampToAsOf(training.ScheduledAt.Add(90*time.Minute), options.AsOf)
+					training.CompletedAt = sql.NullTime{Time: completedAt, Valid: true}
+				}
+				if _, err := fake.CreateTrainingReport(ctx, tx, leadID, training); err != nil {
+					return fmt.Errorf("create training owner=%d lead=%d: %w", ownerIndex, leadID, err)
+				}
+				trainingCreated = true
 			}
 		}
 
-		// Random closing (~12% of leads close)
-		if rng.Intn(100) < closingRatePercent {
-			planCode := closingPlans[rng.Intn(len(closingPlans))]
-			promoCode := closingPromos[rng.Intn(len(closingPromos))]
-			status := closingStatuses[rng.Intn(len(closingStatuses))]
+		if !willClose && rng.Intn(100) < 28 {
+			topup := fake.BuildWalletTopup(ownerIndex, largeSeedStandaloneTopupAmount(rng))
+			topup.PaidAt = clampToAsOf(leadCreatedAt.AddDate(0, 0, 7+rng.Intn(45)).Add(9*time.Hour), options.AsOf)
+			topup.ExternalReference = fmt.Sprintf("LARGE-TOPUP-OWNER-%06d", ownerIndex)
+			topup.IdempotencyKey = fmt.Sprintf("large:topup:owner:%06d", ownerIndex)
+			topup.Note = fmt.Sprintf("Large seed wallet top-up owner=%06d", ownerIndex)
+			if _, err := fake.CreateWalletTopup(ctx, tx, ownerID, topup); err != nil {
+				return fmt.Errorf("create standalone topup owner=%d: %w", ownerIndex, err)
+			}
+			if rng.Intn(100) < 20 {
+				debit := fake.BuildWalletDebit(ownerIndex, largeSeedStandaloneDebitAmount(rng))
+				debit.OccurredAt = clampToAsOf(topup.PaidAt.AddDate(0, 0, 2+rng.Intn(12)), options.AsOf)
+				debit.ExternalReference = fmt.Sprintf("LARGE-DEBIT-OWNER-%06d", ownerIndex)
+				debit.IdempotencyKey = fmt.Sprintf("large:debit:owner:%06d", ownerIndex)
+				debit.Note = fmt.Sprintf("Large seed wallet debit owner=%06d", ownerIndex)
+				if _, err := fake.CreateWalletDebit(ctx, tx, ownerID, debit); err != nil {
+					return fmt.Errorf("create standalone debit owner=%d: %w", ownerIndex, err)
+				}
+			}
+		}
 
+		if willClose {
+			scenario := largeClosingScenarios[rng.Intn(len(largeClosingScenarios))]
 			closingTime := clampToAsOf(leadCreatedAt.AddDate(0, 0, 30+rng.Intn(90)), options.AsOf)
 			closing := factory.Closing{
-				PlanCode:           planCode,
-				PromotionCode:      promoCode,
+				PlanCode:           scenario.PlanCode,
+				PromotionCode:      scenario.PromotionCode,
 				DiscountAmount:     "0.00",
 				UniqueTransferCode: ownerIndex*100 + rng.Intn(99),
-				Status:             status,
+				Status:             scenario.Status,
 				Note:               fmt.Sprintf("Large seed closing owner=%d", ownerIndex),
 				ClosedAt:           closingTime,
 			}
 
-			if _, err := fake.CreateClosing(ctx, tx, leadID, closing); err != nil {
+			closingID, err := fake.CreateClosing(ctx, tx, leadID, closing)
+			if err != nil {
 				return fmt.Errorf("create closing owner=%d lead=%d: %w", ownerIndex, leadID, err)
+			}
+
+			if rng.Intn(100) < 72 {
+				topup := fake.BuildWalletTopup(ownerIndex, scenario.TopupAmount)
+				topup.PaidAt = clampToAsOf(closingTime.AddDate(0, 0, -(1+rng.Intn(30))).Add(9*time.Hour), options.AsOf)
+				topup.ExternalReference = fmt.Sprintf("LARGE-CLOSING-TOPUP-OWNER-%06d", ownerIndex)
+				topup.IdempotencyKey = fmt.Sprintf("large:closing:topup:owner:%06d", ownerIndex)
+				topup.Note = fmt.Sprintf("Large seed top-up sebelum subscription order owner=%06d", ownerIndex)
+				if _, err := fake.CreateWalletTopup(ctx, tx, ownerID, topup); err != nil {
+					return fmt.Errorf("create linked topup owner=%d: %w", ownerIndex, err)
+				}
+
+				order := fake.BuildSubscriptionOrder(ownerIndex, scenario.PlanCode, scenario.PromotionCode, sql.NullInt64{Int64: closingID, Valid: true})
+				order.PurchasedAt = clampToAsOf(closingTime.Add(2*time.Hour), options.AsOf)
+				order.SubscriptionStartDate = dateOnlyUTC(order.PurchasedAt)
+				order.ExternalReference = fmt.Sprintf("LARGE-SUB-ORDER-OWNER-%06d", ownerIndex)
+				order.IdempotencyKey = fmt.Sprintf("large:subscription:owner:%06d", ownerIndex)
+				order.Note = fmt.Sprintf("Large seed subscription order dari closing owner=%06d", ownerIndex)
+				if _, err := fake.CreateSubscriptionOrder(ctx, tx, ownerID, order); err != nil {
+					return fmt.Errorf("create linked subscription owner=%d: %w", ownerIndex, err)
+				}
+			}
+		} else if rng.Intn(100) < 6 {
+			topup := fake.BuildWalletTopup(ownerIndex, "1500000.00")
+			topup.PaidAt = clampToAsOf(leadCreatedAt.AddDate(0, 0, 14+rng.Intn(30)).Add(9*time.Hour), options.AsOf)
+			topup.ExternalReference = fmt.Sprintf("LARGE-HANGING-TOPUP-OWNER-%06d", ownerIndex)
+			topup.IdempotencyKey = fmt.Sprintf("large:hanging:topup:owner:%06d", ownerIndex)
+			topup.Note = fmt.Sprintf("Large seed top-up untuk hanging order owner=%06d", ownerIndex)
+			if _, err := fake.CreateWalletTopup(ctx, tx, ownerID, topup); err != nil {
+				return fmt.Errorf("create hanging topup owner=%d: %w", ownerIndex, err)
+			}
+
+			order := fake.BuildSubscriptionOrder(ownerIndex, "BASIC_01_MONTHS", "", sql.NullInt64{})
+			order.PurchasedAt = clampToAsOf(topup.PaidAt.AddDate(0, 0, 2+rng.Intn(15)), options.AsOf)
+			order.SubscriptionStartDate = dateOnlyUTC(order.PurchasedAt)
+			order.ExternalReference = fmt.Sprintf("LARGE-HANGING-ORDER-OWNER-%06d", ownerIndex)
+			order.IdempotencyKey = fmt.Sprintf("large:hanging:order:owner:%06d", ownerIndex)
+			order.Note = fmt.Sprintf("Large seed hanging subscription order owner=%06d", ownerIndex)
+			if _, err := fake.CreateSubscriptionOrder(ctx, tx, ownerID, order); err != nil {
+				return fmt.Errorf("create hanging order owner=%d: %w", ownerIndex, err)
 			}
 		}
 
@@ -121,7 +220,84 @@ func seedDemoLarge(ctx context.Context, tx *sql.Tx, options Options) error {
 	}
 	progress.finish()
 
+	if err := seedPartnersDemo(ctx, tx, fake); err != nil {
+		return err
+	}
+
 	return nil
+}
+
+func largeSeedOwnerCountForScale(scale int) (int, error) {
+	count, ok := largeSeedScaleOwnerCounts[scale]
+	if !ok {
+		return 0, fmt.Errorf("--scale harus salah satu dari 1,2,3,4,5,6,7,8,9,10")
+	}
+	return count, nil
+}
+
+func largeSeedTeamCounts(ownerCount int) (supervisorCount int, salesCount int) {
+	supervisorCount = maxInt(1, int(math.Ceil(float64(ownerCount)/2000.0)))
+	salesCount = maxInt(3, int(math.Ceil(float64(ownerCount)/400.0)))
+	return supervisorCount, salesCount
+}
+
+func largeSeedOutletCount(rng *rand.Rand) int {
+	roll := rng.Intn(100)
+	switch {
+	case roll < 5:
+		return 3
+	case roll < 25:
+		return 2
+	default:
+		return 1
+	}
+}
+
+func largeSeedRemarkScore(rng *rand.Rand, willClose bool, interactionIndex, interactionCount int) int {
+	if willClose {
+		if interactionIndex >= interactionCount-1 {
+			if rng.Intn(100) < 70 {
+				return 2
+			}
+			return 1
+		}
+		if rng.Intn(100) < 65 {
+			return 1
+		}
+		return 2
+	}
+
+	roll := rng.Intn(100)
+	switch {
+	case roll < 18:
+		return 0
+	case roll < 68:
+		return 1
+	default:
+		return 2
+	}
+}
+
+func largeSeedStandaloneTopupAmount(rng *rand.Rand) string {
+	amounts := []string{"500000.00", "750000.00", "1000000.00", "1500000.00", "2500000.00"}
+	return amounts[rng.Intn(len(amounts))]
+}
+
+func largeSeedStandaloneDebitAmount(rng *rand.Rand) string {
+	amounts := []string{"100000.00", "150000.00", "250000.00", "300000.00"}
+	return amounts[rng.Intn(len(amounts))]
+}
+
+func dateOnlyUTC(value time.Time) time.Time {
+	utc := value.UTC()
+	return time.Date(utc.Year(), utc.Month(), utc.Day(), 0, 0, 0, 0, time.UTC)
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 // progressBar renders an in-place, installer-style progress indicator on
@@ -190,13 +366,12 @@ func clampToAsOf(value, asOf time.Time) time.Time {
 	return value
 }
 
-// generateGrowthTimeline generates realistic timestamps following a startup growth curve:
-// slow start -> growth -> acceleration -> plateau, with random daily spikes simulating
-// trend/news-driven surges in customer acquisition. Owners are allocated per-day
-// proportional to the growth-curve weight of that day (largest remainder method),
-// guaranteeing exactly targetCount timestamps are produced even when targetCount
-// greatly exceeds the number of days in the range (multiple owners share a day).
-func generateGrowthTimeline(startDate, endDate time.Time, targetCount int, rng *rand.Rand) []time.Time {
+// generateGrowthTimeline distributes timestamps across a date range. The `variation`
+// parameter controls how even vs spiky the daily distribution is:
+//   - 1.0 => uniform per day
+//   - 0.5 => balanced between uniform and random spikes
+//   - 0.0 => highly random / extreme spread
+func generateGrowthTimeline(startDate, endDate time.Time, targetCount int, variation float64, rng *rand.Rand) []time.Time {
 	totalDays := int(endDate.Sub(startDate).Hours()/24) + 1
 	if totalDays < 1 || targetCount < 1 {
 		return nil
@@ -204,37 +379,27 @@ func generateGrowthTimeline(startDate, endDate time.Time, targetCount int, rng *
 
 	weights := make([]float64, totalDays)
 	var totalWeight float64
+	randomStrength := 1 - variation
 	for day := 0; day < totalDays; day++ {
-		phase := float64(day) / float64(totalDays)
-		var multiplier float64
-
-		switch {
-		case phase < 0.2:
-			// Startup phase: slow (20% of timeline)
-			multiplier = 0.3 + rng.Float64()*0.3
-		case phase < 0.6:
-			// Growth phase: faster (40% of timeline)
-			multiplier = 1.0 + rng.Float64()*1.0
-		case phase < 0.9:
-			// Acceleration: even faster (30% of timeline)
-			multiplier = 1.5 + rng.Float64()*1.5
-		default:
-			// Maturity: steady (10% of timeline)
-			multiplier = 0.8 + rng.Float64()*0.4
+		if variation >= 0.9999 {
+			weights[day] = 1
+			totalWeight += 1
+			continue
 		}
 
-		// Random daily spike (10% of days): simulate tren/berita-driven surge
-		if rng.Float64() < 0.10 {
-			multiplier *= 2.5
+		baseUniform := variation
+		randomComponent := 0.15 + rng.Float64()*0.85
+		if rng.Float64() < randomStrength {
+			randomComponent *= 1 + rng.Float64()*(4+10*randomStrength)
 		}
-
-		weights[day] = multiplier
-		totalWeight += multiplier
+		weight := baseUniform + (randomStrength * randomComponent)
+		if weight <= 0 {
+			weight = 0.01
+		}
+		weights[day] = weight
+		totalWeight += weight
 	}
 
-	// Largest remainder method: allocate integer owner counts per day
-	// proportional to that day's weight, while guaranteeing the total
-	// equals exactly targetCount.
 	dayCounts := make([]int, totalDays)
 	rawCounts := make([]float64, totalDays)
 	assigned := 0

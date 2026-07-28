@@ -27,6 +27,8 @@ services:
   migrate:
     build:
       context: .
+    profiles:
+      - tools
     env_file:
       - .env
     environment:
@@ -38,6 +40,34 @@ services:
     depends_on:
       mysql:
         condition: service_healthy
+    restart: "no"
+
+  setup:
+    build:
+      context: .
+    env_file:
+      - .env
+    environment:
+      DB_HOST: mysql
+      MIGRATION_DIR: /app/migrations
+      SETUP_RUN_MIGRATE: ${SETUP_RUN_MIGRATE:-true}
+      SETUP_RUN_SEED_MASTER: ${SETUP_RUN_SEED_MASTER:-true}
+      SETUP_RUN_BOOTSTRAP_ADMIN: ${SETUP_RUN_BOOTSTRAP_ADMIN:-true}
+      SETUP_RUN_DEMO_SEED: ${SETUP_RUN_DEMO_SEED:-true}
+      SETUP_DEMO_PRESET: ${SETUP_DEMO_PRESET:-minimal}
+      SETUP_DEMO_SEED: ${SETUP_DEMO_SEED:-20260723}
+      SETUP_DEMO_FROM: ${SETUP_DEMO_FROM:-2026-07-28}
+      SETUP_DEMO_TO: ${SETUP_DEMO_TO:-2026-07-28}
+      SETUP_DEMO_SCALE: ${SETUP_DEMO_SCALE:-1}
+      SETUP_DEMO_VARIATION: ${SETUP_DEMO_VARIATION:-0.5}
+    command:
+      - setup
+    depends_on:
+      mysql:
+        condition: service_healthy
+    volumes:
+      - uploads:/app/storage/uploads
+      - exports:/app/storage/exports
     restart: "no"
 
   api:
@@ -57,7 +87,7 @@ services:
       - uploads:/app/storage/uploads
       - exports:/app/storage/exports
     depends_on:
-      migrate:
+      setup:
         condition: service_completed_successfully
     healthcheck:
       test:
@@ -87,7 +117,7 @@ services:
       - uploads:/app/storage/uploads
       - exports:/app/storage/exports
     depends_on:
-      migrate:
+      setup:
         condition: service_completed_successfully
 
   seed:
@@ -103,11 +133,12 @@ services:
     command:
       - seed
       - demo
-      - --preset=minimal
-      - --seed=20260723
-      - --as-of=2026-07-01
+      - --preset=${SETUP_DEMO_PRESET:-minimal}
+      - --seed=${SETUP_DEMO_SEED:-20260723}
+      - --from=${SETUP_DEMO_FROM:-2026-07-28}
+      - --to=${SETUP_DEMO_TO:-2026-07-28}
     depends_on:
-      migrate:
+      setup:
         condition: service_completed_successfully
     restart: "no"
 

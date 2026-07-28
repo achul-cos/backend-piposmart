@@ -14,6 +14,10 @@ import (
 )
 
 func Run(ctx context.Context, cfg config.Config, command string, output io.Writer) error {
+	if !isSupportedCommand(command) {
+		return fmt.Errorf("perintah migration %q tidak didukung; gunakan up, down, reset, status, atau version", command)
+	}
+
 	db, err := sql.Open("mysql", cfg.Database.DSN())
 	if err != nil {
 		return fmt.Errorf("buka database migration: %w", err)
@@ -33,15 +37,24 @@ func Run(ctx context.Context, cfg config.Config, command string, output io.Write
 		err = goose.UpContext(ctx, db, cfg.Migration.Directory)
 	case "down":
 		err = goose.DownContext(ctx, db, cfg.Migration.Directory)
+	case "reset":
+		err = goose.ResetContext(ctx, db, cfg.Migration.Directory)
 	case "status":
 		err = goose.StatusContext(ctx, db, cfg.Migration.Directory)
 	case "version":
 		err = goose.VersionContext(ctx, db, cfg.Migration.Directory)
-	default:
-		return fmt.Errorf("perintah migration %q tidak didukung; gunakan up, down, status, atau version", command)
 	}
 	if err != nil {
 		return fmt.Errorf("goose %s: %w", command, err)
 	}
 	return nil
+}
+
+func isSupportedCommand(command string) bool {
+	switch command {
+	case "up", "down", "reset", "status", "version":
+		return true
+	default:
+		return false
+	}
 }

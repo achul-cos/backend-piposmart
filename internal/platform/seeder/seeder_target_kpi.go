@@ -77,7 +77,11 @@ func seedTargetKpiRankingScenario(ctx context.Context, tx *sql.Tx, options Optio
 	for _, salesID := range salesIDs {
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO sales_targets (sales_id, metric_code_id, period_year, period_month, target_value, source)
-			VALUES (?, ?, ?, ?, '5.00', 'BULK')`,
+			VALUES (?, ?, ?, ?, '5.00', 'BULK')
+			ON DUPLICATE KEY UPDATE
+				target_value = VALUES(target_value),
+				source = VALUES(source),
+				updated_at = NOW()`,
 			salesID, metricCodeID, periodYear, periodMonth,
 		); err != nil {
 			return fmt.Errorf("seed target/kpi: insert sales_target: %w", err)
@@ -86,7 +90,13 @@ func seedTargetKpiRankingScenario(ctx context.Context, tx *sql.Tx, options Optio
 
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO kpi_definitions (metric_code_id, period_year, period_month, weight, threshold_achieved, threshold_near)
-		VALUES (?, ?, ?, '100.00', '100.00', '80.00')`,
+		VALUES (?, ?, ?, '100.00', '100.00', '80.00')
+		ON DUPLICATE KEY UPDATE
+			weight = VALUES(weight),
+			threshold_achieved = VALUES(threshold_achieved),
+			threshold_near = VALUES(threshold_near),
+			active = TRUE,
+			updated_at = NOW()`,
 		metricCodeID, periodYear, periodMonth,
 	); err != nil {
 		return fmt.Errorf("seed target/kpi: insert kpi_definition: %w", err)

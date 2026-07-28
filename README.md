@@ -55,9 +55,42 @@ docker compose up --build
 Service yang dijalankan:
 
 - `mysql`: database MySQL 8;
-- `migrate`: menjalankan Goose sekali sebelum API;
+- `setup`: init otomatis yang menjalankan `migrate up`, `seed master`, `bootstrap-admin`, dan `seed demo`;
 - `api`: HTTP API di `http://localhost:8080`;
 - `worker`: fondasi background worker.
+
+Urutan startup Docker Compose sekarang:
+
+```text
+mysql -> setup -> api + worker
+```
+
+`setup` memakai environment berikut dari `.env`:
+
+```dotenv
+SETUP_RUN_MIGRATE=true
+SETUP_RUN_SEED_MASTER=true
+SETUP_RUN_BOOTSTRAP_ADMIN=true
+SETUP_RUN_DEMO_SEED=true
+SETUP_DEMO_PRESET=minimal
+SETUP_DEMO_SEED=20260723
+SETUP_DEMO_FROM=2026-07-28
+SETUP_DEMO_TO=2026-07-28
+SETUP_DEMO_SCALE=1
+SETUP_DEMO_VARIATION=0.5
+```
+
+Kalau ingin menonaktifkan demo seed otomatis, ubah:
+
+```dotenv
+SETUP_RUN_DEMO_SEED=false
+```
+
+Service manual tetap tersedia lewat profile `tools`, misalnya:
+
+```powershell
+docker compose --profile tools run --rm migrate
+```
 
 Endpoint demo:
 
@@ -99,7 +132,7 @@ Jalankan migration dan API:
 go run . migrate up
 go run . seed master
 go run . bootstrap-admin
-go run . seed demo --preset=minimal --seed=20260723 --as-of=2026-07-01
+go run . seed demo --preset=minimal --seed=20260723 --from=2026-07-01 --to=2026-07-01
 go run . api
 ```
 
@@ -124,21 +157,66 @@ klasifikasi `ACHIEVED`/`NEAR_ACHIEVED`/`NOT_ACHIEVED` yang deterministik, langsu
 seeder untuk skenario demo).
 
 ```powershell
-go run . seed demo --preset=large --seed=20260723 --as-of=2026-07-01
+go run . seed demo --preset=large --seed=20260723 --from=2026-01-01 --to=2026-07-01 --scale=10 --variation=0.5
 ```
+
+Mulai Sprint 14e, preset `large` mendukung flag `--scale` agar volume data dapat disesuaikan
+tanpa mengubah logika seeder:
+
+| Scale | Jumlah owner target |
+| --- | ---: |
+| `1` | 50 |
+| `2` | 100 |
+| `3` | 200 |
+| `4` | 500 |
+| `5` | 1000 |
+| `6` | 2000 |
+| `7` | 3000 |
+| `8` | 5000 |
+| `9` | 1000 |
+| `10` | 18000 |
+
+`--scale` hanya berlaku untuk `--preset=large`. Jika tidak dikirim, default-nya `10` agar
+perilaku lama tetap sama.
+
+`--from` dan `--to` sekarang menjadi rentang tanggal pembuatan data demo. Default keduanya adalah
+hari ini. Secara internal, event turunan seperti KPI period, follow-up, closing, top-up, dan
+subscription tetap memakai tanggal akhir (`--to`) sebagai anchor.
+
+`--variation` mengatur pola sebaran data harian pada preset `large`:
+
+- `1` = merata per hari
+- `0.5` = seimbang antara merata dan acak
+- `0` = sangat acak / sangat gejolak
+
+Default `--variation=0.5`.
+
+Contoh:
+
+```powershell
+go run . seed demo --preset=large --seed=20260723 --from=2026-07-01 --to=2026-07-28 --scale=1 --variation=1
+go run . seed demo --preset=large --seed=20260723 --from=2026-01-01 --to=2026-07-28 --scale=4 --variation=0.5
+go run . seed demo --preset=large --seed=20260723 --from=2025-01-01 --to=2026-07-28 --scale=10 --variation=0.2
+```
+
+Preset `large` sekarang tidak hanya mengisi owner/outlet/lead/interaksi/closing, tetapi juga
+menyebarkan data wallet top-up/debit, training, subscription order, reconciliation, dan partner
+demo agar lebih representatif terhadap modul-modul backend yang sudah berjalan hingga Sprint 14.
 
 Command yang tersedia:
 
 ```text
 crm api
 crm worker
+crm setup
 crm migrate up
 crm migrate down
+crm migrate reset
 crm migrate status
 crm migrate version
 crm seed master
-crm seed demo --preset=minimal --seed=20260723 --as-of=2026-07-01
-crm seed demo --preset=large --seed=20260723 --as-of=2026-07-01
+crm seed demo --preset=minimal --seed=20260723 --from=2026-07-01 --to=2026-07-01
+crm seed demo --preset=large --seed=20260723 --from=2026-01-01 --to=2026-07-01 --scale=10 --variation=0.5
 crm bootstrap-admin
 crm version
 crm help
@@ -3505,5 +3583,3 @@ internal/partner/      Partner, PIC, referral, commission, payout (Sprint 11, 12
 internal/target/       Sales target — bulk & override (Sprint 13)
 internal/kpi/          KPI definition, recompute, ranking (Sprint 13)
 ```
-
-

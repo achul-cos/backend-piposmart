@@ -2,8 +2,10 @@ package importing
 
 import (
 	"errors"
+	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"backend_crm_piposmart/internal/identity"
 	"backend_crm_piposmart/internal/platform/httpx"
@@ -255,36 +257,165 @@ func parseBatchID(c *gin.Context) (int64, bool) {
 
 func writeImportError(c *gin.Context, err error) {
 	var batchStatusErr *BatchStatusActionError
+	requestID := httpx.RequestID(c)
+	logImportError(c, err)
 
 	switch {
 	case errors.Is(err, ErrNotFound):
-		httpx.Error(c, http.StatusNotFound, "NOT_FOUND", err.Error(), nil)
+		httpx.Error(c, http.StatusNotFound, "NOT_FOUND", err.Error(), importErrorDetails("NOT_FOUND", err, requestID))
 	case errors.Is(err, ErrForbidden):
-		httpx.Error(c, http.StatusForbidden, "FORBIDDEN", err.Error(), nil)
+		httpx.Error(c, http.StatusForbidden, "FORBIDDEN", err.Error(), importErrorDetails("FORBIDDEN", err, requestID))
 	case errors.Is(err, ErrInvalidFileType):
-		httpx.Error(c, http.StatusBadRequest, "INVALID_FILE_TYPE", err.Error(), nil)
+		httpx.Error(c, http.StatusBadRequest, "INVALID_FILE_TYPE", err.Error(), importErrorDetails("INVALID_FILE_TYPE", err, requestID))
 	case errors.Is(err, ErrFileTooLarge):
-		httpx.Error(c, http.StatusBadRequest, "FILE_TOO_LARGE", err.Error(), nil)
+		httpx.Error(c, http.StatusBadRequest, "FILE_TOO_LARGE", err.Error(), importErrorDetails("FILE_TOO_LARGE", err, requestID))
 	case errors.Is(err, ErrFileUnavailable):
-		httpx.Error(c, http.StatusNotFound, "FILE_UNAVAILABLE", err.Error(), nil)
+		httpx.Error(c, http.StatusNotFound, "FILE_UNAVAILABLE", err.Error(), importErrorDetails("FILE_UNAVAILABLE", err, requestID))
 	case errors.Is(err, ErrEmptyFile):
-		httpx.Error(c, http.StatusBadRequest, "EMPTY_FILE", err.Error(), nil)
+		httpx.Error(c, http.StatusBadRequest, "EMPTY_FILE", err.Error(), importErrorDetails("EMPTY_FILE", err, requestID))
 	case errors.Is(err, ErrProfileRequired):
-		httpx.Error(c, http.StatusBadRequest, "PROFILE_REQUIRED", err.Error(), nil)
+		httpx.Error(c, http.StatusBadRequest, "PROFILE_REQUIRED", err.Error(), importErrorDetails("PROFILE_REQUIRED", err, requestID))
 	case errors.Is(err, ErrProfileHeaderMismatch):
-		httpx.Error(c, http.StatusBadRequest, "PROFILE_HEADER_MISMATCH", err.Error(), nil)
+		httpx.Error(c, http.StatusBadRequest, "PROFILE_HEADER_MISMATCH", err.Error(), importErrorDetails("PROFILE_HEADER_MISMATCH", err, requestID))
 	case errors.Is(err, ErrUnknownProfile):
-		httpx.Error(c, http.StatusBadRequest, "UNKNOWN_PROFILE", err.Error(), nil)
+		httpx.Error(c, http.StatusBadRequest, "UNKNOWN_PROFILE", err.Error(), importErrorDetails("UNKNOWN_PROFILE", err, requestID))
 	case errors.As(err, &batchStatusErr):
 		httpx.Error(c, http.StatusBadRequest, "INVALID_BATCH_STATUS", err.Error(), gin.H{
+			"root_cause":       "Frontend memanggil aksi import pada status batch yang belum sesuai alur backend.",
+			"solution":         "Poll GET /imports/{id} dan hanya aktifkan aksi yang sesuai dengan status batch saat ini.",
+			"frontend_prevent": "Gunakan status batch sebagai source of truth utama. Tombol commit hanya aktif saat status VALIDATED.",
 			"action":           batchStatusErr.Action,
 			"current_status":   batchStatusErr.CurrentStatus,
 			"allowed_statuses": batchStatusErr.AllowedStatuses,
 			"hint":             "poll GET /imports/{id} until status VALIDATED before first commit; retry commit safely if status COMMITTING or COMMITTED",
+			"technical_error":  err.Error(),
+			"request_id":       requestID,
 		})
 	case errors.Is(err, ErrInvalidBatchStatus):
-		httpx.Error(c, http.StatusBadRequest, "INVALID_BATCH_STATUS", err.Error(), nil)
+		httpx.Error(c, http.StatusBadRequest, "INVALID_BATCH_STATUS", err.Error(), importErrorDetails("INVALID_BATCH_STATUS", err, requestID))
 	default:
-		httpx.Error(c, http.StatusInternalServerError, "INTERNAL_ERROR", "unexpected error", nil)
+		httpx.Error(c, http.StatusInternalServerError, "INTERNAL_ERROR", "unexpected error", importErrorDetails("INTERNAL_ERROR", err, requestID))
+	}
+}
+
+func logImportError(c *gin.Context, err error) {
+	slog.Error("import request failed",
+		slog.String("request_id", httpx.RequestID(c)),
+		slog.String("method", c.Request.Method),
+		slog.String("path", c.Request.URL.Path),
+		slog.String("client_ip", c.ClientIP()),
+		slog.String("error", err.Error()),
+	)
+}
+
+func importErrorDetails(code string, err error, requestID string) gin.H {
+	details := gin.H{
+		"request_id":      requestID,
+		"technical_error": err.Error(),
+	}
+
+	switch code {
+	case "NOT_FOUND":
+		details["root_cause"] = "Batch import atau file yang diminta tidak ditemukan."
+		details["solution"] = "Gunakan ID batch yang valid dan pastikan batch masih tersedia."
+		details["frontend_prevent"] = "Simpan ID batch dari response upload/list, lalu refresh data bila batch sudah lama."
+	case "FORBIDDEN":
+		details["root_cause"] = "User yang sedang login tidak memiliki hak akses modul import."
+		details["solution"] = "Lakukan login sebagai Admin."
+		details["frontend_prevent"] = "Sembunyikan modul import untuk role non-Admin dan redirect bila token tidak punya akses."
+	case "INVALID_FILE_TYPE":
+		details["root_cause"] = "File yang diunggah bukan format Excel .xlsx."
+		details["solution"] = "Unggah file .xlsx yang valid."
+		details["frontend_prevent"] = "Validasi ekstensi file di frontend sebelum upload."
+	case "FILE_TOO_LARGE":
+		details["root_cause"] = "Ukuran file melebihi batas maksimum upload backend."
+		details["solution"] = "Perkecil file atau pecah menjadi beberapa file import."
+		details["frontend_prevent"] = "Cek ukuran file sebelum upload dan tampilkan batas maksimum ke user."
+	case "FILE_UNAVAILABLE":
+		details["root_cause"] = "File asli batch tidak lagi tersedia di storage server."
+		details["solution"] = "Unggah ulang file import baru."
+		details["frontend_prevent"] = "Tampilkan fallback ketika file viewer gagal, lalu arahkan user untuk re-upload."
+	case "EMPTY_FILE":
+		details["root_cause"] = "File upload kosong atau gagal terbaca."
+		details["solution"] = "Pastikan file berisi workbook Excel yang valid."
+		details["frontend_prevent"] = "Blok upload file berukuran 0 byte."
+	case "PROFILE_REQUIRED":
+		details["root_cause"] = "Backend tidak bisa menebak profil import dari header file."
+		details["solution"] = "Kirim parameter profile secara eksplisit, mis. OWNER_OUTLET atau NON_REGISTER."
+		details["frontend_prevent"] = "Sediakan selector profile ketika auto-detect tidak yakin atau file berasal dari template manual."
+	case "PROFILE_HEADER_MISMATCH":
+		details["root_cause"] = "Header kolom file tidak cocok dengan profile yang dipilih."
+		details["solution"] = "Pilih profile yang benar atau gunakan template Excel yang sesuai."
+		details["frontend_prevent"] = "Pasangkan pilihan profile dengan template file yang tepat dan tampilkan contoh header yang diharapkan."
+	case "UNKNOWN_PROFILE":
+		details["root_cause"] = "Nilai profile yang dikirim frontend tidak dikenal backend."
+		details["solution"] = "Gunakan hanya profile yang didukung backend."
+		details["frontend_prevent"] = "Gunakan enum profile yang dibekukan dari API/OpenAPI, jangan hardcode bebas."
+	case "INVALID_BATCH_STATUS":
+		details["root_cause"] = "Aksi import dipanggil saat status batch belum sesuai."
+		details["solution"] = "Ikuti state machine batch: upload -> validating -> validated -> committing -> committed."
+		details["frontend_prevent"] = "Enable/disable tombol berdasarkan status batch dari GET /imports/{id}."
+	default:
+		details["root_cause"] = inferImportRootCause(err)
+		details["solution"] = inferImportSolution(err)
+		details["frontend_prevent"] = inferImportFrontendPrevent(err)
+	}
+
+	return details
+}
+
+func inferImportRootCause(err error) string {
+	message := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(message, "unknown column") && strings.Contains(message, "progress_percentage"):
+		return "Skema database production belum sesuai dengan kode backend terbaru; kolom progress_percentage belum ada."
+	case strings.Contains(message, "unknown column"):
+		return "Skema database tidak sinkron dengan versi backend yang sedang berjalan."
+	case strings.Contains(message, "create upload directory"):
+		return "Backend gagal membuat folder penyimpanan file upload."
+	case strings.Contains(message, "store upload"):
+		return "Backend gagal menyimpan file upload ke storage server."
+	case strings.Contains(message, "find batch by sha256"):
+		return "Backend gagal membaca data batch import dari database saat deduplikasi file."
+	case strings.Contains(message, "create batch"):
+		return "Backend gagal membuat row import_batches di database."
+	case strings.Contains(message, "set validate job id"):
+		return "Backend gagal menyimpan relasi job validasi ke batch import."
+	case strings.Contains(message, "jobqueue") || strings.Contains(message, "enqueue"):
+		return "Backend gagal memasukkan job import ke antrean worker."
+	default:
+		return "Terjadi error teknis internal pada proses upload/orkestrasi import."
+	}
+}
+
+func inferImportSolution(err error) string {
+	message := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(message, "unknown column") && strings.Contains(message, "progress_percentage"):
+		return "Jalankan migration terbaru di environment production sampai versi 20260728000100 atau lebih baru."
+	case strings.Contains(message, "unknown column"):
+		return "Pastikan migration production sudah sejajar dengan commit backend yang sedang dideploy."
+	case strings.Contains(message, "create upload directory"), strings.Contains(message, "store upload"):
+		return "Periksa konfigurasi UPLOAD_DIR, permission filesystem, dan persistent volume pada environment server."
+	case strings.Contains(message, "find batch by sha256"), strings.Contains(message, "create batch"), strings.Contains(message, "set validate job id"):
+		return "Periksa koneksi database, struktur tabel import_batches, dan foreign key/job_queue yang dibutuhkan."
+	case strings.Contains(message, "jobqueue"), strings.Contains(message, "enqueue"):
+		return "Pastikan tabel job_queue tersedia dan worker berjalan normal di environment tersebut."
+	default:
+		return "Periksa app logs menggunakan request_id ini untuk melihat technical_error dan perbaiki resource server/database yang disebutkan."
+	}
+}
+
+func inferImportFrontendPrevent(err error) string {
+	message := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(message, "unknown column"):
+		return "Frontend tidak perlu retry buta; tampilkan pesan maintenance/server mismatch dan arahkan user menghubungi admin sistem."
+	case strings.Contains(message, "create upload directory"), strings.Contains(message, "store upload"):
+		return "Jika server gagal menyimpan file, frontend cukup tampilkan error final; retry otomatis tidak akan banyak membantu sampai storage server diperbaiki."
+	case strings.Contains(message, "jobqueue"), strings.Contains(message, "enqueue"):
+		return "Frontend dapat menyarankan retry manual beberapa saat lagi, tetapi tetap tampilkan bahwa worker/import queue backend sedang bermasalah."
+	default:
+		return "Tampilkan technical_error, root_cause, dan solution dari response agar user office bisa melapor dengan konteks yang lengkap."
 	}
 }

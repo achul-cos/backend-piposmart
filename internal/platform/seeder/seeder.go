@@ -25,10 +25,14 @@ const (
 )
 
 type Options struct {
-	Mode   string
-	Preset string
-	Seed   int64
-	AsOf   time.Time
+	Mode      string
+	Preset    string
+	Seed      int64
+	From      time.Time
+	To        time.Time
+	AsOf      time.Time
+	Scale     int
+	Variation float64
 }
 
 func Parse(args []string) (Options, error) {
@@ -46,9 +50,13 @@ func Parse(args []string) (Options, error) {
 			return Options{}, fmt.Errorf("seed master tidak menerima argumen tambahan\n\n%s", seedUsage)
 		}
 	case ModeDemo:
+		today := time.Now().UTC().Truncate(24 * time.Hour)
 		options.Preset = "minimal"
 		options.Seed = 1
-		options.AsOf = time.Now().UTC().Truncate(24 * time.Hour)
+		options.From = today
+		options.To = today
+		options.AsOf = today
+		options.Variation = 0.5
 		for _, arg := range args[1:] {
 			key, value, found := strings.Cut(arg, "=")
 			if !found || !strings.HasPrefix(key, "--") {
@@ -63,18 +71,62 @@ func Parse(args []string) (Options, error) {
 					return Options{}, fmt.Errorf("--seed harus angka: %w", err)
 				}
 				options.Seed = seed
+			case "--from":
+				from, err := time.Parse("2006-01-02", value)
+				if err != nil {
+					return Options{}, fmt.Errorf("--from harus format YYYY-MM-DD: %w", err)
+				}
+				options.From = from
+			case "--to":
+				to, err := time.Parse("2006-01-02", value)
+				if err != nil {
+					return Options{}, fmt.Errorf("--to harus format YYYY-MM-DD: %w", err)
+				}
+				options.To = to
 			case "--as-of":
 				asOf, err := time.Parse("2006-01-02", value)
 				if err != nil {
 					return Options{}, fmt.Errorf("--as-of harus format YYYY-MM-DD: %w", err)
 				}
+				options.From = asOf
+				options.To = asOf
 				options.AsOf = asOf
+			case "--scale":
+				scale, err := strconv.Atoi(value)
+				if err != nil {
+					return Options{}, fmt.Errorf("--scale harus angka: %w", err)
+				}
+				options.Scale = scale
+			case "--variation":
+				variation, err := strconv.ParseFloat(value, 64)
+				if err != nil {
+					return Options{}, fmt.Errorf("--variation harus angka desimal 0 sampai 1: %w", err)
+				}
+				options.Variation = variation
 			default:
 				return Options{}, fmt.Errorf("argumen seed demo tidak dikenal: %s", key)
 			}
 		}
+		if options.From.After(options.To) {
+			return Options{}, errors.New("--from tidak boleh lebih besar dari --to")
+		}
+		if options.Variation < 0 || options.Variation > 1 {
+			return Options{}, errors.New("--variation harus bernilai antara 0 sampai 1")
+		}
+		options.AsOf = options.To
 		if options.Preset != "minimal" && options.Preset != "large" {
 			return Options{}, fmt.Errorf("preset demo %q belum tersedia; gunakan minimal atau large", options.Preset)
+		}
+		if options.Preset == "large" {
+			if options.Scale == 0 {
+				options.Scale = defaultLargeSeedScale
+			}
+			if _, err := largeSeedOwnerCountForScale(options.Scale); err != nil {
+				return Options{}, err
+			}
+		}
+		if options.Preset != "large" && options.Scale != 0 {
+			return Options{}, errors.New("--scale hanya didukung untuk seed demo --preset=large")
 		}
 	default:
 		return Options{}, fmt.Errorf("mode seed %q tidak dikenal\n\n%s", options.Mode, seedUsage)
@@ -118,10 +170,18 @@ func Run(ctx context.Context, cfg config.Config, args []string, output io.Writer
 		slog.String("mode", options.Mode),
 		slog.String("preset", options.Preset),
 		slog.Int64("seed", options.Seed),
+		slog.Int("scale", options.Scale),
+		slog.String("from", options.From.Format("2006-01-02")),
+		slog.String("to", options.To.Format("2006-01-02")),
+		slog.Float64("variation", options.Variation),
 	)
 	fmt.Fprintf(output, "seed %s selesai", options.Mode)
 	if options.Mode == ModeDemo {
-		fmt.Fprintf(output, " (preset=%s, seed=%d, as_of=%s)", options.Preset, options.Seed, options.AsOf.Format("2006-01-02"))
+		fmt.Fprintf(output, " (preset=%s, seed=%d, from=%s, to=%s", options.Preset, options.Seed, options.From.Format("2006-01-02"), options.To.Format("2006-01-02"))
+		if options.Preset == "large" {
+			fmt.Fprintf(output, ", scale=%d, variation=%.2f", options.Scale, options.Variation)
+		}
+		fmt.Fprintf(output, ")")
 	}
 	fmt.Fprintln(output)
 	return nil
@@ -173,7 +233,7 @@ func startSeedRun(ctx context.Context, db *sql.DB, cfg config.Config, options Op
 		options.Mode,
 		nullableString(options.Preset),
 		nullableInt64(options.Seed),
-		nullableDate(options.AsOf),
+		nullableDate(options.To),
 		cfg.App.Environment,
 		checksum,
 		time.Now().UTC(),
@@ -812,7 +872,7 @@ func seedPartnersDemo(ctx context.Context, tx *sql.Tx, fake *factory.Factory) er
 		}
 	}
 
-	leadID, err := lookupID(ctx, tx, "customer_leads", "code", "LEAD-000001")
+	leadID, err := lookupFirstLeadID(ctx, tx)
 	if err == nil && leadID > 0 {
 		if pid, ok := partnerIDs["REF-001"]; ok && pid > 0 {
 			if _, err := tx.ExecContext(ctx, `
@@ -827,6 +887,21 @@ func seedPartnersDemo(ctx context.Context, tx *sql.Tx, fake *factory.Factory) er
 	}
 	return nil
 }
+
+func lookupFirstLeadID(ctx context.Context, tx *sql.Tx) (int64, error) {
+	var id int64
+	err := tx.QueryRowContext(ctx, `
+		SELECT id
+		FROM customer_leads
+		WHERE deleted_at IS NULL
+		ORDER BY id
+		LIMIT 1`).Scan(&id)
+	if err != nil {
+		return 0, fmt.Errorf("lookup first customer lead: %w", err)
+	}
+	return id, nil
+}
+
 func lookupID(ctx context.Context, tx *sql.Tx, table, column, value string) (int64, error) {
 	query := fmt.Sprintf("SELECT id FROM %s WHERE %s = ?", table, column)
 	var id int64
@@ -837,7 +912,7 @@ func lookupID(ctx context.Context, tx *sql.Tx, table, column, value string) (int
 }
 
 func checksumFor(options Options) string {
-	sum := sha256.Sum256([]byte(fmt.Sprintf("%s|%s|%d|%s", options.Mode, options.Preset, options.Seed, options.AsOf.Format("2006-01-02"))))
+	sum := sha256.Sum256([]byte(fmt.Sprintf("%s|%s|%d|%s|%s|%d|%.4f", options.Mode, options.Preset, options.Seed, options.From.Format("2006-01-02"), options.To.Format("2006-01-02"), options.Scale, options.Variation)))
 	return hex.EncodeToString(sum[:])
 }
 
@@ -866,4 +941,5 @@ const seedUsage = `CRM Piposmart seed
 
 Usage:
   crm seed master
-  crm seed demo --preset=minimal --seed=20260723 --as-of=2026-07-01`
+  crm seed demo --preset=minimal --seed=20260723 --from=2026-07-01 --to=2026-07-01
+  crm seed demo --preset=large --seed=20260723 --from=2026-01-01 --to=2026-07-01 --scale=10 --variation=0.5`

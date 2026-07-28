@@ -87,7 +87,7 @@ func (f *Factory) CreateWalletTopup(ctx context.Context, tx *sql.Tx, ownerID int
 		return 0, err
 	}
 	afterCents := beforeCents + amountCents
-	paymentCode := fmt.Sprintf("DEMO-PAY-%06d-%02d", ownerID, topup.PaidAt.Day())
+	paymentCode := fmt.Sprintf("DEMO-PAY-%06d-%s", ownerID, compactSeedKey(idempotencyKey))
 	result, err := tx.ExecContext(ctx, `
 		INSERT INTO wallet_payments
 			(code, owner_id, wallet_account_id, payment_type, payment_channel, external_reference,
