@@ -83,15 +83,16 @@ type DatabaseConfig struct {
 func (c DatabaseConfig) DSN() string {
 	location, _ := time.LoadLocation(c.Location)
 	driverConfig := drivermysql.Config{
-		User:      c.User,
-		Passwd:    c.Password,
-		Net:       "tcp",
-		Addr:      net.JoinHostPort(c.Host, strconv.Itoa(c.Port)),
-		DBName:    c.Name,
-		Params:    map[string]string{"charset": c.Charset},
-		ParseTime: c.ParseTime,
-		Loc:       location,
-		Timeout:   c.ConnectTimeout,
+		User:                 c.User,
+		Passwd:               c.Password,
+		Net:                  "tcp",
+		Addr:                 net.JoinHostPort(c.Host, strconv.Itoa(c.Port)),
+		DBName:               c.Name,
+		Params:               map[string]string{"charset": c.Charset},
+		ParseTime:            c.ParseTime,
+		Loc:                  location,
+		Timeout:              c.ConnectTimeout,
+		AllowNativePasswords: true,
 	}
 	return driverConfig.FormatDSN()
 }
