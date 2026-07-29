@@ -176,28 +176,45 @@ func seedDemoLarge(ctx context.Context, tx *sql.Tx, options Options) error {
 			}
 
 			if rng.Intn(100) < 72 {
-				topup := fake.BuildWalletTopup(ownerIndex, scenario.TopupAmount)
-				topup.PaidAt = clampToAsOf(closingTime.AddDate(0, 0, -(1+rng.Intn(30))).Add(9*time.Hour), options.AsOf)
-				topup.ExternalReference = fmt.Sprintf("LARGE-CLOSING-TOPUP-OWNER-%06d", ownerIndex)
-				topup.IdempotencyKey = fmt.Sprintf("large:closing:topup:owner:%06d", ownerIndex)
-				topup.Note = fmt.Sprintf("Large seed top-up sebelum subscription order owner=%06d", ownerIndex)
-				if _, err := fake.CreateWalletTopup(ctx, tx, ownerID, topup); err != nil {
-					return fmt.Errorf("create linked topup owner=%d: %w", ownerIndex, err)
-				}
-
 				order := fake.BuildSubscriptionOrder(ownerIndex, scenario.PlanCode, scenario.PromotionCode, sql.NullInt64{Int64: closingID, Valid: true})
 				order.PurchasedAt = clampToAsOf(closingTime.Add(2*time.Hour), options.AsOf)
 				order.SubscriptionStartDate = dateOnlyUTC(order.PurchasedAt)
 				order.ExternalReference = fmt.Sprintf("LARGE-SUB-ORDER-OWNER-%06d", ownerIndex)
 				order.IdempotencyKey = fmt.Sprintf("large:subscription:owner:%06d", ownerIndex)
 				order.Note = fmt.Sprintf("Large seed subscription order dari closing owner=%06d", ownerIndex)
+
+				topupAmount, err := fake.ResolveSubscriptionOrderTopupAmount(ctx, tx, ownerID, order, scenario.TopupAmount)
+				if err != nil {
+					return fmt.Errorf("resolve linked topup owner=%d: %w", ownerIndex, err)
+				}
+				topup := fake.BuildWalletTopup(ownerIndex, topupAmount)
+				topup.PaidAt = clampToAsOf(closingTime.AddDate(0, 0, -(1+rng.Intn(30))).Add(9*time.Hour), options.AsOf)
+				topup.ExternalReference = fmt.Sprintf("LARGE-CLOSING-TOPUP-OWNER-%06d", ownerIndex)
+				topup.IdempotencyKey = fmt.Sprintf("large:closing:topup:owner:%06d", ownerIndex)
+				topup.Note = fmt.Sprintf("Large seed wallet top-up sebelum subscription order owner=%06d", ownerIndex)
+				if _, err := fake.CreateWalletTopup(ctx, tx, ownerID, topup); err != nil {
+					return fmt.Errorf("create linked topup owner=%d: %w", ownerIndex, err)
+				}
+
 				if _, err := fake.CreateSubscriptionOrder(ctx, tx, ownerID, order); err != nil {
 					return fmt.Errorf("create linked subscription owner=%d: %w", ownerIndex, err)
 				}
 			}
 		} else if rng.Intn(100) < 6 {
-			topup := fake.BuildWalletTopup(ownerIndex, "1500000.00")
-			topup.PaidAt = clampToAsOf(leadCreatedAt.AddDate(0, 0, 14+rng.Intn(30)).Add(9*time.Hour), options.AsOf)
+			topupPaidAt := clampToAsOf(leadCreatedAt.AddDate(0, 0, 14+rng.Intn(30)).Add(9*time.Hour), options.AsOf)
+			order := fake.BuildSubscriptionOrder(ownerIndex, "BASIC_01_MONTHS", "", sql.NullInt64{})
+			order.PurchasedAt = clampToAsOf(topupPaidAt.AddDate(0, 0, 2+rng.Intn(15)), options.AsOf)
+			order.SubscriptionStartDate = dateOnlyUTC(order.PurchasedAt)
+			order.ExternalReference = fmt.Sprintf("LARGE-HANGING-ORDER-OWNER-%06d", ownerIndex)
+			order.IdempotencyKey = fmt.Sprintf("large:hanging:order:owner:%06d", ownerIndex)
+			order.Note = fmt.Sprintf("Large seed hanging subscription order owner=%06d", ownerIndex)
+
+			topupAmount, err := fake.ResolveSubscriptionOrderTopupAmount(ctx, tx, ownerID, order, "1500000.00")
+			if err != nil {
+				return fmt.Errorf("resolve hanging topup owner=%d: %w", ownerIndex, err)
+			}
+			topup := fake.BuildWalletTopup(ownerIndex, topupAmount)
+			topup.PaidAt = topupPaidAt
 			topup.ExternalReference = fmt.Sprintf("LARGE-HANGING-TOPUP-OWNER-%06d", ownerIndex)
 			topup.IdempotencyKey = fmt.Sprintf("large:hanging:topup:owner:%06d", ownerIndex)
 			topup.Note = fmt.Sprintf("Large seed top-up untuk hanging order owner=%06d", ownerIndex)
@@ -205,12 +222,6 @@ func seedDemoLarge(ctx context.Context, tx *sql.Tx, options Options) error {
 				return fmt.Errorf("create hanging topup owner=%d: %w", ownerIndex, err)
 			}
 
-			order := fake.BuildSubscriptionOrder(ownerIndex, "BASIC_01_MONTHS", "", sql.NullInt64{})
-			order.PurchasedAt = clampToAsOf(topup.PaidAt.AddDate(0, 0, 2+rng.Intn(15)), options.AsOf)
-			order.SubscriptionStartDate = dateOnlyUTC(order.PurchasedAt)
-			order.ExternalReference = fmt.Sprintf("LARGE-HANGING-ORDER-OWNER-%06d", ownerIndex)
-			order.IdempotencyKey = fmt.Sprintf("large:hanging:order:owner:%06d", ownerIndex)
-			order.Note = fmt.Sprintf("Large seed hanging subscription order owner=%06d", ownerIndex)
 			if _, err := fake.CreateSubscriptionOrder(ctx, tx, ownerID, order); err != nil {
 				return fmt.Errorf("create hanging order owner=%d: %w", ownerIndex, err)
 			}

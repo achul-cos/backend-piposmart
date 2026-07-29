@@ -34,6 +34,43 @@ func (f *Factory) BuildSubscriptionOrder(index int, planCode, promotionCode stri
 	}
 }
 
+func (f *Factory) ResolveSubscriptionOrderTopupAmount(ctx context.Context, tx *sql.Tx, ownerID int64, item SubscriptionOrder, desiredAmount string) (string, error) {
+	data, err := buildSeedSubscriptionData(ctx, tx, ownerID, item)
+	if err != nil {
+		return "", err
+	}
+	finalAmountCents, err := parseSeedMoneyToCents(data.finalAmount)
+	if err != nil {
+		return "", err
+	}
+	if finalAmountCents <= 0 {
+		return "", fmt.Errorf("seed subscription amount harus positif owner=%d", ownerID)
+	}
+
+	wallet, err := lockOrCreateSeedWallet(ctx, tx, ownerID)
+	if err != nil {
+		return "", err
+	}
+	currentBalanceCents, err := parseSeedMoneyToCents(wallet.balance)
+	if err != nil {
+		return "", err
+	}
+
+	desiredAmountCents, err := parseSeedMoneyToCents(desiredAmount)
+	if err != nil {
+		return "", err
+	}
+	if desiredAmountCents < 0 {
+		return "", fmt.Errorf("seed wallet top-up amount tidak boleh negatif owner=%d", ownerID)
+	}
+
+	deficitCents := finalAmountCents - currentBalanceCents
+	if deficitCents <= 0 || desiredAmountCents >= deficitCents {
+		return formatSeedCents(desiredAmountCents), nil
+	}
+	return formatSeedCents(deficitCents), nil
+}
+
 func (f *Factory) CreateSubscriptionOrder(ctx context.Context, tx *sql.Tx, ownerID int64, item SubscriptionOrder) (int64, error) {
 	adminID, err := lookupFirstUserIDByRole(ctx, tx, "ADMIN")
 	if err != nil {
