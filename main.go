@@ -66,7 +66,7 @@ func run(args []string) error {
 		return app.RunWorker(ctx, cfg, logger)
 	case "migrate":
 		if len(args) < 2 {
-			return errors.New("perintah migrate memerlukan action: up, down, reset, status, atau version")
+			return errors.New("perintah migrate memerlukan action: up, down, reset, clear, status, atau version")
 		}
 		return migration.Run(ctx, cfg, args[1], os.Stdout)
 	case "seed":
@@ -167,14 +167,17 @@ Usage:
   crm api
   crm worker
   crm setup
-  crm migrate <up|down|reset|status|version>
+  crm migrate <up|down|reset|clear|status|version>
   crm seed master
   crm seed demo --preset=minimal --seed=20260723 --from=2026-07-01 --to=2026-07-01
   crm bootstrap-admin
   crm version
   crm help
 
-setup akan menjalankan migrate up, seed master, bootstrap-admin, dan seed demo sesuai environment.`
+setup akan menjalankan migrate up, seed master, bootstrap-admin, dan seed demo sesuai environment.
+
+migrate clear akan menghapus seluruh data aplikasi lalu menjalankan seed master ulang.
+Perintah ini juga menghapus akun user; jalankan bootstrap-admin setelah clear bila perlu.`
 
 func printUsage() {
 	fmt.Println(usage)
