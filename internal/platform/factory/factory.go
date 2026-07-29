@@ -83,8 +83,6 @@ type TrainingReport struct {
 	CompletedAt     sql.NullTime
 	Location        string
 	MeetingURL      string
-	TrainerName     string
-	ParticipantName string
 	Note            string
 	ResultNote      string
 }
@@ -187,8 +185,6 @@ func (f *Factory) BuildTrainingReport(index int, completed bool) TrainingReport 
 		ScheduledAt:     f.asOf.AddDate(0, 0, 2+index).Add(10 * time.Hour),
 		Location:        fmt.Sprintf("Kantor customer demo %02d", index),
 		MeetingURL:      fmt.Sprintf("https://meet.example.test/demo-%02d", index),
-		TrainerName:     fmt.Sprintf("Sales Demo %03d", index),
-		ParticipantName: fmt.Sprintf("Owner Demo %03d", index),
 		Note:            "Training/demo aplikasi dari factory",
 	}
 	if completed {
@@ -407,9 +403,9 @@ func (f *Factory) CreateTrainingReport(ctx context.Context, tx *sql.Tx, leadID i
 	result, err := tx.ExecContext(ctx, `
 		INSERT INTO training_reports
 			(lead_id, owner_id, outlet_id, sales_id, supervisor_id, training_type, status,
-			 scheduled_at, completed_at, location, meeting_url, trainer_name, participant_name,
+			 scheduled_at, completed_at, location, meeting_url,
 			 note, result_note, created_by_user_id, updated_by_user_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		leadID,
 		state.ownerID,
 		state.outletID,
@@ -421,8 +417,6 @@ func (f *Factory) CreateTrainingReport(ctx context.Context, tx *sql.Tx, leadID i
 		training.CompletedAt,
 		training.Location,
 		training.MeetingURL,
-		training.TrainerName,
-		training.ParticipantName,
 		training.Note,
 		training.ResultNote,
 		state.salesID,

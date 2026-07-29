@@ -265,8 +265,8 @@ func (r *Repository) ScheduleTraining(ctx context.Context, actor identity.User, 
 		req.ScheduledAt.UTC(),
 		nullableString(req.Location),
 		nullableString(req.MeetingURL),
-		nullableString(req.TrainerName),
-		nullableString(req.ParticipantName),
+		nil,
+		nil,
 		nullableString(req.Note),
 		actor.ID,
 		actor.ID,
@@ -586,6 +586,29 @@ func (r *Repository) findTrainingByIDRaw(ctx context.Context, id int64) (Trainin
 	return item, err
 }
 
+func (r *Repository) GetTraining(ctx context.Context, actor identity.User, id int64) (TrainingReport, error) {
+	item, err := r.findTrainingByIDRaw(ctx, id)
+	if err != nil {
+		return TrainingReport{}, err
+	}
+	// Visibility check: admin bisa lihat semua, supervisor/sales hanya milik mereka
+	switch actor.RoleCode {
+	case RoleAdmin:
+		// OK
+	case RoleSupervisor:
+		if !(item.SupervisorID.Valid && item.SupervisorID.Int64 == actor.ID) {
+			return TrainingReport{}, ErrForbidden
+		}
+	case RoleSales:
+		if !(item.SalesID.Valid && item.SalesID.Int64 == actor.ID) {
+			return TrainingReport{}, ErrForbidden
+		}
+	default:
+		return TrainingReport{}, ErrForbidden
+	}
+	return item, nil
+}
+
 func (r *Repository) lockTraining(ctx context.Context, tx *sql.Tx, id int64) (TrainingReport, error) {
 	item, err := scanTraining(tx.QueryRowContext(ctx, trainingSelect()+`
 		WHERE tr.id = ? AND tr.deleted_at IS NULL
@@ -631,17 +654,20 @@ func stageHistorySelect() string {
 func trainingSelect() string {
 	return `
 		SELECT
-			tr.id, tr.lead_id, tr.owner_id, tr.outlet_id,
+			tr.id, tr.lead_id, cl.code,
+			tr.owner_id, o.code, o.name,
+			tr.outlet_id,
 			tr.sales_id, sales.name,
 			tr.supervisor_id, supervisor.name,
 			tr.training_type, tr.status, tr.scheduled_at, tr.completed_at, tr.canceled_at,
-			tr.rescheduled_at, tr.location, tr.meeting_url, tr.trainer_name, tr.participant_name,
+			tr.rescheduled_at, tr.location, tr.meeting_url,
 			tr.note, tr.result_note, tr.cancel_reason,
 			tr.created_by_user_id, created_by.name,
 			tr.updated_by_user_id, updated_by.name,
 			tr.created_at, tr.updated_at
 		FROM training_reports tr
 		LEFT JOIN customer_leads cl ON cl.id = tr.lead_id AND cl.deleted_at IS NULL
+		LEFT JOIN owners o ON o.id = tr.owner_id AND o.deleted_at IS NULL
 		LEFT JOIN users sales ON sales.id = tr.sales_id
 		LEFT JOIN users supervisor ON supervisor.id = tr.supervisor_id
 		LEFT JOIN users created_by ON created_by.id = tr.created_by_user_id
@@ -858,7 +884,10 @@ func scanTraining(row scanner) (TrainingReport, error) {
 	err := row.Scan(
 		&item.ID,
 		&item.LeadID,
+		&item.LeadCode,
 		&item.OwnerID,
+		&item.OwnerCode,
+		&item.OwnerName,
 		&item.OutletID,
 		&item.SalesID,
 		&item.SalesName,
@@ -872,8 +901,6 @@ func scanTraining(row scanner) (TrainingReport, error) {
 		&item.RescheduledAt,
 		&item.Location,
 		&item.MeetingURL,
-		&item.TrainerName,
-		&item.ParticipantName,
 		&item.Note,
 		&item.ResultNote,
 		&item.CancelReason,
