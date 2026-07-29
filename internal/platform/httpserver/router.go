@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"backend_crm_piposmart/internal/analytics"
 	"backend_crm_piposmart/internal/activity"
 	"backend_crm_piposmart/internal/catalog"
 	"backend_crm_piposmart/internal/closing"
@@ -172,6 +173,12 @@ func NewRouter(cfg config.Config, logger *slog.Logger, connection Connection) *g
 		importingRoutes := api.Group("")
 		importingRoutes.Use(identity.AuthMiddleware(identityService))
 		importing.NewHandler(importingService).RegisterRoutes(importingRoutes)
+
+		analyticsRepository := analytics.NewRepository(connection.SQLDB())
+		analyticsService := analytics.NewService(analyticsRepository)
+		analyticsRoutes := api.Group("")
+		analyticsRoutes.Use(identity.AuthMiddleware(identityService))
+		analytics.NewHandler(analyticsService).RegisterRoutes(analyticsRoutes)
 	}
 
 	router.NoRoute(func(c *gin.Context) {

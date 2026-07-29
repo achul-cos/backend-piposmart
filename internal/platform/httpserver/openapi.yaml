@@ -1,8 +1,8 @@
 ﻿openapi: 3.0.3
 info:
   title: Backend CRM Piposmart
-  version: 0.15.4-sprint-14f-identity
-  description: API CRM Piposmart dengan Partner Type, Partner (Encrypted & Masked Bank Account), PIC Assignment, Call Interactions, Lead Referrals, Subscription Order, Reconciliation Sprint 11, Partner Commission Sprint 12, penambahan route trash/unscoped owner-outlet dan rekap status langganan outlet Sprint 14b/14c, histori import persisten dengan viewer/download file asli Sprint 14 history, route /all dan /all-deleted lintas modul untuk kebutuhan frontend mengambil full dataset tanpa pagination, serta penambahan manajemen akun Admin dan Supervisor beserta reset password lintas role pada Sprint 14f.
+  version: 0.16.0-sprint-14g-analytics
+  description: API CRM Piposmart dengan Partner Type, Partner (Encrypted & Masked Bank Account), PIC Assignment, Call Interactions, Lead Referrals, Subscription Order, Reconciliation Sprint 11, Partner Commission Sprint 12, penambahan route trash/unscoped owner-outlet dan rekap status langganan outlet Sprint 14b/14c, histori import persisten dengan viewer/download file asli Sprint 14 history, route /all dan /all-deleted lintas modul untuk kebutuhan frontend mengambil full dataset tanpa pagination, penambahan manajemen akun Admin dan Supervisor beserta reset password lintas role pada Sprint 14f, serta dokumentasi Analytics Sprint 14g1 sampai 14g5 untuk catalog diagram dan query analytics lintas modul.
 servers:
   - url: http://localhost:8080
 paths:
@@ -7022,6 +7022,658 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/analytics/catalog:
+    get:
+      tags: [Analytics]
+      summary: Ambil seluruh katalog diagram analytics
+      operationId: getAnalyticsCatalog
+      description: |
+        Mengembalikan metadata seluruh diagram analytics Sprint 14g1 sampai 14g5.
+
+        Catalog ini adalah source of truth frontend untuk:
+        - daftar diagram yang tersedia;
+        - nama diagram;
+        - tujuan dan cara membaca diagram;
+        - metric yang didukung;
+        - compare mode yang didukung;
+        - route query diagram.
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Daftar seluruh diagram analytics
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnalyticsCatalogListEnvelope"
+              examples:
+                fullCatalog:
+                  summary: Contoh respons katalog analytics
+                  value:
+                    data:
+                      items:
+                        - module: owners
+                          key: growth-trend
+                          name: Tren Pertumbuhan Owner
+                          type: line
+                          function: Melihat owner baru per periode
+                          purpose: Memantau pertumbuhan owner
+                          how_to_read: Lihat garis per hari atau bulan untuk melihat pertumbuhan owner.
+                          analysis_goal: Mengetahui apakah akuisisi owner naik atau turun.
+                          supported_metrics: [owner_count]
+                          supported_filters: [province, city, sales_id, supervisor_id, owner_id, status]
+                          supported_compare_modes: [previous_period]
+                          query_endpoint: /api/v1/analytics/owners/growth-trend/query
+                          polarity_rule: higher_is_better
+                          export_available: false
+                          comparison_enabled: true
+                        - module: executive
+                          key: north-star-kpi-trend
+                          name: North Star KPI Trend
+                          type: line
+                          function: Melihat KPI utama bisnis dalam satu tren
+                          purpose: Ringkasan KPI inti manajemen
+                          how_to_read: Bandingkan tren owner, closing, topup, dan active subscription pada periode yang dipilih.
+                          analysis_goal: Mengetahui arah pertumbuhan bisnis secara menyeluruh.
+                          supported_metrics: [owner_count, confirmed_closing_count, topup_revenue, active_subscription_count]
+                          supported_filters: [province, city, sales_id, supervisor_id, owner_id, outlet_id, status]
+                          supported_compare_modes: [previous_period]
+                          query_endpoint: /api/v1/analytics/executive/north-star-kpi-trend/query
+                          polarity_rule: higher_is_better
+                          export_available: false
+                          comparison_enabled: true
+                    meta:
+                      request_id: 6c2a40d0f9cb4f1d8b1e3d4a6407a112
+        "401":
+          description: Token akses tidak dikirim atau tidak valid
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              examples:
+                unauthenticated:
+                  value:
+                    error:
+                      code: UNAUTHENTICATED
+                      message: Token akses wajib dikirim
+                      request_id: 58c7a302d05a9b15daea677fb2213c46
+  /api/v1/analytics/catalog/{module}:
+    get:
+      tags: [Analytics]
+      summary: Ambil katalog diagram analytics per modul
+      operationId: getAnalyticsCatalogByModule
+      description: |
+        Mengembalikan diagram analytics untuk satu modul tertentu.
+
+        Contoh nilai `module`:
+        - owners
+        - outlets
+        - leads
+        - interactions
+        - trainings
+        - catalog
+        - closings
+        - targets
+        - kpi
+        - wallets
+        - subscriptions
+        - reconciliation
+        - partners
+        - commissions
+        - audit
+        - imports
+        - executive
+        - custom
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: module
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Nama modul analytics
+          example: subscriptions
+      responses:
+        "200":
+          description: Daftar diagram analytics untuk modul yang dipilih
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnalyticsCatalogListEnvelope"
+              examples:
+                subscriptionsModule:
+                  summary: Contoh katalog modul subscriptions
+                  value:
+                    data:
+                      items:
+                        - module: subscriptions
+                          key: renewal-rate
+                          name: Renewal Rate
+                          type: line
+                          function: Mengukur perpanjangan subscription
+                          purpose: Memantau retensi pelanggan
+                          how_to_read: Lihat tren persentase renewal per periode.
+                          analysis_goal: Mengetahui apakah retensi membaik atau melemah.
+                          supported_metrics: [renewal_rate]
+                          supported_filters: [province, city, sales_id, supervisor_id, owner_id, outlet_id, status]
+                          supported_compare_modes: [previous_period]
+                          query_endpoint: /api/v1/analytics/subscriptions/renewal-rate/query
+                          polarity_rule: higher_is_better
+                          export_available: false
+                          comparison_enabled: true
+                    meta:
+                      request_id: 8a264b5991c04deca52f0a5305da0ad3
+        "401":
+          description: Token akses tidak dikirim atau tidak valid
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "404":
+          description: Modul tidak ditemukan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+  /api/v1/analytics/catalog/{module}/{diagram}:
+    get:
+      tags: [Analytics]
+      summary: Ambil metadata satu diagram analytics
+      operationId: getAnalyticsCatalogDiagram
+      description: |
+        Mengembalikan metadata satu diagram spesifik.
+
+        Endpoint ini berguna untuk frontend saat ingin:
+        - menampilkan penjelasan diagram di halaman detail;
+        - membaca compare mode yang didukung;
+        - membaca daftar metric dan filter yang didukung;
+        - menentukan form filter yang relevan.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: module
+          in: path
+          required: true
+          schema:
+            type: string
+          example: executive
+        - name: diagram
+          in: path
+          required: true
+          schema:
+            type: string
+          example: north-star-kpi-trend
+      responses:
+        "200":
+          description: Metadata diagram analytics
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnalyticsCatalogItemEnvelope"
+              examples:
+                northStar:
+                  summary: Contoh metadata diagram executive
+                  value:
+                    data:
+                      module: executive
+                      key: north-star-kpi-trend
+                      name: North Star KPI Trend
+                      type: line
+                      function: Melihat KPI utama bisnis dalam satu tren
+                      purpose: Ringkasan KPI inti manajemen
+                      how_to_read: Bandingkan beberapa garis KPI utama dalam periode yang dipilih.
+                      analysis_goal: Mengetahui arah pertumbuhan bisnis secara menyeluruh.
+                      supported_metrics: [owner_count, confirmed_closing_count, topup_revenue, active_subscription_count]
+                      supported_filters: [province, city, sales_id, supervisor_id, owner_id, outlet_id, status]
+                      supported_compare_modes: [previous_period]
+                      query_endpoint: /api/v1/analytics/executive/north-star-kpi-trend/query
+                      polarity_rule: higher_is_better
+                      export_available: false
+                      comparison_enabled: true
+                    meta:
+                      request_id: 946542e4f7c64012b2f8257f5f9746e0
+        "401":
+          description: Token akses tidak dikirim atau tidak valid
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "404":
+          description: Diagram tidak ditemukan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              examples:
+                notFound:
+                  value:
+                    error:
+                      code: NOT_FOUND
+                      message: diagram tidak ditemukan
+                      request_id: 6bb3fb5d7d47d4fccde7c28ca18cc37e
+  /api/v1/analytics/{module}/{diagram}/query:
+    post:
+      tags: [Analytics]
+      summary: Query data diagram analytics
+      operationId: queryAnalyticsDiagram
+      description: |
+        Menjalankan query analytics untuk diagram tertentu berdasarkan `module` dan `diagram`.
+
+        Endpoint generik ini dipakai oleh seluruh implementasi Sprint 14g1 sampai 14g5, termasuk:
+        - owner, outlet, lead, interaction, training;
+        - catalog, closing, target, KPI;
+        - wallet, subscription, reconciliation;
+        - partner, commission, audit;
+        - imports, executive board, dan custom comparison.
+
+        Catatan penting untuk frontend:
+        - gunakan `GET /api/v1/analytics/catalog` sebagai daftar resmi diagram;
+        - jangan mengirim `comparison.mode` di luar `supported_compare_modes`;
+        - validasi rentang waktu sebelum submit;
+        - response kosong tetap bisa valid, jadi bedakan data kosong dengan error.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: module
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Nama modul analytics
+          example: owners
+        - name: diagram
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Key diagram analytics
+          example: growth-trend
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AnalyticsQueryRequest"
+            examples:
+              sprint14g1OwnerGrowth:
+                summary: Sprint 14g1 - growth trend owner
+                value:
+                  time_filter:
+                    mode: month_range
+                    month_from: "2026-01"
+                    month_to: "2026-07"
+                    granularity: month
+                  comparison:
+                    enabled: false
+                  filters: {}
+                  options:
+                    include_summary: true
+                    include_table: true
+              sprint14g2ClosingBySales:
+                summary: Sprint 14g2 - closing by sales
+                value:
+                  time_filter:
+                    mode: month_range
+                    month_from: "2026-01"
+                    month_to: "2026-07"
+                    granularity: month
+                  comparison:
+                    enabled: false
+                  metrics: [confirmed_closing_count]
+                  options:
+                    include_summary: true
+                    include_table: true
+              sprint14g3RenewalRate:
+                summary: Sprint 14g3 - renewal rate subscription
+                value:
+                  time_filter:
+                    mode: month_range
+                    month_from: "2026-01"
+                    month_to: "2026-07"
+                    granularity: month
+                  comparison:
+                    enabled: false
+                  options:
+                    include_summary: true
+                    include_table: true
+              sprint14g4PartnerInactivity:
+                summary: Sprint 14g4 - partner inactivity aging
+                value:
+                  time_filter:
+                    mode: month_range
+                    month_from: "2026-01"
+                    month_to: "2026-07"
+                    granularity: month
+                  comparison:
+                    enabled: false
+                  options:
+                    include_summary: true
+                    include_table: true
+              sprint14g5NorthStar:
+                summary: Sprint 14g5 - north star KPI trend
+                value:
+                  time_filter:
+                    mode: month_range
+                    month_from: "2026-01"
+                    month_to: "2026-07"
+                    granularity: month
+                  comparison:
+                    enabled: true
+                    mode: previous_period
+                  metrics: [owner_count, confirmed_closing_count, topup_revenue, active_subscription_count]
+                  options:
+                    include_summary: true
+                    include_table: true
+              sprint14g5RegionComparison:
+                summary: Sprint 14g5 - region comparison board
+                value:
+                  time_filter:
+                    mode: month_range
+                    month_from: "2026-01"
+                    month_to: "2026-07"
+                    granularity: month
+                  comparison:
+                    enabled: true
+                    mode: series_to_series
+                    compare_series:
+                      - field: province
+                        label: Jawa Barat
+                        value: Jawa Barat
+                      - field: province
+                        label: Jawa Tengah
+                        value: Jawa Tengah
+                  metrics: [owner_count, outlet_count]
+                  options:
+                    include_summary: true
+                    include_table: true
+      responses:
+        "200":
+          description: Hasil query diagram analytics
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnalyticsQueryEnvelope"
+              examples:
+                ownerGrowth:
+                  summary: Sprint 14g1 - response owner growth
+                  value:
+                    data:
+                      diagram:
+                        module: owners
+                        key: growth-trend
+                        name: Tren Pertumbuhan Owner
+                        type: line
+                        function: Melihat owner baru per periode
+                        purpose: Memantau pertumbuhan owner
+                        how_to_read: Lihat garis per hari atau bulan untuk melihat pertumbuhan owner.
+                        analysis_goal: Mengetahui apakah akuisisi owner naik atau turun.
+                      time_filter:
+                        mode: month_range
+                        month_from: "2026-01"
+                        month_to: "2026-07"
+                        granularity: month
+                        label: Jan 2026 - Jul 2026
+                      comparison:
+                        enabled: false
+                      series:
+                        - key: owner_count
+                          label: Owner Baru
+                          points:
+                            - x: "2026-01"
+                              y: 3
+                            - x: "2026-02"
+                              y: 4
+                            - x: "2026-03"
+                              y: 4
+                      table:
+                        - period: "2026-01"
+                          owner_count: 3
+                        - period: "2026-02"
+                          owner_count: 4
+                      insight:
+                        summary: Tren Pertumbuhan Owner pada periode terpilih bernilai 47.00.
+                        conclusion: Mengetahui apakah akuisisi owner naik atau turun.
+                        recommendation: Bandingkan tren current period dengan periode sebelumnya untuk melihat momentum pertumbuhan.
+                    meta:
+                      request_id: 87065b0b66114d54a0b62cab1dcb7df9
+                closingBySales:
+                  summary: Sprint 14g2 - response closing by sales
+                  value:
+                    data:
+                      diagram:
+                        module: closings
+                        key: closing-by-sales
+                        name: Closing by Sales
+                        type: horizontal_bar
+                        function: Ranking sales berdasarkan closing
+                        purpose: Melihat sales dengan performa closing tertinggi
+                        how_to_read: Urutkan nilai closing per sales dari tertinggi ke terendah.
+                        analysis_goal: Mengetahui top performer dan low performer penjualan.
+                      comparison:
+                        enabled: false
+                      series:
+                        - key: confirmed_closing_count
+                          label: Confirmed Closing Count
+                          points:
+                            - x: Sales Demo 002
+                              y: 3
+                            - x: Sales Demo 003
+                              y: 3
+                            - x: Sales Demo 091
+                              y: 3
+                      table:
+                        - sales_name: Sales Demo 002
+                          confirmed_closing_count: 3
+                        - sales_name: Sales Demo 003
+                          confirmed_closing_count: 3
+                    meta:
+                      request_id: 7c7d2f7ea1a74e0194870d42ec14c2b1
+                renewalRate:
+                  summary: Sprint 14g3 - response renewal rate
+                  value:
+                    data:
+                      diagram:
+                        module: subscriptions
+                        key: renewal-rate
+                        name: Renewal Rate
+                        type: line
+                        function: Mengukur perpanjangan subscription
+                        purpose: Memantau retensi pelanggan
+                        how_to_read: Lihat persentase renewal per periode.
+                        analysis_goal: Mengetahui apakah renewal membaik atau menurun.
+                      comparison:
+                        enabled: false
+                      series:
+                        - key: renewal_rate
+                          label: Renewal Rate (%)
+                          points:
+                            - x: "2026-01"
+                              y: 0
+                            - x: "2026-02"
+                              y: 0
+                      table:
+                        - period: "2026-01"
+                          expired_candidate_count: 2
+                          renewed_count: 0
+                          renewal_rate: 0
+                    meta:
+                      request_id: c057c2e72a094d809313f1ecf0dcaf4d
+                partnerInactivity:
+                  summary: Sprint 14g4 - response partner inactivity aging
+                  value:
+                    data:
+                      diagram:
+                        module: partners
+                        key: partner-inactivity-aging
+                        name: Partner Inactivity Aging
+                        type: bar
+                        function: Mengetahui partner dorman
+                        purpose: Memantau partner pasif
+                        how_to_read: Lihat bucket hari tanpa aktivitas untuk mengetahui partner yang perlu diaktifkan kembali.
+                        analysis_goal: Mengetahui partner pasif dan kebutuhan re-engagement.
+                      comparison:
+                        enabled: false
+                      series:
+                        - key: partner_count
+                          label: Partner
+                          points:
+                            - x: 0-7
+                              y: 2
+                            - x: 180+
+                              y: 1
+                      table:
+                        - aging_bucket: 0-7
+                          partner_count: 2
+                        - aging_bucket: 180+
+                          partner_count: 1
+                      extra:
+                        average_inactivity_days: 6890.72
+                    meta:
+                      request_id: 15b10f15ca7f4c47a8ac92d2c341b42c
+                northStar:
+                  summary: Sprint 14g5 - response north star KPI trend
+                  value:
+                    data:
+                      diagram:
+                        module: executive
+                        key: north-star-kpi-trend
+                        name: North Star KPI Trend
+                        type: line
+                        function: Melihat KPI utama bisnis dalam satu tren
+                        purpose: Ringkasan KPI inti manajemen
+                        how_to_read: Bandingkan tren owner, closing, topup, dan active subscription pada periode yang dipilih.
+                        analysis_goal: Mengetahui arah pertumbuhan bisnis secara menyeluruh.
+                      comparison:
+                        enabled: true
+                        mode: previous_period
+                        baseline_label: Jun 2025 - Dec 2025
+                        current_value: 49750126
+                        baseline_value: 39750107
+                        delta: 10000019
+                        delta_percent: 25.16
+                        direction: positive
+                        polarity_rule: higher_is_better
+                        status_value: 1
+                      table:
+                        - period: "2026-01"
+                          owner_count: 3
+                          confirmed_closing_count: 1
+                          topup_revenue: 5750000
+                          active_subscription_count: 10
+                      insight:
+                        summary: North Star KPI Trend membaik 25.16% dibanding baseline.
+                        conclusion: Mengetahui arah pertumbuhan bisnis secara menyeluruh.
+                        recommendation: Pertahankan metrik yang tumbuh positif dan fokus perbaikan pada metrik yang tertinggal.
+                    meta:
+                      request_id: a7392f1e8c6042ff8da56a5d4128a817
+                regionComparison:
+                  summary: Sprint 14g5 - response custom region comparison
+                  value:
+                    data:
+                      diagram:
+                        module: custom
+                        key: region-comparison-board
+                        name: Custom Region Comparison Board
+                        type: grouped_bar
+                        function: Membandingkan wilayah
+                        purpose: Menentukan area terbaik dan terlemah
+                        how_to_read: Bandingkan nilai antar wilayah pada periode yang sama.
+                        analysis_goal: Mengetahui area terbaik dan area yang perlu ditingkatkan.
+                      comparison:
+                        enabled: true
+                        mode: series_to_series
+                        current_value: 49
+                        baseline_value: 0
+                        delta: 49
+                        delta_percent: 0
+                        direction: positive
+                        polarity_rule: higher_is_better
+                        status_value: 1
+                      series:
+                        - key: owner_count
+                          label: Owner Count
+                          points:
+                            - x: Jawa Barat
+                              y: 6
+                            - x: Jawa Tengah
+                              y: 0
+                        - key: outlet_count
+                          label: Outlet Count
+                          points:
+                            - x: Jawa Barat
+                              y: 49
+                            - x: Jawa Tengah
+                              y: 0
+                      table:
+                        - region_label: Jawa Barat
+                          owner_count: 6
+                          outlet_count: 49
+                        - region_label: Jawa Tengah
+                          owner_count: 0
+                          outlet_count: 0
+                      insight:
+                        summary: Custom Region Comparison Board membandingkan seri terpilih pada periode yang sama.
+                        conclusion: Mengetahui area terbaik dan area yang perlu ditingkatkan.
+                        recommendation: Bandingkan nilai antar seri pada tabel dan chart untuk menentukan area paling kuat atau paling lemah.
+                    meta:
+                      request_id: e5f5b45f94cd47179fd48d816ce5f49c
+        "400":
+          description: Payload request tidak valid atau filter analytics tidak sesuai
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              examples:
+                invalidTimeRange:
+                  summary: Rentang waktu terbalik
+                  value:
+                    error:
+                      code: ANALYTICS_QUERY_ERROR
+                      message: "time filter tidak valid: month_from harus lebih kecil dari atau sama dengan month_to"
+                      request_id: 9625908bb74782fbf6c9277faba2cf8b
+                malformedJSON:
+                  summary: JSON body rusak
+                  value:
+                    error:
+                      code: VALIDATION_ERROR
+                      message: Payload request tidak valid
+                      details:
+                        error: unexpected EOF
+                      request_id: f9334edc26248e059898dea567017e9e
+                invalidComparisonMode:
+                  summary: Mode comparison tidak didukung
+                  value:
+                    error:
+                      code: ANALYTICS_QUERY_ERROR
+                      message: mode comparison tidak didukung
+                      request_id: 01581c692cacbe6db888e2f3918b4ca3
+        "401":
+          description: Token akses tidak dikirim atau tidak valid
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              examples:
+                unauthenticated:
+                  value:
+                    error:
+                      code: UNAUTHENTICATED
+                      message: Token akses wajib dikirim
+                      request_id: 58c7a302d05a9b15daea677fb2213c46
+        "404":
+          description: Diagram analytics tidak ditemukan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              examples:
+                notFound:
+                  value:
+                    error:
+                      code: NOT_FOUND
+                      message: diagram tidak ditemukan
+                      request_id: 6bb3fb5d7d47d4fccde7c28ca18cc37e
 components:
   securitySchemes:
     bearerAuth:
@@ -8216,6 +8868,347 @@ components:
               type: string
             details:
               nullable: true
+            request_id:
+              type: string
+    AnalyticsCatalogItem:
+      type: object
+      required: [module, key, name, type, function, purpose, how_to_read, analysis_goal, query_endpoint, polarity_rule, export_available, comparison_enabled]
+      properties:
+        module:
+          type: string
+          example: owners
+        key:
+          type: string
+          example: growth-trend
+        name:
+          type: string
+          example: Tren Pertumbuhan Owner
+        type:
+          type: string
+          example: line
+        function:
+          type: string
+          example: Melihat owner baru per periode
+        purpose:
+          type: string
+          example: Memantau pertumbuhan owner
+        how_to_read:
+          type: string
+          example: Lihat garis per hari atau bulan untuk melihat pertumbuhan owner.
+        analysis_goal:
+          type: string
+          example: Mengetahui apakah akuisisi owner naik atau turun.
+        supported_metrics:
+          type: array
+          items:
+            type: string
+        supported_filters:
+          type: array
+          items:
+            type: string
+        supported_compare_modes:
+          type: array
+          items:
+            type: string
+        query_endpoint:
+          type: string
+          example: /api/v1/analytics/owners/growth-trend/query
+        export_endpoint:
+          type: string
+          nullable: true
+        polarity_rule:
+          type: string
+          example: higher_is_better
+        export_available:
+          type: boolean
+          example: false
+        comparison_enabled:
+          type: boolean
+          example: true
+    AnalyticsCatalogListEnvelope:
+      type: object
+      required: [data, meta]
+      properties:
+        data:
+          type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items:
+                $ref: "#/components/schemas/AnalyticsCatalogItem"
+        meta:
+          type: object
+          required: [request_id]
+          properties:
+            request_id:
+              type: string
+    AnalyticsCatalogItemEnvelope:
+      type: object
+      required: [data, meta]
+      properties:
+        data:
+          $ref: "#/components/schemas/AnalyticsCatalogItem"
+        meta:
+          type: object
+          required: [request_id]
+          properties:
+            request_id:
+              type: string
+    AnalyticsTimeFilterRequest:
+      type: object
+      properties:
+        mode:
+          type: string
+          description: date_range, month_range, atau year_range
+          example: month_range
+        date_from:
+          type: string
+          format: date
+          nullable: true
+        date_to:
+          type: string
+          format: date
+          nullable: true
+        month_from:
+          type: string
+          nullable: true
+          example: "2026-01"
+        month_to:
+          type: string
+          nullable: true
+          example: "2026-07"
+        year_from:
+          type: integer
+          nullable: true
+          example: 2026
+        year_to:
+          type: integer
+          nullable: true
+          example: 2026
+        granularity:
+          type: string
+          description: day, month, atau year
+          example: month
+    AnalyticsComparisonSeriesRequest:
+      type: object
+      properties:
+        field:
+          type: string
+          example: province
+        label:
+          type: string
+          example: Jawa Barat
+        value:
+          type: string
+          example: Jawa Barat
+    AnalyticsComparisonRequest:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+          example: true
+        mode:
+          type: string
+          nullable: true
+          description: previous_period, custom_period, atau series_to_series sesuai dukungan diagram
+          example: previous_period
+        baseline_time_filter:
+          allOf:
+            - $ref: "#/components/schemas/AnalyticsTimeFilterRequest"
+          nullable: true
+        compare_series:
+          type: array
+          items:
+            $ref: "#/components/schemas/AnalyticsComparisonSeriesRequest"
+    AnalyticsFilterRequest:
+      type: object
+      properties:
+        province:
+          type: array
+          items:
+            type: string
+        city:
+          type: array
+          items:
+            type: string
+        sales_id:
+          type: array
+          items:
+            type: integer
+            format: int64
+        supervisor_id:
+          type: array
+          items:
+            type: integer
+            format: int64
+        owner_id:
+          type: array
+          items:
+            type: integer
+            format: int64
+        outlet_id:
+          type: array
+          items:
+            type: integer
+            format: int64
+        status:
+          type: array
+          items:
+            type: string
+    AnalyticsQueryOptions:
+      type: object
+      properties:
+        limit:
+          type: integer
+          example: 100
+        sort:
+          type: string
+          example: value_desc
+        include_table:
+          type: boolean
+          example: true
+        include_summary:
+          type: boolean
+          example: true
+        include_previous_points:
+          type: boolean
+          example: false
+    AnalyticsQueryRequest:
+      type: object
+      properties:
+        time_filter:
+          $ref: "#/components/schemas/AnalyticsTimeFilterRequest"
+        comparison:
+          $ref: "#/components/schemas/AnalyticsComparisonRequest"
+        metrics:
+          type: array
+          items:
+            type: string
+        dimensions:
+          type: array
+          items:
+            type: string
+        filters:
+          $ref: "#/components/schemas/AnalyticsFilterRequest"
+        options:
+          $ref: "#/components/schemas/AnalyticsQueryOptions"
+    AnalyticsDiagramMetadata:
+      type: object
+      properties:
+        key:
+          type: string
+        module:
+          type: string
+        name:
+          type: string
+        type:
+          type: string
+        function:
+          type: string
+        purpose:
+          type: string
+        how_to_read:
+          type: string
+        analysis_goal:
+          type: string
+    AnalyticsComparisonSummary:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+        mode:
+          type: string
+          nullable: true
+        baseline_label:
+          type: string
+          nullable: true
+        current_value:
+          type: number
+          format: double
+        baseline_value:
+          type: number
+          format: double
+        delta:
+          type: number
+          format: double
+        delta_percent:
+          type: number
+          format: double
+        direction:
+          type: string
+          nullable: true
+        polarity_rule:
+          type: string
+          nullable: true
+        status_value:
+          type: integer
+    AnalyticsChartPoint:
+      type: object
+      properties:
+        x:
+          oneOf:
+            - type: string
+            - type: integer
+            - type: number
+              format: double
+        y:
+          type: number
+          format: double
+    AnalyticsChartSeries:
+      type: object
+      properties:
+        key:
+          type: string
+        label:
+          type: string
+        points:
+          type: array
+          items:
+            $ref: "#/components/schemas/AnalyticsChartPoint"
+    AnalyticsInsight:
+      type: object
+      properties:
+        summary:
+          type: string
+        conclusion:
+          type: string
+        recommendation:
+          type: string
+    AnalyticsQueryResult:
+      type: object
+      properties:
+        diagram:
+          $ref: "#/components/schemas/AnalyticsDiagramMetadata"
+        time_filter:
+          type: object
+          additionalProperties: true
+        comparison:
+          $ref: "#/components/schemas/AnalyticsComparisonSummary"
+        series:
+          type: array
+          items:
+            $ref: "#/components/schemas/AnalyticsChartSeries"
+        table:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        extra:
+          type: object
+          additionalProperties: true
+        insight:
+          $ref: "#/components/schemas/AnalyticsInsight"
+    AnalyticsQueryEnvelope:
+      type: object
+      required: [data, meta]
+      properties:
+        data:
+          $ref: "#/components/schemas/AnalyticsQueryResult"
+        meta:
+          type: object
+          required: [request_id]
+          properties:
             request_id:
               type: string
     PartnerTypeResponse:
