@@ -220,12 +220,16 @@ func (r *Repository) List(ctx context.Context, actorID int64, actorRole string, 
 	if limit < 1 {
 		limit = 20
 	}
-	offset := (page - 1) * limit
-
 	query := `SELECT ` + targetSelectColumns + targetFromJoin + ` ` + whereClause + `
-		ORDER BY st.period_year DESC, st.period_month DESC, st.sales_id ASC
+		ORDER BY st.period_year DESC, st.period_month DESC, st.sales_id ASC`
+	queryArgs := append([]any{}, args...)
+	if !params.All {
+		offset := (page - 1) * limit
+		query += `
 		LIMIT ? OFFSET ?`
-	rows, err := r.db.QueryContext(ctx, query, append(args, limit, offset)...)
+		queryArgs = append(queryArgs, limit, offset)
+	}
+	rows, err := r.db.QueryContext(ctx, query, queryArgs...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("target: list: %w", err)
 	}

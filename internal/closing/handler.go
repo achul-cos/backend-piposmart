@@ -22,6 +22,8 @@ func NewHandler(service *Service) *Handler {
 
 func (h *Handler) RegisterRoutes(api *gin.RouterGroup) {
 	api.GET("/closings", h.listClosings)
+	api.GET("/closings/all", h.listAllClosings)
+	api.GET("/closings/all-deleted", h.listAllClosingsDeleted)
 	api.GET("/closings/trash", h.listClosingsTrash)
 	api.GET("/closings/unscoped", h.listClosingsUnscoped)
 	api.DELETE("/closings/bulk", h.bulkDeleteClosings)
@@ -40,6 +42,14 @@ func (h *Handler) listClosings(c *gin.Context) {
 	h.listClosingsWithScope(c, ScopeActive)
 }
 
+func (h *Handler) listAllClosings(c *gin.Context) {
+	h.listClosingsWithScopeAndAll(c, ScopeActive, true)
+}
+
+func (h *Handler) listAllClosingsDeleted(c *gin.Context) {
+	h.listClosingsWithScopeAndAll(c, ScopeAll, true)
+}
+
 func (h *Handler) listClosingsTrash(c *gin.Context) {
 	h.listClosingsWithScope(c, ScopeDeleted)
 }
@@ -49,12 +59,17 @@ func (h *Handler) listClosingsUnscoped(c *gin.Context) {
 }
 
 func (h *Handler) listClosingsWithScope(c *gin.Context, scope string) {
+	h.listClosingsWithScopeAndAll(c, scope, false)
+}
+
+func (h *Handler) listClosingsWithScopeAndAll(c *gin.Context, scope string, all bool) {
 	user, _ := identity.CurrentUser(c)
 	params, ok := listParams(c)
 	if !ok {
 		return
 	}
 	params.Scope = scope
+	params.All = all
 	response, err := h.service.ListClosings(c.Request.Context(), user, params)
 	if err != nil {
 		writeError(c, err)
@@ -181,6 +196,7 @@ func listParams(c *gin.Context) (ListParams, bool) {
 	params := ListParams{
 		Query:  c.Query("q"),
 		Status: c.Query("status"),
+		All:    false,
 		Page:   page,
 		Limit:  limit,
 		Sort:   c.Query("sort"),

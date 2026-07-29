@@ -281,6 +281,7 @@ type ListParams struct {
 	SubscriptionStatus string
 	SubscriptionMonth  string
 	Scope              string
+	All                bool
 	Page               int
 	Limit              int
 	Sort               string

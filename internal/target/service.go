@@ -60,12 +60,17 @@ func (s *Service) OverrideTarget(ctx context.Context, actor identity.User, sales
 // ListTargets returns targets visible to actor (Sales sees only their own).
 func (s *Service) ListTargets(ctx context.Context, actor identity.User, params ListTargetsParams) (*SalesTargetListResponse, error) {
 	page := params.Page
-	if page < 1 {
-		page = 1
-	}
 	limit := params.Limit
-	if limit < 1 || limit > 100 {
-		limit = 20
+	if params.All {
+		page = 1
+		limit = 0
+	} else {
+		if page < 1 {
+			page = 1
+		}
+		if limit < 1 || limit > 100 {
+			limit = 20
+		}
 	}
 	params.Page = page
 	params.Limit = limit
@@ -80,6 +85,16 @@ func (s *Service) ListTargets(ctx context.Context, actor identity.User, params L
 	}
 	return &SalesTargetListResponse{
 		Items: responses,
-		Meta:  ListMeta{Page: page, Limit: limit, Total: total},
+		Meta:  ListMeta{Page: page, Limit: resolveReturnedLimit(params.All, limit, len(items), total), Total: total},
 	}, nil
+}
+
+func resolveReturnedLimit(all bool, limit int, itemCount int, total int64) int {
+	if !all {
+		return limit
+	}
+	if total == 0 {
+		return 0
+	}
+	return itemCount
 }

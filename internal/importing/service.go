@@ -122,11 +122,16 @@ func (s *Service) ListBatches(ctx context.Context, actor identity.User, params L
 		return nil, ErrForbidden
 	}
 	page, limit := params.Page, params.Limit
-	if page < 1 {
+	if params.All {
 		page = 1
-	}
-	if limit < 1 || limit > 100 {
-		limit = 20
+		limit = 0
+	} else {
+		if page < 1 {
+			page = 1
+		}
+		if limit < 1 || limit > 100 {
+			limit = 20
+		}
 	}
 	params.Page, params.Limit = page, limit
 
@@ -138,7 +143,7 @@ func (s *Service) ListBatches(ctx context.Context, actor identity.User, params L
 	for _, item := range items {
 		responses = append(responses, NewImportBatchResponse(item))
 	}
-	return &ImportBatchListResponse{Items: responses, Meta: ListMeta{Page: page, Limit: limit, Total: total}}, nil
+	return &ImportBatchListResponse{Items: responses, Meta: ListMeta{Page: page, Limit: resolveReturnedLimit(params.All, limit, len(items), total), Total: total}}, nil
 }
 
 func (s *Service) GetBatch(ctx context.Context, actor identity.User, id int64) (*ImportBatchResponse, error) {
@@ -161,11 +166,16 @@ func (s *Service) ListRows(ctx context.Context, actor identity.User, batchID int
 		return nil, err
 	}
 	page, limit := params.Page, params.Limit
-	if page < 1 {
+	if params.All {
 		page = 1
-	}
-	if limit < 1 || limit > 200 {
-		limit = 50
+		limit = 0
+	} else {
+		if page < 1 {
+			page = 1
+		}
+		if limit < 1 || limit > 200 {
+			limit = 50
+		}
 	}
 	params.Page, params.Limit = page, limit
 
@@ -177,7 +187,17 @@ func (s *Service) ListRows(ctx context.Context, actor identity.User, batchID int
 	for _, item := range items {
 		responses = append(responses, NewImportRowResponse(item))
 	}
-	return &ImportRowListResponse{Items: responses, Meta: ListMeta{Page: page, Limit: limit, Total: total}}, nil
+	return &ImportRowListResponse{Items: responses, Meta: ListMeta{Page: page, Limit: resolveReturnedLimit(params.All, limit, len(items), total), Total: total}}, nil
+}
+
+func resolveReturnedLimit(all bool, limit int, itemCount int, total int64) int {
+	if !all {
+		return limit
+	}
+	if total == 0 {
+		return 0
+	}
+	return itemCount
 }
 
 // ExportRejectedRows builds a CSV of every INVALID row plus its validation errors.

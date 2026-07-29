@@ -219,6 +219,7 @@ type ImportRowListResponse struct {
 
 type ListRowsParams struct {
 	Status string
+	All    bool
 	Page   int
 	Limit  int
 }
@@ -226,6 +227,7 @@ type ListRowsParams struct {
 type ListBatchesParams struct {
 	Status  string
 	Profile string
+	All     bool
 	Page    int
 	Limit   int
 }

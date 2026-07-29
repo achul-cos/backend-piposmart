@@ -29,10 +29,14 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	{
 		imports.POST("", h.Upload)
 		imports.GET("", h.ListBatches)
+		imports.GET("/all", h.ListAllBatches)
+		imports.GET("/all-deleted", h.ListAllBatches)
 		imports.GET("/:id", h.GetBatch)
 		imports.GET("/:id/file", h.ViewOriginalFile)
 		imports.GET("/:id/file/download", h.DownloadOriginalFile)
 		imports.GET("/:id/rows", h.ListRows)
+		imports.GET("/:id/rows/all", h.ListAllRows)
+		imports.GET("/:id/rows/all-deleted", h.ListAllRows)
 		imports.GET("/:id/rejected-rows/export", h.ExportRejectedRows)
 		imports.POST("/:id/commit", h.Commit)
 	}
@@ -86,10 +90,28 @@ func (h *Handler) ListBatches(c *gin.Context) {
 	params := ListBatchesParams{
 		Status:  c.Query("status"),
 		Profile: c.Query("profile"),
+		All:     false,
 	}
 	params.Page, _ = strconv.Atoi(c.DefaultQuery("page", "1"))
 	params.Limit, _ = strconv.Atoi(c.DefaultQuery("limit", "20"))
 
+	actor, _ := identity.CurrentUser(c)
+	resp, err := h.service.ListBatches(c.Request.Context(), actor, params)
+	if err != nil {
+		writeImportError(c, err)
+		return
+	}
+	httpx.Success(c, http.StatusOK, resp)
+}
+
+func (h *Handler) ListAllBatches(c *gin.Context) {
+	params := ListBatchesParams{
+		Status:  c.Query("status"),
+		Profile: c.Query("profile"),
+		All:     true,
+	}
+	params.Page, _ = strconv.Atoi(c.DefaultQuery("page", "1"))
+	params.Limit, _ = strconv.Atoi(c.DefaultQuery("limit", "20"))
 	actor, _ := identity.CurrentUser(c)
 	resp, err := h.service.ListBatches(c.Request.Context(), actor, params)
 	if err != nil {
@@ -184,10 +206,27 @@ func (h *Handler) ListRows(c *gin.Context) {
 	if !ok {
 		return
 	}
-	params := ListRowsParams{Status: c.Query("status")}
+	params := ListRowsParams{Status: c.Query("status"), All: false}
 	params.Page, _ = strconv.Atoi(c.DefaultQuery("page", "1"))
 	params.Limit, _ = strconv.Atoi(c.DefaultQuery("limit", "50"))
 
+	actor, _ := identity.CurrentUser(c)
+	resp, err := h.service.ListRows(c.Request.Context(), actor, id, params)
+	if err != nil {
+		writeImportError(c, err)
+		return
+	}
+	httpx.Success(c, http.StatusOK, resp)
+}
+
+func (h *Handler) ListAllRows(c *gin.Context) {
+	id, ok := parseBatchID(c)
+	if !ok {
+		return
+	}
+	params := ListRowsParams{Status: c.Query("status"), All: true}
+	params.Page, _ = strconv.Atoi(c.DefaultQuery("page", "1"))
+	params.Limit, _ = strconv.Atoi(c.DefaultQuery("limit", "50"))
 	actor, _ := identity.CurrentUser(c)
 	resp, err := h.service.ListRows(c.Request.Context(), actor, id, params)
 	if err != nil {

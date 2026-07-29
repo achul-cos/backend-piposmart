@@ -42,6 +42,13 @@ func (h *Handler) RegisterRoutes(api *gin.RouterGroup) {
 	supervisors := api.Group("/supervisors")
 	supervisors.Use(AuthMiddleware(h.service))
 	supervisors.GET("", h.listSupervisors)
+	supervisors.POST("", h.createSupervisor)
+	supervisors.POST("/:id/reset-password", h.resetSupervisorPassword)
+
+	admins := api.Group("/admins")
+	admins.Use(AuthMiddleware(h.service))
+	admins.POST("", h.createAdmin)
+	admins.POST("/:id/reset-password", h.resetAdminPassword)
 }
 
 func (h *Handler) login(c *gin.Context) {
@@ -133,6 +140,34 @@ func (h *Handler) createSales(c *gin.Context) {
 	httpx.Success(c, http.StatusCreated, response)
 }
 
+func (h *Handler) createSupervisor(c *gin.Context) {
+	user, _ := CurrentUser(c)
+	var req CreateUserRequest
+	if !bindJSON(c, &req) {
+		return
+	}
+	response, err := h.service.CreateSupervisor(c.Request.Context(), user, req, requestMeta(c, &user))
+	if err != nil {
+		writeServiceError(c, err)
+		return
+	}
+	httpx.Success(c, http.StatusCreated, response)
+}
+
+func (h *Handler) createAdmin(c *gin.Context) {
+	user, _ := CurrentUser(c)
+	var req CreateUserRequest
+	if !bindJSON(c, &req) {
+		return
+	}
+	response, err := h.service.CreateAdmin(c.Request.Context(), user, req, requestMeta(c, &user))
+	if err != nil {
+		writeServiceError(c, err)
+		return
+	}
+	httpx.Success(c, http.StatusCreated, response)
+}
+
 func (h *Handler) getSales(c *gin.Context) {
 	user, _ := CurrentUser(c)
 	id, ok := parseID(c)
@@ -196,6 +231,38 @@ func (h *Handler) resetSalesPassword(c *gin.Context) {
 	var req ResetPasswordRequest
 	_ = c.ShouldBindJSON(&req)
 	response, err := h.service.ResetSalesPassword(c.Request.Context(), user, id, req, requestMeta(c, &user))
+	if err != nil {
+		writeServiceError(c, err)
+		return
+	}
+	httpx.Success(c, http.StatusOK, response)
+}
+
+func (h *Handler) resetSupervisorPassword(c *gin.Context) {
+	user, _ := CurrentUser(c)
+	id, ok := parseID(c)
+	if !ok {
+		return
+	}
+	var req ResetPasswordRequest
+	_ = c.ShouldBindJSON(&req)
+	response, err := h.service.ResetSupervisorPassword(c.Request.Context(), user, id, req, requestMeta(c, &user))
+	if err != nil {
+		writeServiceError(c, err)
+		return
+	}
+	httpx.Success(c, http.StatusOK, response)
+}
+
+func (h *Handler) resetAdminPassword(c *gin.Context) {
+	user, _ := CurrentUser(c)
+	id, ok := parseID(c)
+	if !ok {
+		return
+	}
+	var req ResetPasswordRequest
+	_ = c.ShouldBindJSON(&req)
+	response, err := h.service.ResetAdminPassword(c.Request.Context(), user, id, req, requestMeta(c, &user))
 	if err != nil {
 		writeServiceError(c, err)
 		return

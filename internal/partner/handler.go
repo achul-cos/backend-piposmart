@@ -46,6 +46,8 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 		// static route before param routes
 		partners.GET("/code/:code", h.GetPartnerByCode)
 		partners.GET("", h.ListPartners)
+		partners.GET("/all", h.ListAllPartners)
+		partners.GET("/all-deleted", h.ListAllPartners)
 		// Group routes that use partnerID
 		partnerGroup := partners.Group("/:partnerID")
 		{
@@ -59,6 +61,8 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 			partnerGroup.DELETE("/assignments/release", h.ReleasePartner)
 
 			partnerGroup.GET("/interactions", h.ListInteractions)
+			partnerGroup.GET("/interactions/all", h.ListAllInteractions)
+			partnerGroup.GET("/interactions/all-deleted", h.ListAllInteractions)
 			partnerGroup.POST("/interactions", h.RecordInteraction)
 
 			partnerGroup.GET("/referrals", h.ListReferrals)
@@ -66,6 +70,8 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 
 			partnerGroup.POST("/commissions/sync", h.SyncCommissions)
 			partnerGroup.GET("/commissions", h.ListCommissions)
+			partnerGroup.GET("/commissions/all", h.ListAllCommissions)
+			partnerGroup.GET("/commissions/all-deleted", h.ListAllCommissions)
 			partnerGroup.GET("/commissions/:commissionID", h.GetCommission)
 			partnerGroup.PATCH("/commissions/:commissionID/approve", h.ApproveCommission)
 			partnerGroup.PATCH("/commissions/:commissionID/pay", h.PayCommission)
@@ -73,6 +79,8 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 
 			partnerGroup.POST("/payouts", h.CreatePayout)
 			partnerGroup.GET("/payouts", h.ListPayouts)
+			partnerGroup.GET("/payouts/all", h.ListAllPayouts)
+			partnerGroup.GET("/payouts/all-deleted", h.ListAllPayouts)
 			partnerGroup.GET("/payouts/:payoutID", h.GetPayout)
 			partnerGroup.PATCH("/payouts/:payoutID/pay", h.PayPayout)
 			partnerGroup.PATCH("/payouts/:payoutID/cancel", h.CancelPayout)
@@ -345,8 +353,25 @@ func (h *Handler) ListPartners(c *gin.Context) {
 	httpx.Success(c, http.StatusOK, PartnerListResponse{
 		Items: resp,
 		Pagination: PaginationMeta{
-			Page:  offset/limit + 1,
+			Page:  pageFromOffsetLimit(offset, limit),
 			Limit: limit,
+			Total: total,
+		},
+	})
+}
+
+func (h *Handler) ListAllPartners(c *gin.Context) {
+	search := c.DefaultQuery("search", "")
+	resp, total, err := h.service.ListPartners(c.Request.Context(), 0, 0, search)
+	if err != nil {
+		httpx.Error(c, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to list partners", nil)
+		return
+	}
+	httpx.Success(c, http.StatusOK, PartnerListResponse{
+		Items: resp,
+		Pagination: PaginationMeta{
+			Page:  1,
+			Limit: len(resp),
 			Total: total,
 		},
 	})
@@ -611,8 +636,29 @@ func (h *Handler) ListInteractions(c *gin.Context) {
 	httpx.Success(c, http.StatusOK, PartnerInteractionListResponse{
 		Items: list,
 		Pagination: PaginationMeta{
-			Page:  offset/limit + 1,
+			Page:  pageFromOffsetLimit(offset, limit),
 			Limit: limit,
+			Total: total,
+		},
+	})
+}
+
+func (h *Handler) ListAllInteractions(c *gin.Context) {
+	partnerID, err := strconv.ParseInt(c.Param("partnerID"), 10, 64)
+	if err != nil {
+		httpx.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", "invalid partner ID", nil)
+		return
+	}
+	list, total, err := h.service.ListInteractions(c.Request.Context(), partnerID, 0, 0)
+	if err != nil {
+		httpx.Error(c, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to list interactions", nil)
+		return
+	}
+	httpx.Success(c, http.StatusOK, PartnerInteractionListResponse{
+		Items: list,
+		Pagination: PaginationMeta{
+			Page:  1,
+			Limit: len(list),
 			Total: total,
 		},
 	})
@@ -744,6 +790,21 @@ func (h *Handler) ListCommissions(c *gin.Context) {
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))
 	resp, err := h.service.ListCommissions(c.Request.Context(), partnerID, status, page, limit)
+	if err != nil {
+		writeCommissionError(c, err)
+		return
+	}
+	httpx.Success(c, http.StatusOK, resp)
+}
+
+func (h *Handler) ListAllCommissions(c *gin.Context) {
+	partnerID, err := strconv.ParseInt(c.Param("partnerID"), 10, 64)
+	if err != nil {
+		httpx.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", "invalid partner ID", nil)
+		return
+	}
+	status := c.DefaultQuery("status", "")
+	resp, err := h.service.ListCommissions(c.Request.Context(), partnerID, status, 1, 0)
 	if err != nil {
 		writeCommissionError(c, err)
 		return
@@ -1087,6 +1148,28 @@ func (h *Handler) ListPayouts(c *gin.Context) {
 		return
 	}
 	httpx.Success(c, http.StatusOK, resp)
+}
+
+func (h *Handler) ListAllPayouts(c *gin.Context) {
+	partnerID, err := strconv.ParseInt(c.Param("partnerID"), 10, 64)
+	if err != nil {
+		httpx.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", "invalid partner ID", nil)
+		return
+	}
+	status := c.DefaultQuery("status", "")
+	resp, err := h.service.ListPayouts(c.Request.Context(), partnerID, status, 1, 0)
+	if err != nil {
+		writeCommissionError(c, err)
+		return
+	}
+	httpx.Success(c, http.StatusOK, resp)
+}
+
+func pageFromOffsetLimit(offset int, limit int) int {
+	if limit <= 0 {
+		return 1
+	}
+	return offset/limit + 1
 }
 
 // GetPayout godoc

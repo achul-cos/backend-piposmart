@@ -290,6 +290,12 @@ func (s *Service) GetPartnerByCode(ctx context.Context, code string) (*PartnerRe
 }
 
 func (s *Service) ListPartners(ctx context.Context, limit int, offset int, search string) ([]PartnerResponse, int64, error) {
+	if limit < 0 {
+		limit = 0
+	}
+	if offset < 0 {
+		offset = 0
+	}
 	parts, total, err := s.repo.ListPartners(ctx, limit, offset, search)
 	if err != nil {
 		return nil, 0, err
@@ -451,6 +457,12 @@ func (s *Service) RecordInteraction(ctx context.Context, partnerID int64, itype 
 }
 
 func (s *Service) ListInteractions(ctx context.Context, partnerID int64, limit int, offset int) ([]PartnerInteractionResponse, int64, error) {
+	if limit < 0 {
+		limit = 0
+	}
+	if offset < 0 {
+		offset = 0
+	}
 	list, total, err := s.repo.ListPartnerInteractions(ctx, partnerID, limit, offset)
 	if err != nil {
 		return nil, 0, err
@@ -535,13 +547,15 @@ func (s *Service) ListCommissions(ctx context.Context, partnerID int64, status s
 	if page < 1 {
 		page = 1
 	}
-	if limit < 1 {
-		limit = 10
+	offset := 0
+	if limit <= 0 {
+		limit = 0
+	} else {
+		if limit > 100 {
+			limit = 100
+		}
+		offset = (page - 1) * limit
 	}
-	if limit > 100 {
-		limit = 100
-	}
-	offset := (page - 1) * limit
 	list, total, err := s.repo.ListPartnerCommissions(ctx, partnerID, status, limit, offset)
 	if err != nil {
 		return PartnerCommissionListResponse{}, err
@@ -552,7 +566,7 @@ func (s *Service) ListCommissions(ctx context.Context, partnerID int64, status s
 	}
 	return PartnerCommissionListResponse{
 		Items:      items,
-		Pagination: PaginationMeta{Page: page, Limit: limit, Total: total},
+		Pagination: PaginationMeta{Page: page, Limit: resolvePartnerLimit(limit, len(items), total), Total: total},
 	}, nil
 }
 
@@ -752,13 +766,15 @@ func (s *Service) ListPayouts(ctx context.Context, partnerID int64, status strin
 	if page < 1 {
 		page = 1
 	}
-	if limit < 1 {
-		limit = 10
+	offset := 0
+	if limit <= 0 {
+		limit = 0
+	} else {
+		if limit > 100 {
+			limit = 100
+		}
+		offset = (page - 1) * limit
 	}
-	if limit > 100 {
-		limit = 100
-	}
-	offset := (page - 1) * limit
 	list, total, err := s.repo.ListPartnerPayouts(ctx, partnerID, status, limit, offset)
 	if err != nil {
 		return PartnerPayoutListResponse{}, err
@@ -769,8 +785,18 @@ func (s *Service) ListPayouts(ctx context.Context, partnerID int64, status strin
 	}
 	return PartnerPayoutListResponse{
 		Items:      items,
-		Pagination: PaginationMeta{Page: page, Limit: limit, Total: total},
+		Pagination: PaginationMeta{Page: page, Limit: resolvePartnerLimit(limit, len(items), total), Total: total},
 	}, nil
+}
+
+func resolvePartnerLimit(limit int, itemCount int, total int64) int {
+	if limit > 0 {
+		return limit
+	}
+	if total == 0 {
+		return 0
+	}
+	return itemCount
 }
 
 func (s *Service) GetPayout(ctx context.Context, payoutID int64) (*PartnerPayoutResponse, error) {

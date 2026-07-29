@@ -212,6 +212,7 @@ type ListParams struct {
 	SalesID      *int64
 	FollowUpFrom *time.Time
 	FollowUpTo   *time.Time
+	All          bool
 	Page         int
 	Limit        int
 	Sort         string

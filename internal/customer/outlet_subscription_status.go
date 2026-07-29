@@ -63,6 +63,7 @@ type OutletSubscriptionStatusParams struct {
 	OwnerID            *int64
 	SubscriptionStatus string
 	Month              string
+	All                bool
 	Page               int
 	Limit              int
 	Sort               string
@@ -123,6 +124,22 @@ func (h *Handler) listOutletSubscriptionStatuses(c *gin.Context) {
 	httpx.Success(c, http.StatusOK, response)
 }
 
+func (h *Handler) listAllOutletSubscriptionStatuses(c *gin.Context) {
+	params := outletSubscriptionStatusParams(c)
+	params.All = true
+	referenceMonth, err := resolveReferenceMonth(params.Month)
+	if err != nil {
+		httpx.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", "month harus format YYYY-MM", nil)
+		return
+	}
+	response, err := h.service.ListOutletSubscriptionStatuses(c.Request.Context(), currentActor(c), params, referenceMonth)
+	if err != nil {
+		writeError(c, err)
+		return
+	}
+	httpx.Success(c, http.StatusOK, response)
+}
+
 func outletSubscriptionStatusParams(c *gin.Context) OutletSubscriptionStatusParams {
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))
@@ -136,6 +153,7 @@ func outletSubscriptionStatusParams(c *gin.Context) OutletSubscriptionStatusPara
 		City:               c.Query("city"),
 		SubscriptionStatus: c.Query("subscription_status"),
 		Month:              c.Query("month"),
+		All:                false,
 		Page:               page,
 		Limit:              limit,
 		Sort:               c.Query("sort"),
@@ -169,7 +187,7 @@ func (s *Service) ListOutletSubscriptionStatuses(ctx context.Context, actor Acto
 		Items:               items,
 		Pagination: PaginationMeta{
 			Page:  params.Page,
-			Limit: params.Limit,
+			Limit: resolveReturnedLimit(params.All, params.Limit, len(items), total),
 			Total: total,
 		},
 	}, nil
@@ -192,10 +210,8 @@ func (r *Repository) ListOutletSubscriptionSnapshots(ctx context.Context, actor 
 	if err != nil {
 		return nil, 0, err
 	}
-	offset := (params.Page - 1) * params.Limit
 	listArgs := append([]any{monthEnd(referenceMonth)}, args...)
-	listArgs = append(listArgs, params.Limit, offset)
-	rows, err := r.db.QueryContext(ctx, outletSubscriptionLatestCTE()+`
+	query := outletSubscriptionLatestCTE() + `
 		SELECT
 			ot.id, ot.code, ot.name, ot.phone, ot.province, ot.city, ot.address, ot.status,
 			o.id, o.code, o.name, o.phone, o.email, o.brand_name,
@@ -206,9 +222,15 @@ func (r *Repository) ListOutletSubscriptionSnapshots(ctx context.Context, actor 
 		FROM outlets ot
 		LEFT JOIN owners o ON o.id = ot.owner_id
 		LEFT JOIN latest_subscriptions ls ON ls.outlet_id = ot.id AND ls.rn = 1
-		WHERE `+where+`
-		ORDER BY `+orderBy+`
-		LIMIT ? OFFSET ?`, listArgs...)
+		WHERE ` + where + `
+		ORDER BY ` + orderBy
+	if !params.All {
+		offset := (params.Page - 1) * params.Limit
+		listArgs = append(listArgs, params.Limit, offset)
+		query += `
+		LIMIT ? OFFSET ?`
+	}
+	rows, err := r.db.QueryContext(ctx, query, listArgs...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -363,14 +385,19 @@ func outletSubscriptionStatusOrderBy(sort string) (string, error) {
 }
 
 func normalizeOutletSubscriptionStatusParams(params OutletSubscriptionStatusParams) OutletSubscriptionStatusParams {
-	if params.Page < 1 {
+	if params.All {
 		params.Page = 1
-	}
-	if params.Limit < 1 {
-		params.Limit = 10
-	}
-	if params.Limit > 100 {
-		params.Limit = 100
+		params.Limit = 0
+	} else {
+		if params.Page < 1 {
+			params.Page = 1
+		}
+		if params.Limit < 1 {
+			params.Limit = 10
+		}
+		if params.Limit > 100 {
+			params.Limit = 100
+		}
 	}
 	params.Query = strings.TrimSpace(params.Query)
 	params.Code = strings.TrimSpace(params.Code)

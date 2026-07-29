@@ -33,12 +33,16 @@ func (r *Repository) ListInteractions(ctx context.Context, actor identity.User, 
 	if err != nil {
 		return nil, 0, err
 	}
-	offset := (params.Page - 1) * params.Limit
-	args = append(args, params.Limit, offset)
-	rows, err := r.db.QueryContext(ctx, interactionSelect()+`
-		WHERE `+where+`
-		ORDER BY `+orderBy+`
-		LIMIT ? OFFSET ?`, args...)
+	query := interactionSelect() + `
+		WHERE ` + where + `
+		ORDER BY ` + orderBy
+	if !params.All {
+		offset := (params.Page - 1) * params.Limit
+		args = append(args, params.Limit, offset)
+		query += `
+		LIMIT ? OFFSET ?`
+	}
+	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -210,12 +214,16 @@ func (r *Repository) ListTrainings(ctx context.Context, actor identity.User, par
 	if err != nil {
 		return nil, 0, err
 	}
-	offset := (params.Page - 1) * params.Limit
-	args = append(args, params.Limit, offset)
-	rows, err := r.db.QueryContext(ctx, trainingSelect()+`
-		WHERE `+where+`
-		ORDER BY `+orderBy+`
-		LIMIT ? OFFSET ?`, args...)
+	query := trainingSelect() + `
+		WHERE ` + where + `
+		ORDER BY ` + orderBy
+	if !params.All {
+		offset := (params.Page - 1) * params.Limit
+		args = append(args, params.Limit, offset)
+		query += `
+		LIMIT ? OFFSET ?`
+	}
+	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, 0, err
 	}

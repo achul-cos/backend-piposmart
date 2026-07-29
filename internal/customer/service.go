@@ -33,7 +33,7 @@ func (s *Service) ListOwners(ctx context.Context, actor Actor, params ListParams
 		Items: items,
 		Pagination: PaginationMeta{
 			Page:  params.Page,
-			Limit: params.Limit,
+			Limit: resolveReturnedLimit(params.All, params.Limit, len(items), total),
 			Total: total,
 		},
 	}, nil
@@ -217,7 +217,7 @@ func (s *Service) ListOutlets(ctx context.Context, actor Actor, ownerID int64, p
 		Items: items,
 		Pagination: PaginationMeta{
 			Page:  params.Page,
-			Limit: params.Limit,
+			Limit: resolveReturnedLimit(params.All, params.Limit, len(items), total),
 			Total: total,
 		},
 	}, nil
@@ -243,7 +243,7 @@ func (s *Service) ListGlobalOutlets(ctx context.Context, actor Actor, params Lis
 		Items: responses,
 		Pagination: PaginationMeta{
 			Page:  params.Page,
-			Limit: params.Limit,
+			Limit: resolveReturnedLimit(params.All, params.Limit, len(responses), total),
 			Total: total,
 		},
 	}, nil
@@ -414,14 +414,19 @@ func (s *Service) BulkForceDeleteOutlets(ctx context.Context, actor Actor, owner
 }
 
 func normalizeListParams(params ListParams) ListParams {
-	if params.Page < 1 {
+	if params.All {
 		params.Page = 1
-	}
-	if params.Limit < 1 {
-		params.Limit = 10
-	}
-	if params.Limit > 100 {
-		params.Limit = 100
+		params.Limit = 0
+	} else {
+		if params.Page < 1 {
+			params.Page = 1
+		}
+		if params.Limit < 1 {
+			params.Limit = 10
+		}
+		if params.Limit > 100 {
+			params.Limit = 100
+		}
 	}
 	params.Query = strings.TrimSpace(params.Query)
 	params.Code = strings.TrimSpace(params.Code)
@@ -435,6 +440,16 @@ func normalizeListParams(params ListParams) ListParams {
 	params.Scope = normalizeScope(params.Scope)
 	params.Sort = strings.TrimSpace(params.Sort)
 	return params
+}
+
+func resolveReturnedLimit(all bool, limit int, itemCount int, total int64) int {
+	if !all {
+		return limit
+	}
+	if total == 0 {
+		return 0
+	}
+	return itemCount
 }
 
 func normalizeScope(scope string) string {

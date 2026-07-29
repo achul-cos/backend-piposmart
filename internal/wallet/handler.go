@@ -18,11 +18,19 @@ func NewHandler(service *Service) *Handler { return &Handler{service: service} }
 
 func (h *Handler) RegisterRoutes(api *gin.RouterGroup) {
 	api.GET("/wallets", h.listWallets)
+	api.GET("/wallets/all", h.listAllWallets)
+	api.GET("/wallets/all-deleted", h.listAllWallets)
 	api.GET("/wallet-payments", h.listPayments)
+	api.GET("/wallet-payments/all", h.listAllPayments)
+	api.GET("/wallet-payments/all-deleted", h.listAllPayments)
 	api.GET("/wallet-payments/:payment_id", h.getPayment)
 	api.GET("/wallet-transactions", h.listTransactions)
+	api.GET("/wallet-transactions/all", h.listAllTransactions)
+	api.GET("/wallet-transactions/all-deleted", h.listAllTransactions)
 	api.GET("/owners/:owner_id/wallet", h.getOwnerWallet)
 	api.GET("/owners/:owner_id/wallet/transactions", h.listOwnerTransactions)
+	api.GET("/owners/:owner_id/wallet/transactions/all", h.listAllOwnerTransactions)
+	api.GET("/owners/:owner_id/wallet/transactions/all-deleted", h.listAllOwnerTransactions)
 	api.POST("/owners/:owner_id/wallet/topups", h.createTopup)
 	api.POST("/owners/:owner_id/wallet/debits", h.createDebit)
 	api.POST("/owners/:owner_id/wallet/adjustments", h.createAdjustment)
@@ -35,6 +43,21 @@ func (h *Handler) listWallets(c *gin.Context) {
 	if !ok {
 		return
 	}
+	response, err := h.service.ListWallets(c.Request.Context(), user, params)
+	if err != nil {
+		writeError(c, err)
+		return
+	}
+	httpx.Success(c, http.StatusOK, response)
+}
+
+func (h *Handler) listAllWallets(c *gin.Context) {
+	user, _ := identity.CurrentUser(c)
+	params, ok := listParams(c)
+	if !ok {
+		return
+	}
+	params.All = true
 	response, err := h.service.ListWallets(c.Request.Context(), user, params)
 	if err != nil {
 		writeError(c, err)
@@ -71,6 +94,21 @@ func (h *Handler) listPayments(c *gin.Context) {
 	httpx.Success(c, http.StatusOK, response)
 }
 
+func (h *Handler) listAllPayments(c *gin.Context) {
+	user, _ := identity.CurrentUser(c)
+	params, ok := listParams(c)
+	if !ok {
+		return
+	}
+	params.All = true
+	response, err := h.service.ListPayments(c.Request.Context(), user, params)
+	if err != nil {
+		writeError(c, err)
+		return
+	}
+	httpx.Success(c, http.StatusOK, response)
+}
+
 func (h *Handler) getPayment(c *gin.Context) {
 	user, _ := identity.CurrentUser(c)
 	id, ok := parsePathID(c, "payment_id", "ID payment tidak valid")
@@ -99,6 +137,21 @@ func (h *Handler) listTransactions(c *gin.Context) {
 	httpx.Success(c, http.StatusOK, response)
 }
 
+func (h *Handler) listAllTransactions(c *gin.Context) {
+	user, _ := identity.CurrentUser(c)
+	params, ok := listParams(c)
+	if !ok {
+		return
+	}
+	params.All = true
+	response, err := h.service.ListTransactions(c.Request.Context(), user, params)
+	if err != nil {
+		writeError(c, err)
+		return
+	}
+	httpx.Success(c, http.StatusOK, response)
+}
+
 func (h *Handler) listOwnerTransactions(c *gin.Context) {
 	user, _ := identity.CurrentUser(c)
 	ownerID, ok := parsePathID(c, "owner_id", "ID owner tidak valid")
@@ -109,6 +162,25 @@ func (h *Handler) listOwnerTransactions(c *gin.Context) {
 	if !ok {
 		return
 	}
+	response, err := h.service.ListOwnerTransactions(c.Request.Context(), user, ownerID, params)
+	if err != nil {
+		writeError(c, err)
+		return
+	}
+	httpx.Success(c, http.StatusOK, response)
+}
+
+func (h *Handler) listAllOwnerTransactions(c *gin.Context) {
+	user, _ := identity.CurrentUser(c)
+	ownerID, ok := parsePathID(c, "owner_id", "ID owner tidak valid")
+	if !ok {
+		return
+	}
+	params, ok := listParams(c)
+	if !ok {
+		return
+	}
+	params.All = true
 	response, err := h.service.ListOwnerTransactions(c.Request.Context(), user, ownerID, params)
 	if err != nil {
 		writeError(c, err)
@@ -164,7 +236,7 @@ func (h *Handler) createManualTransaction(c *gin.Context, action func(context.Co
 func listParams(c *gin.Context) (ListParams, bool) {
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))
-	params := ListParams{Query: c.Query("q"), Status: c.Query("status"), PaymentType: c.Query("payment_type"), Channel: c.Query("channel"), Direction: c.Query("direction"), Type: c.Query("type"), Page: page, Limit: limit, Sort: c.Query("sort")}
+	params := ListParams{Query: c.Query("q"), Status: c.Query("status"), PaymentType: c.Query("payment_type"), Channel: c.Query("channel"), Direction: c.Query("direction"), Type: c.Query("type"), All: false, Page: page, Limit: limit, Sort: c.Query("sort")}
 	if !parseOptionalInt64Query(c, "owner_id", &params.OwnerID) {
 		return ListParams{}, false
 	}

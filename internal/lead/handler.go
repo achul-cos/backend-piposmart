@@ -22,6 +22,8 @@ func NewHandler(service *Service) *Handler {
 func (h *Handler) RegisterRoutes(api *gin.RouterGroup) {
 	leads := api.Group("/leads")
 	leads.GET("", h.listLeads)
+	leads.GET("/all", h.listAllLeads)
+	leads.GET("/all-deleted", h.listAllLeads)
 	leads.POST("", h.createLead)
 	leads.POST("/bulk/assign-supervisor", h.bulkAssignSupervisor)
 	leads.POST("/bulk/assign-sales", h.bulkAssignSales)
@@ -40,6 +42,21 @@ func (h *Handler) listLeads(c *gin.Context) {
 	if !ok {
 		return
 	}
+	response, err := h.service.ListLeads(c.Request.Context(), user, params)
+	if err != nil {
+		writeError(c, err)
+		return
+	}
+	httpx.Success(c, http.StatusOK, response)
+}
+
+func (h *Handler) listAllLeads(c *gin.Context) {
+	user, _ := identity.CurrentUser(c)
+	params, ok := listParams(c)
+	if !ok {
+		return
+	}
+	params.All = true
 	response, err := h.service.ListLeads(c.Request.Context(), user, params)
 	if err != nil {
 		writeError(c, err)
@@ -208,6 +225,7 @@ func listParams(c *gin.Context) (ListParams, bool) {
 		Ownership: c.Query("ownership"),
 		Stage:     c.Query("stage"),
 		Status:    c.Query("status"),
+		All:       false,
 		Page:      page,
 		Limit:     limit,
 		Sort:      c.Query("sort"),

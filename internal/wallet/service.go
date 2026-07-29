@@ -25,7 +25,7 @@ func (s *Service) ListWallets(ctx context.Context, actor identity.User, params L
 	if err != nil {
 		return WalletListResponse{}, err
 	}
-	return WalletListResponse{Items: responses, Pagination: PaginationMeta{Page: params.Page, Limit: params.Limit, Total: total}}, nil
+	return WalletListResponse{Items: responses, Pagination: PaginationMeta{Page: params.Page, Limit: resolveReturnedLimit(params.All, params.Limit, len(responses), total), Total: total}}, nil
 }
 
 func (s *Service) GetOwnerWallet(ctx context.Context, actor identity.User, ownerID int64) (WalletAccountResponse, error) {
@@ -46,7 +46,7 @@ func (s *Service) ListPayments(ctx context.Context, actor identity.User, params 
 	if err != nil {
 		return PaymentListResponse{}, err
 	}
-	return PaymentListResponse{Items: paymentResponses(items), Pagination: PaginationMeta{Page: params.Page, Limit: params.Limit, Total: total}}, nil
+	return PaymentListResponse{Items: paymentResponses(items), Pagination: PaginationMeta{Page: params.Page, Limit: resolveReturnedLimit(params.All, params.Limit, len(items), total), Total: total}}, nil
 }
 
 func (s *Service) GetPayment(ctx context.Context, actor identity.User, id int64) (WalletPaymentResponse, error) {
@@ -63,7 +63,7 @@ func (s *Service) ListTransactions(ctx context.Context, actor identity.User, par
 	if err != nil {
 		return TransactionListResponse{}, err
 	}
-	return TransactionListResponse{Items: transactionResponses(items), Pagination: PaginationMeta{Page: params.Page, Limit: params.Limit, Total: total}}, nil
+	return TransactionListResponse{Items: transactionResponses(items), Pagination: PaginationMeta{Page: params.Page, Limit: resolveReturnedLimit(params.All, params.Limit, len(items), total), Total: total}}, nil
 }
 
 func (s *Service) ListOwnerTransactions(ctx context.Context, actor identity.User, ownerID int64, params ListParams) (TransactionListResponse, error) {
@@ -155,14 +155,19 @@ func validateManualTransactionRequest(req CreateWalletTransactionRequest, requir
 }
 
 func normalizeListParams(params ListParams) ListParams {
-	if params.Page < 1 {
+	if params.All {
 		params.Page = 1
-	}
-	if params.Limit < 1 {
-		params.Limit = 10
-	}
-	if params.Limit > 100 {
-		params.Limit = 100
+		params.Limit = 0
+	} else {
+		if params.Page < 1 {
+			params.Page = 1
+		}
+		if params.Limit < 1 {
+			params.Limit = 10
+		}
+		if params.Limit > 100 {
+			params.Limit = 100
+		}
 	}
 	params.Query = strings.TrimSpace(params.Query)
 	params.Status = normalizeCode(params.Status)
@@ -172,6 +177,16 @@ func normalizeListParams(params ListParams) ListParams {
 	params.Type = normalizeCode(params.Type)
 	params.Sort = strings.TrimSpace(params.Sort)
 	return params
+}
+
+func resolveReturnedLimit(all bool, limit int, itemCount int, total int64) int {
+	if !all {
+		return limit
+	}
+	if total == 0 {
+		return 0
+	}
+	return itemCount
 }
 
 func walletResponses(items []WalletAccount) ([]WalletAccountResponse, error) {

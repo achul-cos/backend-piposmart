@@ -25,7 +25,7 @@ func (s *Service) ListPackages(ctx context.Context, params ListParams) (PackageL
 	if err != nil {
 		return PackageListResponse{}, err
 	}
-	return PackageListResponse{Items: packageResponses(items), Pagination: PaginationMeta{Page: params.Page, Limit: params.Limit, Total: total}}, nil
+	return PackageListResponse{Items: packageResponses(items), Pagination: PaginationMeta{Page: params.Page, Limit: resolveReturnedLimit(params.All, params.Limit, len(items), total), Total: total}}, nil
 }
 
 func (s *Service) CreatePackage(ctx context.Context, actor identity.User, req CreatePackageRequest) (PackageResponse, error) {
@@ -100,7 +100,7 @@ func (s *Service) ListPlans(ctx context.Context, params ListParams) (PlanListRes
 	if err != nil {
 		return PlanListResponse{}, err
 	}
-	return PlanListResponse{Items: planResponses(items), Pagination: PaginationMeta{Page: params.Page, Limit: params.Limit, Total: total}}, nil
+	return PlanListResponse{Items: planResponses(items), Pagination: PaginationMeta{Page: params.Page, Limit: resolveReturnedLimit(params.All, params.Limit, len(items), total), Total: total}}, nil
 }
 
 func (s *Service) CreatePlan(ctx context.Context, actor identity.User, req CreatePlanRequest) (PlanResponse, error) {
@@ -181,7 +181,7 @@ func (s *Service) ListPromotions(ctx context.Context, params ListParams) (Promot
 	if err != nil {
 		return PromotionListResponse{}, err
 	}
-	return PromotionListResponse{Items: promotionResponses(items), Pagination: PaginationMeta{Page: params.Page, Limit: params.Limit, Total: total}}, nil
+	return PromotionListResponse{Items: promotionResponses(items), Pagination: PaginationMeta{Page: params.Page, Limit: resolveReturnedLimit(params.All, params.Limit, len(items), total), Total: total}}, nil
 }
 
 func (s *Service) CreatePromotion(ctx context.Context, actor identity.User, req CreatePromotionRequest) (PromotionResponse, error) {
@@ -408,20 +408,35 @@ func validateChargeType(value string) error {
 }
 
 func normalizeListParams(params ListParams) ListParams {
-	if params.Page < 1 {
+	if params.All {
 		params.Page = 1
-	}
-	if params.Limit < 1 {
-		params.Limit = 10
-	}
-	if params.Limit > 100 {
-		params.Limit = 100
+		params.Limit = 0
+	} else {
+		if params.Page < 1 {
+			params.Page = 1
+		}
+		if params.Limit < 1 {
+			params.Limit = 10
+		}
+		if params.Limit > 100 {
+			params.Limit = 100
+		}
 	}
 	params.Query = strings.TrimSpace(params.Query)
 	params.ChargeType = normalizeCode(params.ChargeType)
 	params.Scope = normalizeScope(params.Scope)
 	params.Sort = strings.TrimSpace(params.Sort)
 	return params
+}
+
+func resolveReturnedLimit(all bool, limit int, itemCount int, total int64) int {
+	if !all {
+		return limit
+	}
+	if total == 0 {
+		return 0
+	}
+	return itemCount
 }
 
 func normalizeScope(scope string) string {

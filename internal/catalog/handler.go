@@ -26,6 +26,8 @@ func (h *Handler) RegisterRoutes(api *gin.RouterGroup) {
 
 	packages := catalog.Group("/packages")
 	packages.GET("", h.listPackages)
+	packages.GET("/all", h.listAllPackages)
+	packages.GET("/all-deleted", h.listAllPackagesDeleted)
 	packages.GET("/trash", h.listPackagesTrash)
 	packages.GET("/unscoped", h.listPackagesUnscoped)
 	packages.POST("", h.createPackage)
@@ -41,6 +43,8 @@ func (h *Handler) RegisterRoutes(api *gin.RouterGroup) {
 
 	plans := catalog.Group("/plans")
 	plans.GET("", h.listPlans)
+	plans.GET("/all", h.listAllPlans)
+	plans.GET("/all-deleted", h.listAllPlansDeleted)
 	plans.GET("/trash", h.listPlansTrash)
 	plans.GET("/unscoped", h.listPlansUnscoped)
 	plans.POST("", h.createPlan)
@@ -57,6 +61,8 @@ func (h *Handler) RegisterRoutes(api *gin.RouterGroup) {
 
 	promotions := catalog.Group("/promotions")
 	promotions.GET("", h.listPromotions)
+	promotions.GET("/all", h.listAllPromotions)
+	promotions.GET("/all-deleted", h.listAllPromotionsDeleted)
 	promotions.GET("/trash", h.listPromotionsTrash)
 	promotions.GET("/unscoped", h.listPromotionsUnscoped)
 	promotions.POST("", h.createPromotion)
@@ -80,6 +86,14 @@ func (h *Handler) listPackages(c *gin.Context) {
 	h.listPackagesWithScope(c, ScopeActive)
 }
 
+func (h *Handler) listAllPackages(c *gin.Context) {
+	h.listPackagesWithScopeAndAll(c, ScopeActive, true)
+}
+
+func (h *Handler) listAllPackagesDeleted(c *gin.Context) {
+	h.listPackagesWithScopeAndAll(c, ScopeAll, true)
+}
+
 func (h *Handler) listPackagesTrash(c *gin.Context) {
 	h.listPackagesWithScope(c, ScopeDeleted)
 }
@@ -89,11 +103,16 @@ func (h *Handler) listPackagesUnscoped(c *gin.Context) {
 }
 
 func (h *Handler) listPackagesWithScope(c *gin.Context, scope string) {
+	h.listPackagesWithScopeAndAll(c, scope, false)
+}
+
+func (h *Handler) listPackagesWithScopeAndAll(c *gin.Context, scope string, all bool) {
 	params, ok := listParams(c)
 	if !ok {
 		return
 	}
 	params.Scope = scope
+	params.All = all
 	response, err := h.service.ListPackages(c.Request.Context(), params)
 	writeResult(c, http.StatusOK, response, err)
 }
@@ -180,6 +199,14 @@ func (h *Handler) listPlans(c *gin.Context) {
 	h.listPlansWithScope(c, ScopeActive)
 }
 
+func (h *Handler) listAllPlans(c *gin.Context) {
+	h.listPlansWithScopeAndAll(c, ScopeActive, true)
+}
+
+func (h *Handler) listAllPlansDeleted(c *gin.Context) {
+	h.listPlansWithScopeAndAll(c, ScopeAll, true)
+}
+
 func (h *Handler) listPlansTrash(c *gin.Context) {
 	h.listPlansWithScope(c, ScopeDeleted)
 }
@@ -189,11 +216,16 @@ func (h *Handler) listPlansUnscoped(c *gin.Context) {
 }
 
 func (h *Handler) listPlansWithScope(c *gin.Context, scope string) {
+	h.listPlansWithScopeAndAll(c, scope, false)
+}
+
+func (h *Handler) listPlansWithScopeAndAll(c *gin.Context, scope string, all bool) {
 	params, ok := listParams(c)
 	if !ok {
 		return
 	}
 	params.Scope = scope
+	params.All = all
 	if !optionalInt64(c, "package_id", &params.PackageID) {
 		return
 	}
@@ -296,6 +328,14 @@ func (h *Handler) listPromotions(c *gin.Context) {
 	h.listPromotionsWithScope(c, ScopeActive)
 }
 
+func (h *Handler) listAllPromotions(c *gin.Context) {
+	h.listPromotionsWithScopeAndAll(c, ScopeActive, true)
+}
+
+func (h *Handler) listAllPromotionsDeleted(c *gin.Context) {
+	h.listPromotionsWithScopeAndAll(c, ScopeAll, true)
+}
+
 func (h *Handler) listPromotionsTrash(c *gin.Context) {
 	h.listPromotionsWithScope(c, ScopeDeleted)
 }
@@ -305,11 +345,16 @@ func (h *Handler) listPromotionsUnscoped(c *gin.Context) {
 }
 
 func (h *Handler) listPromotionsWithScope(c *gin.Context, scope string) {
+	h.listPromotionsWithScopeAndAll(c, scope, false)
+}
+
+func (h *Handler) listPromotionsWithScopeAndAll(c *gin.Context, scope string, all bool) {
 	params, ok := listParams(c)
 	if !ok {
 		return
 	}
 	params.Scope = scope
+	params.All = all
 	params.ChargeType = c.Query("charge_type")
 	response, err := h.service.ListPromotions(c.Request.Context(), params)
 	writeResult(c, http.StatusOK, response, err)

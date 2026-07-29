@@ -25,7 +25,7 @@ func (s *Service) ListLeads(ctx context.Context, actor identity.User, params Lis
 	}
 	return LeadListResponse{
 		Items:      leadResponses(items),
-		Pagination: PaginationMeta{Page: params.Page, Limit: params.Limit, Total: total},
+		Pagination: PaginationMeta{Page: params.Page, Limit: resolveReturnedLimit(params.All, params.Limit, len(items), total), Total: total},
 	}, nil
 }
 
@@ -150,14 +150,19 @@ func (s *Service) MarkInvalid(ctx context.Context, actor identity.User, leadID i
 }
 
 func normalizeListParams(params ListParams) ListParams {
-	if params.Page < 1 {
+	if params.All {
 		params.Page = 1
-	}
-	if params.Limit < 1 {
-		params.Limit = 10
-	}
-	if params.Limit > 100 {
-		params.Limit = 100
+		params.Limit = 0
+	} else {
+		if params.Page < 1 {
+			params.Page = 1
+		}
+		if params.Limit < 1 {
+			params.Limit = 10
+		}
+		if params.Limit > 100 {
+			params.Limit = 100
+		}
 	}
 	params.Query = strings.TrimSpace(params.Query)
 	params.Ownership = strings.TrimSpace(params.Ownership)
@@ -165,6 +170,16 @@ func normalizeListParams(params ListParams) ListParams {
 	params.Status = strings.TrimSpace(params.Status)
 	params.Sort = strings.TrimSpace(params.Sort)
 	return params
+}
+
+func resolveReturnedLimit(all bool, limit int, itemCount int, total int64) int {
+	if !all {
+		return limit
+	}
+	if total == 0 {
+		return 0
+	}
+	return itemCount
 }
 
 func leadResponses(items []Lead) []LeadResponse {

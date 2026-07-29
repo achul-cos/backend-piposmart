@@ -18,7 +18,7 @@ func (s *Service) ListOrders(ctx context.Context, actor identity.User, params Li
 	if err != nil {
 		return OrderListResponse{}, err
 	}
-	return OrderListResponse{Items: orderResponses(items), Pagination: PaginationMeta{Page: params.Page, Limit: params.Limit, Total: total}}, nil
+	return OrderListResponse{Items: orderResponses(items), Pagination: PaginationMeta{Page: params.Page, Limit: resolveReturnedLimit(params.All, params.Limit, len(items), total), Total: total}}, nil
 }
 
 func (s *Service) GetOrder(ctx context.Context, actor identity.User, id int64) (SubscriptionOrderResponse, error) {
@@ -77,7 +77,7 @@ func (s *Service) ListSubscriptions(ctx context.Context, actor identity.User, pa
 	if err != nil {
 		return SubscriptionListResponse{}, err
 	}
-	return SubscriptionListResponse{Items: subscriptionResponses(items), Pagination: PaginationMeta{Page: params.Page, Limit: params.Limit, Total: total}}, nil
+	return SubscriptionListResponse{Items: subscriptionResponses(items), Pagination: PaginationMeta{Page: params.Page, Limit: resolveReturnedLimit(params.All, params.Limit, len(items), total), Total: total}}, nil
 }
 
 func (s *Service) GetSubscription(ctx context.Context, actor identity.User, id int64) (SubscriptionResponse, error) {
@@ -94,7 +94,7 @@ func (s *Service) ListReconciliations(ctx context.Context, actor identity.User, 
 	if err != nil {
 		return ReconciliationListResponse{}, err
 	}
-	return ReconciliationListResponse{Items: reconciliationResponses(items), Pagination: PaginationMeta{Page: params.Page, Limit: params.Limit, Total: total}}, nil
+	return ReconciliationListResponse{Items: reconciliationResponses(items), Pagination: PaginationMeta{Page: params.Page, Limit: resolveReturnedLimit(params.All, params.Limit, len(items), total), Total: total}}, nil
 }
 
 func (s *Service) ListIssues(ctx context.Context, actor identity.User, params ListParams) (ReconciliationIssueListResponse, error) {
@@ -103,7 +103,7 @@ func (s *Service) ListIssues(ctx context.Context, actor identity.User, params Li
 	if err != nil {
 		return ReconciliationIssueListResponse{}, err
 	}
-	return ReconciliationIssueListResponse{Items: issueResponses(items), Pagination: PaginationMeta{Page: params.Page, Limit: params.Limit, Total: total}}, nil
+	return ReconciliationIssueListResponse{Items: issueResponses(items), Pagination: PaginationMeta{Page: params.Page, Limit: resolveReturnedLimit(params.All, params.Limit, len(items), total), Total: total}}, nil
 }
 
 func validateCreateOrderRequest(req CreateOrderRequest) error {
@@ -142,20 +142,35 @@ func validateManualReconcileRequest(req ManualReconcileRequest) error {
 }
 
 func normalizeListParams(params ListParams) ListParams {
-	if params.Page < 1 {
+	if params.All {
 		params.Page = 1
-	}
-	if params.Limit < 1 {
-		params.Limit = 10
-	}
-	if params.Limit > 100 {
-		params.Limit = 100
+		params.Limit = 0
+	} else {
+		if params.Page < 1 {
+			params.Page = 1
+		}
+		if params.Limit < 1 {
+			params.Limit = 10
+		}
+		if params.Limit > 100 {
+			params.Limit = 100
+		}
 	}
 	params.Query = strings.TrimSpace(params.Query)
 	params.Status = strings.ToUpper(strings.TrimSpace(params.Status))
 	params.IssueType = strings.ToUpper(strings.TrimSpace(params.IssueType))
 	params.Sort = strings.TrimSpace(params.Sort)
 	return params
+}
+
+func resolveReturnedLimit(all bool, limit int, itemCount int, total int64) int {
+	if !all {
+		return limit
+	}
+	if total == 0 {
+		return 0
+	}
+	return itemCount
 }
 
 func orderResponses(items []SubscriptionOrder) []SubscriptionOrderResponse {

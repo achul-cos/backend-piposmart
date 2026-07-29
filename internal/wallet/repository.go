@@ -45,12 +45,16 @@ func (r *Repository) ListWallets(ctx context.Context, actor identity.User, param
 	if err != nil {
 		return nil, 0, err
 	}
-	offset := (params.Page - 1) * params.Limit
-	args = append(args, params.Limit, offset)
-	rows, err := r.db.QueryContext(ctx, walletSelect()+`
-		WHERE `+where+`
-		ORDER BY `+orderBy+`
-		LIMIT ? OFFSET ?`, args...)
+	query := walletSelect() + `
+		WHERE ` + where + `
+		ORDER BY ` + orderBy
+	if !params.All {
+		offset := (params.Page - 1) * params.Limit
+		args = append(args, params.Limit, offset)
+		query += `
+		LIMIT ? OFFSET ?`
+	}
+	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -83,12 +87,16 @@ func (r *Repository) ListPayments(ctx context.Context, actor identity.User, para
 	if err != nil {
 		return nil, 0, err
 	}
-	offset := (params.Page - 1) * params.Limit
-	args = append(args, params.Limit, offset)
-	rows, err := r.db.QueryContext(ctx, paymentSelect()+`
-		WHERE `+where+`
-		ORDER BY `+orderBy+`
-		LIMIT ? OFFSET ?`, args...)
+	query := paymentSelect() + `
+		WHERE ` + where + `
+		ORDER BY ` + orderBy
+	if !params.All {
+		offset := (params.Page - 1) * params.Limit
+		args = append(args, params.Limit, offset)
+		query += `
+		LIMIT ? OFFSET ?`
+	}
+	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -123,12 +131,16 @@ func (r *Repository) ListTransactions(ctx context.Context, actor identity.User, 
 	if err != nil {
 		return nil, 0, err
 	}
-	offset := (params.Page - 1) * params.Limit
-	args = append(args, params.Limit, offset)
-	rows, err := r.db.QueryContext(ctx, transactionSelect()+`
-		WHERE `+where+`
-		ORDER BY `+orderBy+`
-		LIMIT ? OFFSET ?`, args...)
+	query := transactionSelect() + `
+		WHERE ` + where + `
+		ORDER BY ` + orderBy
+	if !params.All {
+		offset := (params.Page - 1) * params.Limit
+		args = append(args, params.Limit, offset)
+		query += `
+		LIMIT ? OFFSET ?`
+	}
+	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, 0, err
 	}

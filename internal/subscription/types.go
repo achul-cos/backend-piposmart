@@ -269,6 +269,7 @@ type ListParams struct {
 	PurchasedTo   *time.Time
 	ActiveFrom    *time.Time
 	ActiveTo      *time.Time
+	All           bool
 	Page          int
 	Limit         int
 	Sort          string

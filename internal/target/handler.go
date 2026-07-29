@@ -27,6 +27,8 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 		targets.POST("/bulk", h.BulkSetTarget)
 		targets.PUT("/:salesID", h.OverrideTarget)
 		targets.GET("", h.ListTargets)
+		targets.GET("/all", h.ListAllTargets)
+		targets.GET("/all-deleted", h.ListAllTargets)
 	}
 }
 
@@ -102,6 +104,7 @@ func (h *Handler) OverrideTarget(c *gin.Context) {
 func (h *Handler) ListTargets(c *gin.Context) {
 	params := ListTargetsParams{
 		MetricCode: c.Query("metric_code"),
+		All:        false,
 	}
 	if v := c.Query("sales_id"); v != "" {
 		if id, err := strconv.ParseInt(v, 10, 64); err == nil {
@@ -121,6 +124,37 @@ func (h *Handler) ListTargets(c *gin.Context) {
 	params.Page, _ = strconv.Atoi(c.DefaultQuery("page", "1"))
 	params.Limit, _ = strconv.Atoi(c.DefaultQuery("limit", "20"))
 
+	actor, _ := identity.CurrentUser(c)
+	resp, err := h.service.ListTargets(c.Request.Context(), actor, params)
+	if err != nil {
+		writeTargetError(c, err)
+		return
+	}
+	httpx.Success(c, http.StatusOK, resp)
+}
+
+func (h *Handler) ListAllTargets(c *gin.Context) {
+	params := ListTargetsParams{
+		MetricCode: c.Query("metric_code"),
+		All:        true,
+	}
+	if v := c.Query("sales_id"); v != "" {
+		if id, err := strconv.ParseInt(v, 10, 64); err == nil {
+			params.SalesID = &id
+		}
+	}
+	if v := c.Query("period_year"); v != "" {
+		if year, err := strconv.Atoi(v); err == nil {
+			params.PeriodYear = &year
+		}
+	}
+	if v := c.Query("period_month"); v != "" {
+		if month, err := strconv.Atoi(v); err == nil {
+			params.PeriodMonth = &month
+		}
+	}
+	params.Page, _ = strconv.Atoi(c.DefaultQuery("page", "1"))
+	params.Limit, _ = strconv.Atoi(c.DefaultQuery("limit", "20"))
 	actor, _ := identity.CurrentUser(c)
 	resp, err := h.service.ListTargets(c.Request.Context(), actor, params)
 	if err != nil {

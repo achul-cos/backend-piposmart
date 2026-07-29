@@ -124,6 +124,7 @@ type ListTargetsParams struct {
 	PeriodYear  *int
 	PeriodMonth *int
 	MetricCode  string
+	All         bool
 	Page        int
 	Limit       int
 }

@@ -1,8 +1,8 @@
 ﻿openapi: 3.0.3
 info:
   title: Backend CRM Piposmart
-  version: 0.15.2-sprint-14-history
-  description: API CRM Piposmart dengan Partner Type, Partner (Encrypted & Masked Bank Account), PIC Assignment, Call Interactions, Lead Referrals, Subscription Order, Reconciliation Sprint 11, Partner Commission Sprint 12, penambahan route trash/unscoped owner-outlet dan rekap status langganan outlet Sprint 14b/14c, serta histori import persisten dengan viewer/download file asli Sprint 14 history.
+  version: 0.15.4-sprint-14f-identity
+  description: API CRM Piposmart dengan Partner Type, Partner (Encrypted & Masked Bank Account), PIC Assignment, Call Interactions, Lead Referrals, Subscription Order, Reconciliation Sprint 11, Partner Commission Sprint 12, penambahan route trash/unscoped owner-outlet dan rekap status langganan outlet Sprint 14b/14c, histori import persisten dengan viewer/download file asli Sprint 14 history, route /all dan /all-deleted lintas modul untuk kebutuhan frontend mengambil full dataset tanpa pagination, serta penambahan manajemen akun Admin dan Supervisor beserta reset password lintas role pada Sprint 14f.
 servers:
   - url: http://localhost:8080
 paths:
@@ -267,6 +267,109 @@ paths:
       responses:
         "200":
           description: Password Sales direset
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/supervisors:
+    get:
+      summary: List akun Supervisor
+      operationId: listSupervisors
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [ACTIVE, INACTIVE]
+      responses:
+        "200":
+          description: List Supervisor
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+    post:
+      summary: Membuat akun Supervisor
+      description: Hanya Admin yang dapat membuat akun Supervisor baru.
+      operationId: createSupervisor
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateSalesRequest"
+      responses:
+        "201":
+          description: Supervisor dibuat
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/supervisors/{id}/reset-password:
+    post:
+      summary: Reset password Supervisor
+      description: Hanya Admin yang dapat mereset password Supervisor.
+      operationId: resetSupervisorPassword
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ResetPasswordRequest"
+      responses:
+        "200":
+          description: Password Supervisor direset
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/admins:
+    post:
+      summary: Membuat akun Admin
+      description: Hanya Admin yang dapat membuat akun Admin baru.
+      operationId: createAdmin
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateSalesRequest"
+      responses:
+        "201":
+          description: Admin dibuat
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/admins/{id}/reset-password:
+    post:
+      summary: Reset password Admin
+      description: Hanya Admin yang dapat mereset password Admin lain.
+      operationId: resetAdminPassword
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ResetPasswordRequest"
+      responses:
+        "200":
+          description: Password Admin direset
           content:
             application/json:
               schema:
@@ -4759,6 +4862,2162 @@ paths:
       responses:
         "200":
           description: List closing aktif + terhapus
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/owners/all:
+    get:
+      summary: List semua owner laundry tanpa pagination
+      operationId: listOwnersAll
+      description: Mengembalikan seluruh owner aktif yang terlihat oleh actor tanpa limit dan pagination.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/SearchQuery"
+        - $ref: "#/components/parameters/CodeQuery"
+        - $ref: "#/components/parameters/NameQuery"
+        - $ref: "#/components/parameters/PhoneQuery"
+        - $ref: "#/components/parameters/BrandNameQuery"
+        - $ref: "#/components/parameters/ProvinceQuery"
+        - $ref: "#/components/parameters/CityQuery"
+        - name: sort
+          in: query
+          schema:
+            type: string
+            example: "-created_at"
+      responses:
+        "200":
+          description: List semua owner aktif
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/owners/all-deleted:
+    get:
+      summary: List semua owner termasuk soft deleted tanpa pagination
+      operationId: listOwnersAllDeleted
+      description: Alias full unscoped owner. Mengembalikan owner aktif + soft deleted tanpa limit dan pagination.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/SearchQuery"
+        - $ref: "#/components/parameters/CodeQuery"
+        - $ref: "#/components/parameters/NameQuery"
+        - $ref: "#/components/parameters/PhoneQuery"
+        - $ref: "#/components/parameters/BrandNameQuery"
+        - $ref: "#/components/parameters/ProvinceQuery"
+        - $ref: "#/components/parameters/CityQuery"
+        - name: sort
+          in: query
+          schema:
+            type: string
+            example: "-updated_at"
+      responses:
+        "200":
+          description: List semua owner aktif + terhapus
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/owners/{owner_id}/outlets/all:
+    get:
+      summary: List semua outlet owner tanpa pagination
+      operationId: listOwnerOutletsAll
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OwnerID"
+        - $ref: "#/components/parameters/SearchQuery"
+        - $ref: "#/components/parameters/CodeQuery"
+        - $ref: "#/components/parameters/NameQuery"
+        - $ref: "#/components/parameters/PhoneQuery"
+        - $ref: "#/components/parameters/ProvinceQuery"
+        - $ref: "#/components/parameters/CityQuery"
+        - name: sort
+          in: query
+          schema:
+            type: string
+            example: "-created_at"
+      responses:
+        "200":
+          description: List semua outlet owner aktif
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/owners/{owner_id}/outlets/all-deleted:
+    get:
+      summary: List semua outlet owner termasuk soft deleted tanpa pagination
+      operationId: listOwnerOutletsAllDeleted
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OwnerID"
+        - $ref: "#/components/parameters/SearchQuery"
+        - $ref: "#/components/parameters/CodeQuery"
+        - $ref: "#/components/parameters/NameQuery"
+        - $ref: "#/components/parameters/PhoneQuery"
+        - $ref: "#/components/parameters/ProvinceQuery"
+        - $ref: "#/components/parameters/CityQuery"
+        - name: sort
+          in: query
+          schema:
+            type: string
+            example: "-updated_at"
+      responses:
+        "200":
+          description: List semua outlet owner aktif + terhapus
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/outlets/all:
+    get:
+      summary: List semua outlet global tanpa pagination
+      operationId: listGlobalOutletsAll
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/SearchQuery"
+        - $ref: "#/components/parameters/CodeQuery"
+        - $ref: "#/components/parameters/NameQuery"
+        - $ref: "#/components/parameters/PhoneQuery"
+        - $ref: "#/components/parameters/BrandNameQuery"
+        - $ref: "#/components/parameters/ProvinceQuery"
+        - $ref: "#/components/parameters/CityQuery"
+        - name: owner_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: subscription_status
+          in: query
+          schema:
+            type: string
+        - name: subscription_month
+          in: query
+          schema:
+            type: string
+            example: "2026-07"
+        - name: sort
+          in: query
+          schema:
+            type: string
+            example: "-created_at"
+      responses:
+        "200":
+          description: List semua outlet global aktif
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/outlets/all-deleted:
+    get:
+      summary: List semua outlet global termasuk soft deleted tanpa pagination
+      operationId: listGlobalOutletsAllDeleted
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/SearchQuery"
+        - $ref: "#/components/parameters/CodeQuery"
+        - $ref: "#/components/parameters/NameQuery"
+        - $ref: "#/components/parameters/PhoneQuery"
+        - $ref: "#/components/parameters/BrandNameQuery"
+        - $ref: "#/components/parameters/ProvinceQuery"
+        - $ref: "#/components/parameters/CityQuery"
+        - name: owner_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: sort
+          in: query
+          schema:
+            type: string
+            example: "-updated_at"
+      responses:
+        "200":
+          description: List semua outlet global aktif + terhapus
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/outlets/subscription-statuses/all:
+    get:
+      summary: Rekap status langganan outlet tanpa pagination
+      operationId: listOutletSubscriptionStatusesAll
+      description: Sama seperti /outlets/subscription-statuses namun mengembalikan seluruh outlet dalam cakupan actor tanpa pagination.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/SearchQuery"
+        - $ref: "#/components/parameters/CodeQuery"
+        - $ref: "#/components/parameters/NameQuery"
+        - $ref: "#/components/parameters/PhoneQuery"
+        - $ref: "#/components/parameters/BrandNameQuery"
+        - $ref: "#/components/parameters/ProvinceQuery"
+        - $ref: "#/components/parameters/CityQuery"
+        - name: owner_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: month
+          in: query
+          schema:
+            type: string
+            example: "2026-06"
+        - name: subscription_status
+          in: query
+          schema:
+            type: string
+            enum: [NOT_SUBSCRIBE, EXPIRED, JATUH_TEMPO, BERLANGGANAN, NEW]
+        - name: sort
+          in: query
+          schema:
+            type: string
+            example: "-subscription_end_date"
+      responses:
+        "200":
+          description: Rekap status langganan outlet tanpa pagination
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/catalog/packages/all:
+    get:
+      summary: List semua subscription package tanpa pagination
+      operationId: listCatalogPackagesAll
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/SearchQuery"
+        - name: active
+          in: query
+          schema:
+            type: boolean
+      responses:
+        "200":
+          description: List semua package aktif
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/catalog/packages/all-deleted:
+    get:
+      summary: List semua subscription package termasuk soft deleted tanpa pagination
+      operationId: listCatalogPackagesAllDeleted
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/SearchQuery"
+        - name: active
+          in: query
+          schema:
+            type: boolean
+      responses:
+        "200":
+          description: List semua package aktif + terhapus
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/catalog/plans/all:
+    get:
+      summary: List semua subscription plan tanpa pagination
+      operationId: listCatalogPlansAll
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/SearchQuery"
+        - name: package_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: active
+          in: query
+          schema:
+            type: boolean
+        - name: as_of
+          in: query
+          schema:
+            type: string
+            format: date
+      responses:
+        "200":
+          description: List semua plan aktif
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/catalog/plans/all-deleted:
+    get:
+      summary: List semua subscription plan termasuk soft deleted tanpa pagination
+      operationId: listCatalogPlansAllDeleted
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/SearchQuery"
+        - name: package_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: active
+          in: query
+          schema:
+            type: boolean
+        - name: as_of
+          in: query
+          schema:
+            type: string
+            format: date
+      responses:
+        "200":
+          description: List semua plan aktif + terhapus
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/catalog/promotions/all:
+    get:
+      summary: List semua promotion tanpa pagination
+      operationId: listCatalogPromotionsAll
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/SearchQuery"
+        - name: charge_type
+          in: query
+          schema:
+            type: string
+            enum: [FREE, PAID]
+        - name: as_of
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: active
+          in: query
+          schema:
+            type: boolean
+      responses:
+        "200":
+          description: List semua promotion aktif
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/catalog/promotions/all-deleted:
+    get:
+      summary: List semua promotion termasuk soft deleted tanpa pagination
+      operationId: listCatalogPromotionsAllDeleted
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/SearchQuery"
+        - name: charge_type
+          in: query
+          schema:
+            type: string
+            enum: [FREE, PAID]
+        - name: as_of
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: active
+          in: query
+          schema:
+            type: boolean
+      responses:
+        "200":
+          description: List semua promotion aktif + terhapus
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/closings/all:
+    get:
+      summary: List semua closing tanpa pagination
+      operationId: listSalesClosingsAll
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/SearchQuery"
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [PENDING_RECONCILIATION, CONFIRMED, REJECTED]
+        - name: sales_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: supervisor_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: closed_from
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: closed_to
+          in: query
+          schema:
+            type: string
+            format: date
+      responses:
+        "200":
+          description: List semua closing aktif
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/closings/all-deleted:
+    get:
+      summary: List semua closing termasuk soft deleted tanpa pagination
+      operationId: listSalesClosingsAllDeleted
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/SearchQuery"
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [PENDING_RECONCILIATION, CONFIRMED, REJECTED]
+        - name: sales_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: supervisor_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: closed_from
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: closed_to
+          in: query
+          schema:
+            type: string
+            format: date
+      responses:
+        "200":
+          description: List semua closing aktif + terhapus
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/leads/all:
+    get:
+      summary: List semua lead tanpa pagination
+      operationId: listLeadsAll
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/SearchQuery"
+        - name: ownership
+          in: query
+          schema:
+            type: string
+        - name: stage
+          in: query
+          schema:
+            type: string
+        - name: status
+          in: query
+          schema:
+            type: string
+        - name: score
+          in: query
+          schema:
+            type: integer
+        - name: supervisor_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: sales_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: follow_up_from
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: follow_up_to
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: sort
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List semua lead
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/leads/all-deleted:
+    get:
+      summary: Alias full lead untuk kompatibilitas frontend
+      operationId: listLeadsAllDeleted
+      description: Modul lead saat ini tidak memakai soft delete. Route ini disediakan sebagai alias kompatibilitas frontend.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/SearchQuery"
+        - name: ownership
+          in: query
+          schema:
+            type: string
+        - name: stage
+          in: query
+          schema:
+            type: string
+        - name: status
+          in: query
+          schema:
+            type: string
+        - name: score
+          in: query
+          schema:
+            type: integer
+        - name: supervisor_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: sales_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: follow_up_from
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: follow_up_to
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: sort
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List semua lead
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/customer-interactions/all:
+    get:
+      summary: List semua customer interaction tanpa pagination
+      operationId: listCustomerInteractionsAll
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: lead_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: score
+          in: query
+          schema:
+            type: integer
+        - name: sales_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: type
+          in: query
+          schema:
+            type: string
+        - name: interaction_from
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: interaction_to
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: follow_up_from
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: follow_up_to
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: sort
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List semua interaksi customer
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/customer-interactions/all-deleted:
+    get:
+      summary: Alias full customer interaction untuk kompatibilitas frontend
+      operationId: listCustomerInteractionsAllDeleted
+      description: Modul customer interaction tidak memakai soft delete. Route ini adalah alias kompatibilitas frontend.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: lead_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: score
+          in: query
+          schema:
+            type: integer
+        - name: sales_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: type
+          in: query
+          schema:
+            type: string
+        - name: interaction_from
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: interaction_to
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: follow_up_from
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: follow_up_to
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: sort
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List semua interaksi customer
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/follow-ups/all:
+    get:
+      summary: List semua follow-up tanpa pagination
+      operationId: listFollowUpsAll
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: lead_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: score
+          in: query
+          schema:
+            type: integer
+        - name: sales_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: type
+          in: query
+          schema:
+            type: string
+        - name: interaction_from
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: interaction_to
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: follow_up_from
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: follow_up_to
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: sort
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List semua follow-up
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/follow-ups/all-deleted:
+    get:
+      summary: Alias full follow-up untuk kompatibilitas frontend
+      operationId: listFollowUpsAllDeleted
+      description: Modul follow-up tidak memakai soft delete. Route ini adalah alias kompatibilitas frontend.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: lead_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: score
+          in: query
+          schema:
+            type: integer
+        - name: sales_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: type
+          in: query
+          schema:
+            type: string
+        - name: interaction_from
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: interaction_to
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: follow_up_from
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: follow_up_to
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: sort
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List semua follow-up
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/leads/{lead_id}/interactions/all:
+    get:
+      summary: List semua interaksi per lead tanpa pagination
+      operationId: listLeadInteractionsAll
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/LeadID"
+        - name: score
+          in: query
+          schema:
+            type: integer
+        - name: sales_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: type
+          in: query
+          schema:
+            type: string
+        - name: interaction_from
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: interaction_to
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: follow_up_from
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: follow_up_to
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: sort
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List semua interaksi lead
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/leads/{lead_id}/interactions/all-deleted:
+    get:
+      summary: Alias full interaksi per lead untuk kompatibilitas frontend
+      operationId: listLeadInteractionsAllDeleted
+      description: Modul interaksi lead tidak memakai soft delete. Route ini adalah alias kompatibilitas frontend.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/LeadID"
+        - name: score
+          in: query
+          schema:
+            type: integer
+        - name: sales_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: type
+          in: query
+          schema:
+            type: string
+        - name: interaction_from
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: interaction_to
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: follow_up_from
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: follow_up_to
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: sort
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List semua interaksi lead
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/trainings/all:
+    get:
+      summary: List semua training tanpa pagination
+      operationId: listTrainingsAll
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: lead_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: sales_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: status
+          in: query
+          schema:
+            type: string
+        - name: training_type
+          in: query
+          schema:
+            type: string
+        - name: scheduled_from
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: scheduled_to
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: sort
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List semua training
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/trainings/all-deleted:
+    get:
+      summary: Alias full training untuk kompatibilitas frontend
+      operationId: listTrainingsAllDeleted
+      description: Modul training tidak memakai soft delete. Route ini adalah alias kompatibilitas frontend.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: lead_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: sales_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: status
+          in: query
+          schema:
+            type: string
+        - name: training_type
+          in: query
+          schema:
+            type: string
+        - name: scheduled_from
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: scheduled_to
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: sort
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List semua training
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/leads/{lead_id}/trainings/all:
+    get:
+      summary: List semua training per lead tanpa pagination
+      operationId: listLeadTrainingsAll
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/LeadID"
+        - name: sales_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: status
+          in: query
+          schema:
+            type: string
+        - name: training_type
+          in: query
+          schema:
+            type: string
+        - name: scheduled_from
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: scheduled_to
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: sort
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List semua training per lead
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/leads/{lead_id}/trainings/all-deleted:
+    get:
+      summary: Alias full training per lead untuk kompatibilitas frontend
+      operationId: listLeadTrainingsAllDeleted
+      description: Modul training tidak memakai soft delete. Route ini adalah alias kompatibilitas frontend.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/LeadID"
+        - name: sales_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: status
+          in: query
+          schema:
+            type: string
+        - name: training_type
+          in: query
+          schema:
+            type: string
+        - name: scheduled_from
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: scheduled_to
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: sort
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List semua training per lead
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/wallets/all:
+    get:
+      tags: [Wallet]
+      summary: List semua wallet tanpa pagination
+      operationId: listWalletsAll
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/SearchQuery"
+        - name: owner_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [ACTIVE]
+        - name: sort
+          in: query
+          schema:
+            type: string
+            example: -balance
+      responses:
+        "200":
+          description: List semua wallet
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/wallets/all-deleted:
+    get:
+      tags: [Wallet]
+      summary: Alias full wallet untuk kompatibilitas frontend
+      operationId: listWalletsAllDeleted
+      description: Modul wallet list saat ini tidak memakai soft delete pada route list. Route ini adalah alias kompatibilitas frontend.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/SearchQuery"
+        - name: owner_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [ACTIVE]
+        - name: sort
+          in: query
+          schema:
+            type: string
+            example: -balance
+      responses:
+        "200":
+          description: List semua wallet
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/wallet-payments/all:
+    get:
+      tags: [Wallet]
+      summary: List semua wallet payment tanpa pagination
+      operationId: listWalletPaymentsAll
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/SearchQuery"
+        - name: owner_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: payment_type
+          in: query
+          schema:
+            type: string
+            enum: [TOPUP]
+        - name: channel
+          in: query
+          schema:
+            type: string
+        - name: paid_from
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: paid_to
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: sort
+          in: query
+          schema:
+            type: string
+            example: -paid_at
+      responses:
+        "200":
+          description: List semua wallet payment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/wallet-payments/all-deleted:
+    get:
+      tags: [Wallet]
+      summary: Alias full wallet payment untuk kompatibilitas frontend
+      operationId: listWalletPaymentsAllDeleted
+      description: Modul wallet payment saat ini tidak memakai soft delete pada route list. Route ini adalah alias kompatibilitas frontend.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/SearchQuery"
+        - name: owner_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: payment_type
+          in: query
+          schema:
+            type: string
+            enum: [TOPUP]
+        - name: channel
+          in: query
+          schema:
+            type: string
+        - name: paid_from
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: paid_to
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: sort
+          in: query
+          schema:
+            type: string
+            example: -paid_at
+      responses:
+        "200":
+          description: List semua wallet payment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/wallet-transactions/all:
+    get:
+      tags: [Wallet]
+      summary: List semua wallet transaction tanpa pagination
+      operationId: listWalletTransactionsAll
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/SearchQuery"
+        - name: owner_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: direction
+          in: query
+          schema:
+            type: string
+            enum: [CREDIT, DEBIT]
+        - name: type
+          in: query
+          schema:
+            type: string
+            enum: [CREDIT, DEBIT, ADJUSTMENT, REFUND]
+        - name: occurred_from
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: occurred_to
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: sort
+          in: query
+          schema:
+            type: string
+            example: -occurred_at
+      responses:
+        "200":
+          description: List semua wallet transaction
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/wallet-transactions/all-deleted:
+    get:
+      tags: [Wallet]
+      summary: Alias full wallet transaction untuk kompatibilitas frontend
+      operationId: listWalletTransactionsAllDeleted
+      description: Modul wallet transaction saat ini tidak memakai soft delete pada route list. Route ini adalah alias kompatibilitas frontend.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/SearchQuery"
+        - name: owner_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: direction
+          in: query
+          schema:
+            type: string
+            enum: [CREDIT, DEBIT]
+        - name: type
+          in: query
+          schema:
+            type: string
+            enum: [CREDIT, DEBIT, ADJUSTMENT, REFUND]
+        - name: occurred_from
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: occurred_to
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: sort
+          in: query
+          schema:
+            type: string
+            example: -occurred_at
+      responses:
+        "200":
+          description: List semua wallet transaction
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/owners/{owner_id}/wallet/transactions/all:
+    get:
+      tags: [Wallet]
+      summary: List semua ledger owner tanpa pagination
+      operationId: listOwnerWalletTransactionsAll
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OwnerID"
+        - name: direction
+          in: query
+          schema:
+            type: string
+            enum: [CREDIT, DEBIT]
+        - name: type
+          in: query
+          schema:
+            type: string
+            enum: [CREDIT, DEBIT, ADJUSTMENT, REFUND]
+      responses:
+        "200":
+          description: List semua ledger owner
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/owners/{owner_id}/wallet/transactions/all-deleted:
+    get:
+      tags: [Wallet]
+      summary: Alias full ledger owner untuk kompatibilitas frontend
+      operationId: listOwnerWalletTransactionsAllDeleted
+      description: Modul wallet transaction owner tidak memakai soft delete pada route list. Route ini adalah alias kompatibilitas frontend.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OwnerID"
+        - name: direction
+          in: query
+          schema:
+            type: string
+            enum: [CREDIT, DEBIT]
+        - name: type
+          in: query
+          schema:
+            type: string
+            enum: [CREDIT, DEBIT, ADJUSTMENT, REFUND]
+      responses:
+        "200":
+          description: List semua ledger owner
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/subscription-orders/all:
+    get:
+      tags: [Subscription]
+      summary: List semua subscription order tanpa pagination
+      operationId: listSubscriptionOrdersAll
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/SearchQuery"
+        - name: owner_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: outlet_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: closing_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: sales_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: supervisor_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: plan_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: status
+          in: query
+          schema:
+            type: string
+        - name: purchased_from
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: purchased_to
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: sort
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List semua subscription order
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/subscription-orders/all-deleted:
+    get:
+      tags: [Subscription]
+      summary: Alias full subscription order untuk kompatibilitas frontend
+      operationId: listSubscriptionOrdersAllDeleted
+      description: Modul subscription order list saat ini tidak memakai soft delete terpisah pada route ini. Route ini adalah alias kompatibilitas frontend.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/SearchQuery"
+        - name: owner_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: outlet_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: closing_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: sales_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: supervisor_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: plan_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: status
+          in: query
+          schema:
+            type: string
+        - name: purchased_from
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: purchased_to
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: sort
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List semua subscription order
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/subscriptions/all:
+    get:
+      tags: [Subscription]
+      summary: List semua subscription tanpa pagination
+      operationId: listSubscriptionsAll
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/SearchQuery"
+        - name: owner_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: order_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: plan_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [ACTIVE, EXPIRED, CANCELED]
+        - name: active_from
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: active_to
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: sort
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List semua subscription
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/subscriptions/all-deleted:
+    get:
+      tags: [Subscription]
+      summary: Alias full subscription untuk kompatibilitas frontend
+      operationId: listSubscriptionsAllDeleted
+      description: Modul subscription list saat ini tidak memakai soft delete terpisah pada route ini. Route ini adalah alias kompatibilitas frontend.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/SearchQuery"
+        - name: owner_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: order_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: plan_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [ACTIVE, EXPIRED, CANCELED]
+        - name: active_from
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: active_to
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: sort
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List semua subscription
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/reconciliations/all:
+    get:
+      tags: [Subscription]
+      summary: List semua reconciliation tanpa pagination
+      operationId: listSubscriptionReconciliationsAll
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/SearchQuery"
+        - name: order_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: closing_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: owner_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: sales_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: supervisor_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: status
+          in: query
+          schema:
+            type: string
+        - name: sort
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List semua reconciliation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/reconciliations/all-deleted:
+    get:
+      tags: [Subscription]
+      summary: Alias full reconciliation untuk kompatibilitas frontend
+      operationId: listSubscriptionReconciliationsAllDeleted
+      description: Modul reconciliation list saat ini tidak memakai soft delete terpisah pada route ini. Route ini adalah alias kompatibilitas frontend.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/SearchQuery"
+        - name: order_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: closing_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: owner_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: sales_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: supervisor_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: status
+          in: query
+          schema:
+            type: string
+        - name: sort
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List semua reconciliation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/reconciliation-issues/all:
+    get:
+      tags: [Subscription]
+      summary: List semua reconciliation issue tanpa pagination
+      operationId: listReconciliationIssuesAll
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/SearchQuery"
+        - name: issue_type
+          in: query
+          schema:
+            type: string
+        - name: status
+          in: query
+          schema:
+            type: string
+        - name: owner_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: order_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: closing_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: sales_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: supervisor_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: sort
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List semua reconciliation issue
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/reconciliation-issues/all-deleted:
+    get:
+      tags: [Subscription]
+      summary: Alias full reconciliation issue untuk kompatibilitas frontend
+      operationId: listReconciliationIssuesAllDeleted
+      description: Modul reconciliation issue list saat ini tidak memakai soft delete terpisah pada route ini. Route ini adalah alias kompatibilitas frontend.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/SearchQuery"
+        - name: issue_type
+          in: query
+          schema:
+            type: string
+        - name: status
+          in: query
+          schema:
+            type: string
+        - name: owner_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: order_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: closing_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: sales_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: supervisor_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: sort
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List semua reconciliation issue
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/imports/all:
+    get:
+      tags: [Imports]
+      summary: List semua import batch tanpa pagination
+      operationId: listImportBatchesAll
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+        - name: profile
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List semua batch import
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/imports/all-deleted:
+    get:
+      tags: [Imports]
+      summary: Alias full import batch untuk kompatibilitas frontend
+      operationId: listImportBatchesAllDeleted
+      description: Modul import batch tidak memakai soft delete. Route ini adalah alias kompatibilitas frontend.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+        - name: profile
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List semua batch import
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/imports/{id}/rows/all:
+    get:
+      tags: [Imports]
+      summary: List semua row import tanpa pagination
+      operationId: listImportRowsAll
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+        - name: status
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List semua row import
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/imports/{id}/rows/all-deleted:
+    get:
+      tags: [Imports]
+      summary: Alias full row import untuk kompatibilitas frontend
+      operationId: listImportRowsAllDeleted
+      description: Modul import row tidak memakai soft delete. Route ini adalah alias kompatibilitas frontend.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+        - name: status
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List semua row import
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/sales-targets/all:
+    get:
+      tags: [Sales Target]
+      summary: List semua sales target tanpa pagination
+      operationId: listSalesTargetsAll
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: sales_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: period_year
+          in: query
+          schema:
+            type: integer
+        - name: period_month
+          in: query
+          schema:
+            type: integer
+        - name: metric_code
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List semua sales target
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/sales-targets/all-deleted:
+    get:
+      tags: [Sales Target]
+      summary: Alias full sales target untuk kompatibilitas frontend
+      operationId: listSalesTargetsAllDeleted
+      description: Modul sales target tidak memakai soft delete. Route ini adalah alias kompatibilitas frontend.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: sales_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: period_year
+          in: query
+          schema:
+            type: integer
+        - name: period_month
+          in: query
+          schema:
+            type: integer
+        - name: metric_code
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List semua sales target
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/partners/all:
+    get:
+      tags: [Partners]
+      summary: List semua partner tanpa pagination
+      operationId: listPartnersAll
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: search
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List semua partner
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/partners/all-deleted:
+    get:
+      tags: [Partners]
+      summary: Alias full partner untuk kompatibilitas frontend
+      operationId: listPartnersAllDeleted
+      description: Modul partner list saat ini tidak memakai soft delete pada route ini. Route ini adalah alias kompatibilitas frontend.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: search
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List semua partner
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/partners/{partnerID}/interactions/all:
+    get:
+      tags: [Partner Interactions]
+      summary: List semua interaksi partner tanpa pagination
+      operationId: listPartnerInteractionsAll
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: partnerID
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: List semua interaksi partner
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/partners/{partnerID}/interactions/all-deleted:
+    get:
+      tags: [Partner Interactions]
+      summary: Alias full interaksi partner untuk kompatibilitas frontend
+      operationId: listPartnerInteractionsAllDeleted
+      description: Modul partner interaction tidak memakai soft delete. Route ini adalah alias kompatibilitas frontend.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: partnerID
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: List semua interaksi partner
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/partners/{partnerID}/commissions/all:
+    get:
+      tags: [Partner Commissions]
+      summary: List semua commission partner tanpa pagination
+      operationId: listPartnerCommissionsAll
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: partnerID
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+        - name: status
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List semua commission partner
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/partners/{partnerID}/commissions/all-deleted:
+    get:
+      tags: [Partner Commissions]
+      summary: Alias full commission partner untuk kompatibilitas frontend
+      operationId: listPartnerCommissionsAllDeleted
+      description: Modul partner commission tidak memakai soft delete. Route ini adalah alias kompatibilitas frontend.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: partnerID
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+        - name: status
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List semua commission partner
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/partners/{partnerID}/payouts/all:
+    get:
+      tags: [Partner Payouts]
+      summary: List semua payout partner tanpa pagination
+      operationId: listPartnerPayoutsAll
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: partnerID
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+        - name: status
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List semua payout partner
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /api/v1/partners/{partnerID}/payouts/all-deleted:
+    get:
+      tags: [Partner Payouts]
+      summary: Alias full payout partner untuk kompatibilitas frontend
+      operationId: listPartnerPayoutsAllDeleted
+      description: Modul partner payout tidak memakai soft delete. Route ini adalah alias kompatibilitas frontend.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: partnerID
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+        - name: status
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List semua payout partner
           content:
             application/json:
               schema:

@@ -107,11 +107,15 @@ func (r *Repository) ListBatches(ctx context.Context, params ListBatchesParams) 
 	if limit < 1 {
 		limit = 20
 	}
-	offset := (page - 1) * limit
-
 	query := `SELECT ` + batchSelectColumns + batchFromJoin + ` ` + whereClause + `
-		ORDER BY ib.id DESC LIMIT ? OFFSET ?`
-	rows, err := r.db.QueryContext(ctx, query, append(args, limit, offset)...)
+		ORDER BY ib.id DESC`
+	queryArgs := append([]any{}, args...)
+	if !params.All {
+		offset := (page - 1) * limit
+		query += ` LIMIT ? OFFSET ?`
+		queryArgs = append(queryArgs, limit, offset)
+	}
+	rows, err := r.db.QueryContext(ctx, query, queryArgs...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("importing: list batches: %w", err)
 	}
@@ -269,11 +273,15 @@ func (r *Repository) ListRows(ctx context.Context, batchID int64, params ListRow
 	if limit < 1 {
 		limit = 50
 	}
-	offset := (page - 1) * limit
-
 	query := `SELECT ` + rowSelectColumns + ` FROM import_rows ` + whereClause + `
-		ORDER BY row_index ASC LIMIT ? OFFSET ?`
-	rows, err := r.db.QueryContext(ctx, query, append(args, limit, offset)...)
+		ORDER BY row_index ASC`
+	queryArgs := append([]any{}, args...)
+	if !params.All {
+		offset := (page - 1) * limit
+		query += ` LIMIT ? OFFSET ?`
+		queryArgs = append(queryArgs, limit, offset)
+	}
+	rows, err := r.db.QueryContext(ctx, query, queryArgs...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("importing: list rows: %w", err)
 	}

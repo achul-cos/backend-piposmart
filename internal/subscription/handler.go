@@ -18,13 +18,21 @@ func NewHandler(service *Service) *Handler { return &Handler{service: service} }
 
 func (h *Handler) RegisterRoutes(api *gin.RouterGroup) {
 	api.GET("/subscription-orders", h.listOrders)
+	api.GET("/subscription-orders/all", h.listAllOrders)
+	api.GET("/subscription-orders/all-deleted", h.listAllOrders)
 	api.GET("/subscription-orders/:order_id", h.getOrder)
 	api.POST("/owners/:owner_id/subscription-orders", h.createOrder)
 	api.POST("/subscription-orders/:order_id/reconcile", h.reconcileOrder)
 	api.GET("/subscriptions", h.listSubscriptions)
+	api.GET("/subscriptions/all", h.listAllSubscriptions)
+	api.GET("/subscriptions/all-deleted", h.listAllSubscriptions)
 	api.GET("/subscriptions/:subscription_id", h.getSubscription)
 	api.GET("/reconciliations", h.listReconciliations)
+	api.GET("/reconciliations/all", h.listAllReconciliations)
+	api.GET("/reconciliations/all-deleted", h.listAllReconciliations)
 	api.GET("/reconciliation-issues", h.listIssues)
+	api.GET("/reconciliation-issues/all", h.listAllIssues)
+	api.GET("/reconciliation-issues/all-deleted", h.listAllIssues)
 }
 
 func (h *Handler) listOrders(c *gin.Context) {
@@ -33,6 +41,21 @@ func (h *Handler) listOrders(c *gin.Context) {
 	if !ok {
 		return
 	}
+	response, err := h.service.ListOrders(c.Request.Context(), user, params)
+	if err != nil {
+		writeError(c, err)
+		return
+	}
+	httpx.Success(c, http.StatusOK, response)
+}
+
+func (h *Handler) listAllOrders(c *gin.Context) {
+	user, _ := identity.CurrentUser(c)
+	params, ok := listParams(c)
+	if !ok {
+		return
+	}
+	params.All = true
 	response, err := h.service.ListOrders(c.Request.Context(), user, params)
 	if err != nil {
 		writeError(c, err)
@@ -105,6 +128,21 @@ func (h *Handler) listSubscriptions(c *gin.Context) {
 	httpx.Success(c, http.StatusOK, response)
 }
 
+func (h *Handler) listAllSubscriptions(c *gin.Context) {
+	user, _ := identity.CurrentUser(c)
+	params, ok := listParams(c)
+	if !ok {
+		return
+	}
+	params.All = true
+	response, err := h.service.ListSubscriptions(c.Request.Context(), user, params)
+	if err != nil {
+		writeError(c, err)
+		return
+	}
+	httpx.Success(c, http.StatusOK, response)
+}
+
 func (h *Handler) getSubscription(c *gin.Context) {
 	user, _ := identity.CurrentUser(c)
 	id, ok := parsePathID(c, "subscription_id", "ID subscription tidak valid")
@@ -133,6 +171,21 @@ func (h *Handler) listReconciliations(c *gin.Context) {
 	httpx.Success(c, http.StatusOK, response)
 }
 
+func (h *Handler) listAllReconciliations(c *gin.Context) {
+	user, _ := identity.CurrentUser(c)
+	params, ok := listParams(c)
+	if !ok {
+		return
+	}
+	params.All = true
+	response, err := h.service.ListReconciliations(c.Request.Context(), user, params)
+	if err != nil {
+		writeError(c, err)
+		return
+	}
+	httpx.Success(c, http.StatusOK, response)
+}
+
 func (h *Handler) listIssues(c *gin.Context) {
 	user, _ := identity.CurrentUser(c)
 	params, ok := listParams(c)
@@ -147,10 +200,25 @@ func (h *Handler) listIssues(c *gin.Context) {
 	httpx.Success(c, http.StatusOK, response)
 }
 
+func (h *Handler) listAllIssues(c *gin.Context) {
+	user, _ := identity.CurrentUser(c)
+	params, ok := listParams(c)
+	if !ok {
+		return
+	}
+	params.All = true
+	response, err := h.service.ListIssues(c.Request.Context(), user, params)
+	if err != nil {
+		writeError(c, err)
+		return
+	}
+	httpx.Success(c, http.StatusOK, response)
+}
+
 func listParams(c *gin.Context) (ListParams, bool) {
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))
-	params := ListParams{Query: c.Query("q"), Status: c.Query("status"), IssueType: c.Query("issue_type"), Page: page, Limit: limit, Sort: c.Query("sort")}
+	params := ListParams{Query: c.Query("q"), Status: c.Query("status"), IssueType: c.Query("issue_type"), All: false, Page: page, Limit: limit, Sort: c.Query("sort")}
 	if !parseOptionalInt64Query(c, "owner_id", &params.OwnerID) || !parseOptionalInt64Query(c, "outlet_id", &params.OutletID) || !parseOptionalInt64Query(c, "order_id", &params.OrderID) || !parseOptionalInt64Query(c, "closing_id", &params.ClosingID) || !parseOptionalInt64Query(c, "sales_id", &params.SalesID) || !parseOptionalInt64Query(c, "supervisor_id", &params.SupervisorID) || !parseOptionalInt64Query(c, "plan_id", &params.PlanID) {
 		return ListParams{}, false
 	}

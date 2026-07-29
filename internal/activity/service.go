@@ -25,7 +25,7 @@ func (s *Service) ListInteractions(ctx context.Context, actor identity.User, par
 	}
 	return InteractionListResponse{
 		Items:      interactionResponses(items),
-		Pagination: PaginationMeta{Page: params.Page, Limit: params.Limit, Total: total},
+		Pagination: PaginationMeta{Page: params.Page, Limit: resolveReturnedLimit(params.All, params.Limit, len(items), total), Total: total},
 	}, nil
 }
 
@@ -65,7 +65,7 @@ func (s *Service) ListTrainings(ctx context.Context, actor identity.User, params
 	}
 	return TrainingListResponse{
 		Items:      trainingResponses(items),
-		Pagination: PaginationMeta{Page: params.Page, Limit: params.Limit, Total: total},
+		Pagination: PaginationMeta{Page: params.Page, Limit: resolveReturnedLimit(params.All, params.Limit, len(items), total), Total: total},
 	}, nil
 }
 
@@ -139,14 +139,19 @@ func validateScheduleTrainingRequest(req ScheduleTrainingRequest) error {
 }
 
 func normalizeInteractionListParams(params InteractionListParams) InteractionListParams {
-	if params.Page < 1 {
+	if params.All {
 		params.Page = 1
-	}
-	if params.Limit < 1 {
-		params.Limit = 10
-	}
-	if params.Limit > 100 {
-		params.Limit = 100
+		params.Limit = 0
+	} else {
+		if params.Page < 1 {
+			params.Page = 1
+		}
+		if params.Limit < 1 {
+			params.Limit = 10
+		}
+		if params.Limit > 100 {
+			params.Limit = 100
+		}
 	}
 	params.Type = strings.ToUpper(strings.TrimSpace(params.Type))
 	params.Sort = strings.TrimSpace(params.Sort)
@@ -154,19 +159,34 @@ func normalizeInteractionListParams(params InteractionListParams) InteractionLis
 }
 
 func normalizeTrainingListParams(params TrainingListParams) TrainingListParams {
-	if params.Page < 1 {
+	if params.All {
 		params.Page = 1
-	}
-	if params.Limit < 1 {
-		params.Limit = 10
-	}
-	if params.Limit > 100 {
-		params.Limit = 100
+		params.Limit = 0
+	} else {
+		if params.Page < 1 {
+			params.Page = 1
+		}
+		if params.Limit < 1 {
+			params.Limit = 10
+		}
+		if params.Limit > 100 {
+			params.Limit = 100
+		}
 	}
 	params.Status = strings.ToUpper(strings.TrimSpace(params.Status))
 	params.TrainingType = strings.ToUpper(strings.TrimSpace(params.TrainingType))
 	params.Sort = strings.TrimSpace(params.Sort)
 	return params
+}
+
+func resolveReturnedLimit(all bool, limit int, itemCount int, total int64) int {
+	if !all {
+		return limit
+	}
+	if total == 0 {
+		return 0
+	}
+	return itemCount
 }
 
 func interactionResponses(items []CustomerInteraction) []CustomerInteractionResponse {

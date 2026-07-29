@@ -230,6 +230,24 @@ func (s *Service) CreateSales(ctx context.Context, actor User, req CreateSalesRe
 	if !hasPermission(actor, "users.manage_sales") {
 		return ResetPasswordResponse{}, ErrForbidden
 	}
+	return s.createManagedUser(ctx, actor, RoleSales, req, meta, "users.create_sales")
+}
+
+func (s *Service) CreateSupervisor(ctx context.Context, actor User, req CreateUserRequest, meta RequestMeta) (ResetPasswordResponse, error) {
+	if !hasPermission(actor, "users.manage_all") {
+		return ResetPasswordResponse{}, ErrForbidden
+	}
+	return s.createManagedUser(ctx, actor, RoleSupervisor, req, meta, "users.create_supervisor")
+}
+
+func (s *Service) CreateAdmin(ctx context.Context, actor User, req CreateUserRequest, meta RequestMeta) (ResetPasswordResponse, error) {
+	if !hasPermission(actor, "users.manage_all") {
+		return ResetPasswordResponse{}, ErrForbidden
+	}
+	return s.createManagedUser(ctx, actor, RoleAdmin, req, meta, "users.create_admin")
+}
+
+func (s *Service) createManagedUser(ctx context.Context, actor User, roleCode string, req CreateUserRequest, meta RequestMeta, auditAction string) (ResetPasswordResponse, error) {
 	plain := strings.TrimSpace(req.Password)
 	if plain == "" {
 		generated, err := GenerateTemporaryPassword()
@@ -246,7 +264,7 @@ func (s *Service) CreateSales(ctx context.Context, actor User, req CreateSalesRe
 		return ResetPasswordResponse{}, err
 	}
 	user, err := s.repo.CreateUser(ctx, CreateUserInput{
-		RoleCode:           RoleSales,
+		RoleCode:           roleCode,
 		Code:               req.Code,
 		Name:               req.Name,
 		Email:              req.Email,
@@ -258,7 +276,7 @@ func (s *Service) CreateSales(ctx context.Context, actor User, req CreateSalesRe
 	if err != nil {
 		return ResetPasswordResponse{}, err
 	}
-	_ = s.auditUserChange(ctx, actor, "users.create_sales", user.ID, nil, NewUserResponse(user), meta)
+	_ = s.auditUserChange(ctx, actor, auditAction, user.ID, nil, NewUserResponse(user), meta)
 	return ResetPasswordResponse{User: NewUserResponse(user), TemporaryPassword: plain}, nil
 }
 
@@ -312,11 +330,29 @@ func (s *Service) ResetSalesPassword(ctx context.Context, actor User, id int64, 
 	if !hasPermission(actor, "users.manage_sales") {
 		return ResetPasswordResponse{}, ErrForbidden
 	}
+	return s.resetManagedPassword(ctx, actor, id, req, meta, RoleSales, "users.reset_sales_password")
+}
+
+func (s *Service) ResetSupervisorPassword(ctx context.Context, actor User, id int64, req ResetPasswordRequest, meta RequestMeta) (ResetPasswordResponse, error) {
+	if !hasPermission(actor, "users.manage_all") {
+		return ResetPasswordResponse{}, ErrForbidden
+	}
+	return s.resetManagedPassword(ctx, actor, id, req, meta, RoleSupervisor, "users.reset_supervisor_password")
+}
+
+func (s *Service) ResetAdminPassword(ctx context.Context, actor User, id int64, req ResetPasswordRequest, meta RequestMeta) (ResetPasswordResponse, error) {
+	if !hasPermission(actor, "users.manage_all") {
+		return ResetPasswordResponse{}, ErrForbidden
+	}
+	return s.resetManagedPassword(ctx, actor, id, req, meta, RoleAdmin, "users.reset_admin_password")
+}
+
+func (s *Service) resetManagedPassword(ctx context.Context, actor User, id int64, req ResetPasswordRequest, meta RequestMeta, roleCode string, auditAction string) (ResetPasswordResponse, error) {
 	user, err := s.repo.FindUserByID(ctx, id)
 	if err != nil {
 		return ResetPasswordResponse{}, err
 	}
-	if user.RoleCode != RoleSales {
+	if user.RoleCode != roleCode {
 		return ResetPasswordResponse{}, ErrNotFound
 	}
 	plain := strings.TrimSpace(req.NewPassword)
@@ -344,7 +380,7 @@ func (s *Service) ResetSalesPassword(ctx context.Context, actor User, id int64, 
 	if err != nil {
 		return ResetPasswordResponse{}, err
 	}
-	_ = s.auditUserChange(ctx, actor, "users.reset_sales_password", id, nil, map[string]any{"user_id": id}, meta)
+	_ = s.auditUserChange(ctx, actor, auditAction, id, nil, map[string]any{"user_id": id, "role": roleCode}, meta)
 	return ResetPasswordResponse{User: NewUserResponse(updated), TemporaryPassword: plain}, nil
 }
 

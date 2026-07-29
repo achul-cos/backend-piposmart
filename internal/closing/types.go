@@ -232,6 +232,7 @@ type ListParams struct {
 	Scope        string
 	ClosedFrom   *time.Time
 	ClosedTo     *time.Time
+	All          bool
 	Page         int
 	Limit        int
 	Sort         string

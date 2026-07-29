@@ -218,6 +218,7 @@ type ListParams struct {
 	PaidTo       *time.Time
 	OccurredFrom *time.Time
 	OccurredTo   *time.Time
+	All          bool
 	Page         int
 	Limit        int
 	Sort         string

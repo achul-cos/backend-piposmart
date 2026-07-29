@@ -184,6 +184,7 @@ type InteractionListParams struct {
 	FollowUpFrom    *time.Time
 	FollowUpTo      *time.Time
 	OnlyFollowUps   bool
+	All             bool
 	Page            int
 	Limit           int
 	Sort            string
@@ -196,6 +197,7 @@ type TrainingListParams struct {
 	SalesID       *int64
 	ScheduledFrom *time.Time
 	ScheduledTo   *time.Time
+	All           bool
 	Page          int
 	Limit         int
 	Sort          string

@@ -25,7 +25,7 @@ func (s *Service) ListClosings(ctx context.Context, actor identity.User, params 
 	}
 	return ClosingListResponse{
 		Items:      closingResponses(items),
-		Pagination: PaginationMeta{Page: params.Page, Limit: params.Limit, Total: total},
+		Pagination: PaginationMeta{Page: params.Page, Limit: resolveReturnedLimit(params.All, params.Limit, len(items), total), Total: total},
 	}, nil
 }
 
@@ -138,20 +138,35 @@ func validateCreateClosingRequest(req CreateClosingRequest) error {
 }
 
 func normalizeListParams(params ListParams) ListParams {
-	if params.Page < 1 {
+	if params.All {
 		params.Page = 1
-	}
-	if params.Limit < 1 {
-		params.Limit = 10
-	}
-	if params.Limit > 100 {
-		params.Limit = 100
+		params.Limit = 0
+	} else {
+		if params.Page < 1 {
+			params.Page = 1
+		}
+		if params.Limit < 1 {
+			params.Limit = 10
+		}
+		if params.Limit > 100 {
+			params.Limit = 100
+		}
 	}
 	params.Query = strings.TrimSpace(params.Query)
 	params.Status = normalizeStatus(params.Status)
 	params.Scope = normalizeScope(params.Scope)
 	params.Sort = strings.TrimSpace(params.Sort)
 	return params
+}
+
+func resolveReturnedLimit(all bool, limit int, itemCount int, total int64) int {
+	if !all {
+		return limit
+	}
+	if total == 0 {
+		return 0
+	}
+	return itemCount
 }
 
 func normalizeScope(scope string) string {

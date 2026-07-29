@@ -100,13 +100,15 @@ type AuthTokenResponse struct {
 	User                  UserResponse `json:"user"`
 }
 
-type CreateSalesRequest struct {
+type CreateUserRequest struct {
 	Code     string `json:"code"`
 	Name     string `json:"name" binding:"required"`
 	Email    string `json:"email" binding:"required,email"`
 	Phone    string `json:"phone"`
 	Password string `json:"password"`
 }
+
+type CreateSalesRequest = CreateUserRequest
 
 type UpdateSalesRequest struct {
 	Code  *string `json:"code"`

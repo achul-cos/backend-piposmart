@@ -91,12 +91,16 @@ WHERE `+where, args...).Scan(&total); err != nil {
 	if err != nil {
 		return nil, 0, err
 	}
-	offset := (params.Page - 1) * params.Limit
-	args = append(args, params.Limit, offset)
-	rows, err := r.db.QueryContext(ctx, orderSelect()+`
-WHERE `+where+`
-ORDER BY `+orderBy+`
-LIMIT ? OFFSET ?`, args...)
+	query := orderSelect() + `
+WHERE ` + where + `
+ORDER BY ` + orderBy
+	if !params.All {
+		offset := (params.Page - 1) * params.Limit
+		args = append(args, params.Limit, offset)
+		query += `
+LIMIT ? OFFSET ?`
+	}
+	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -130,12 +134,16 @@ WHERE `+where, args...).Scan(&total); err != nil {
 	if err != nil {
 		return nil, 0, err
 	}
-	offset := (params.Page - 1) * params.Limit
-	args = append(args, params.Limit, offset)
-	rows, err := r.db.QueryContext(ctx, subscriptionSelect()+`
-WHERE `+where+`
-ORDER BY `+orderBy+`
-LIMIT ? OFFSET ?`, args...)
+	query := subscriptionSelect() + `
+WHERE ` + where + `
+ORDER BY ` + orderBy
+	if !params.All {
+		offset := (params.Page - 1) * params.Limit
+		args = append(args, params.Limit, offset)
+		query += `
+LIMIT ? OFFSET ?`
+	}
+	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -171,12 +179,16 @@ WHERE `+where, args...).Scan(&total); err != nil {
 	if err != nil {
 		return nil, 0, err
 	}
-	offset := (params.Page - 1) * params.Limit
-	args = append(args, params.Limit, offset)
-	rows, err := r.db.QueryContext(ctx, reconciliationSelect()+`
-WHERE `+where+`
-ORDER BY `+orderBy+`
-LIMIT ? OFFSET ?`, args...)
+	query := reconciliationSelect() + `
+WHERE ` + where + `
+ORDER BY ` + orderBy
+	if !params.All {
+		offset := (params.Page - 1) * params.Limit
+		args = append(args, params.Limit, offset)
+		query += `
+LIMIT ? OFFSET ?`
+	}
+	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -200,12 +212,16 @@ WHERE `+where, args...).Scan(&total); err != nil {
 	if err != nil {
 		return nil, 0, err
 	}
-	offset := (params.Page - 1) * params.Limit
-	args = append(args, params.Limit, offset)
-	rows, err := r.db.QueryContext(ctx, issueSelect()+`
-WHERE `+where+`
-ORDER BY `+orderBy+`
-LIMIT ? OFFSET ?`, args...)
+	query := issueSelect() + `
+WHERE ` + where + `
+ORDER BY ` + orderBy
+	if !params.All {
+		offset := (params.Page - 1) * params.Limit
+		args = append(args, params.Limit, offset)
+		query += `
+LIMIT ? OFFSET ?`
+	}
+	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, 0, err
 	}

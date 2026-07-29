@@ -152,18 +152,22 @@ func (r *Repository) ListOwners(ctx context.Context, actor Actor, params ListPar
 	if err != nil {
 		return nil, 0, err
 	}
-	offset := (params.Page - 1) * params.Limit
-	args = append(args, params.Limit, offset)
-	rows, err := r.db.QueryContext(ctx, `
+	query := `
 		SELECT
 			o.id, o.code, o.name, o.phone, o.email, o.brand_name, o.province, o.city,
 			o.address, o.status, COUNT(ot.id) AS outlet_count, o.created_at, o.updated_at
 		FROM owners o
 		LEFT JOIN outlets ot ON ot.owner_id = o.id AND ot.deleted_at IS NULL
-		WHERE `+where+`
+		WHERE ` + where + `
 		GROUP BY o.id
-		ORDER BY `+orderBy+`
-		LIMIT ? OFFSET ?`, args...)
+		ORDER BY ` + orderBy
+	if !params.All {
+		offset := (params.Page - 1) * params.Limit
+		args = append(args, params.Limit, offset)
+		query += `
+		LIMIT ? OFFSET ?`
+	}
+	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -414,14 +418,18 @@ func (r *Repository) ListOutlets(ctx context.Context, actor Actor, ownerID int64
 	if err != nil {
 		return nil, 0, err
 	}
-	offset := (params.Page - 1) * params.Limit
-	args = append(args, params.Limit, offset)
-	rows, err := r.db.QueryContext(ctx, `
+	query := `
 		SELECT id, owner_id, code, name, phone, province, city, address, status, created_at, updated_at
 		FROM outlets ot
-		WHERE `+where+`
-		ORDER BY `+orderBy+`
-		LIMIT ? OFFSET ?`, args...)
+		WHERE ` + where + `
+		ORDER BY ` + orderBy
+	if !params.All {
+		offset := (params.Page - 1) * params.Limit
+		args = append(args, params.Limit, offset)
+		query += `
+		LIMIT ? OFFSET ?`
+	}
+	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -456,12 +464,16 @@ func (r *Repository) ListGlobalOutlets(ctx context.Context, actor Actor, params 
 	if err != nil {
 		return nil, 0, err
 	}
-	offset := (params.Page - 1) * params.Limit
-	args = append(args, params.Limit, offset)
-	rows, err := r.db.QueryContext(ctx, outletOverviewSelect()+`
-		WHERE `+where+`
-		ORDER BY `+orderBy+`
-		LIMIT ? OFFSET ?`, args...)
+	query := outletOverviewSelect() + `
+		WHERE ` + where + `
+		ORDER BY ` + orderBy
+	if !params.All {
+		offset := (params.Page - 1) * params.Limit
+		args = append(args, params.Limit, offset)
+		query += `
+		LIMIT ? OFFSET ?`
+	}
+	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, 0, err
 	}

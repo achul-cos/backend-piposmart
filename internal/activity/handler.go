@@ -21,13 +21,23 @@ func NewHandler(service *Service) *Handler {
 
 func (h *Handler) RegisterRoutes(api *gin.RouterGroup) {
 	api.GET("/customer-interactions", h.listInteractions)
+	api.GET("/customer-interactions/all", h.listAllInteractions)
+	api.GET("/customer-interactions/all-deleted", h.listAllInteractions)
 	api.GET("/follow-ups", h.listFollowUps)
+	api.GET("/follow-ups/all", h.listAllFollowUps)
+	api.GET("/follow-ups/all-deleted", h.listAllFollowUps)
 	api.GET("/leads/:lead_id/interactions", h.listLeadInteractions)
+	api.GET("/leads/:lead_id/interactions/all", h.listAllLeadInteractions)
+	api.GET("/leads/:lead_id/interactions/all-deleted", h.listAllLeadInteractions)
 	api.POST("/leads/:lead_id/interactions", h.createInteraction)
 	api.GET("/leads/:lead_id/stage-history", h.stageHistory)
 
 	api.GET("/trainings", h.listTrainings)
+	api.GET("/trainings/all", h.listAllTrainings)
+	api.GET("/trainings/all-deleted", h.listAllTrainings)
 	api.GET("/leads/:lead_id/trainings", h.listLeadTrainings)
+	api.GET("/leads/:lead_id/trainings/all", h.listAllLeadTrainings)
+	api.GET("/leads/:lead_id/trainings/all-deleted", h.listAllLeadTrainings)
 	api.POST("/leads/:lead_id/trainings", h.scheduleTraining)
 	api.POST("/trainings/:training_id/reschedule", h.rescheduleTraining)
 	api.POST("/trainings/:training_id/complete", h.completeTraining)
@@ -40,6 +50,21 @@ func (h *Handler) listInteractions(c *gin.Context) {
 	if !ok {
 		return
 	}
+	response, err := h.service.ListInteractions(c.Request.Context(), user, params)
+	if err != nil {
+		writeError(c, err)
+		return
+	}
+	httpx.Success(c, http.StatusOK, response)
+}
+
+func (h *Handler) listAllInteractions(c *gin.Context) {
+	user, _ := identity.CurrentUser(c)
+	params, ok := interactionListParams(c)
+	if !ok {
+		return
+	}
+	params.All = true
 	response, err := h.service.ListInteractions(c.Request.Context(), user, params)
 	if err != nil {
 		writeError(c, err)
@@ -63,6 +88,22 @@ func (h *Handler) listFollowUps(c *gin.Context) {
 	httpx.Success(c, http.StatusOK, response)
 }
 
+func (h *Handler) listAllFollowUps(c *gin.Context) {
+	user, _ := identity.CurrentUser(c)
+	params, ok := interactionListParams(c)
+	if !ok {
+		return
+	}
+	params.OnlyFollowUps = true
+	params.All = true
+	response, err := h.service.ListInteractions(c.Request.Context(), user, params)
+	if err != nil {
+		writeError(c, err)
+		return
+	}
+	httpx.Success(c, http.StatusOK, response)
+}
+
 func (h *Handler) listLeadInteractions(c *gin.Context) {
 	user, _ := identity.CurrentUser(c)
 	leadID, ok := parsePathID(c, "lead_id", "ID lead tidak valid")
@@ -73,6 +114,25 @@ func (h *Handler) listLeadInteractions(c *gin.Context) {
 	if !ok {
 		return
 	}
+	response, err := h.service.ListLeadInteractions(c.Request.Context(), user, leadID, params)
+	if err != nil {
+		writeError(c, err)
+		return
+	}
+	httpx.Success(c, http.StatusOK, response)
+}
+
+func (h *Handler) listAllLeadInteractions(c *gin.Context) {
+	user, _ := identity.CurrentUser(c)
+	leadID, ok := parsePathID(c, "lead_id", "ID lead tidak valid")
+	if !ok {
+		return
+	}
+	params, ok := interactionListParams(c)
+	if !ok {
+		return
+	}
+	params.All = true
 	response, err := h.service.ListLeadInteractions(c.Request.Context(), user, leadID, params)
 	if err != nil {
 		writeError(c, err)
@@ -127,6 +187,21 @@ func (h *Handler) listTrainings(c *gin.Context) {
 	httpx.Success(c, http.StatusOK, response)
 }
 
+func (h *Handler) listAllTrainings(c *gin.Context) {
+	user, _ := identity.CurrentUser(c)
+	params, ok := trainingListParams(c)
+	if !ok {
+		return
+	}
+	params.All = true
+	response, err := h.service.ListTrainings(c.Request.Context(), user, params)
+	if err != nil {
+		writeError(c, err)
+		return
+	}
+	httpx.Success(c, http.StatusOK, response)
+}
+
 func (h *Handler) listLeadTrainings(c *gin.Context) {
 	user, _ := identity.CurrentUser(c)
 	leadID, ok := parsePathID(c, "lead_id", "ID lead tidak valid")
@@ -137,6 +212,25 @@ func (h *Handler) listLeadTrainings(c *gin.Context) {
 	if !ok {
 		return
 	}
+	response, err := h.service.ListLeadTrainings(c.Request.Context(), user, leadID, params)
+	if err != nil {
+		writeError(c, err)
+		return
+	}
+	httpx.Success(c, http.StatusOK, response)
+}
+
+func (h *Handler) listAllLeadTrainings(c *gin.Context) {
+	user, _ := identity.CurrentUser(c)
+	leadID, ok := parsePathID(c, "lead_id", "ID lead tidak valid")
+	if !ok {
+		return
+	}
+	params, ok := trainingListParams(c)
+	if !ok {
+		return
+	}
+	params.All = true
 	response, err := h.service.ListLeadTrainings(c.Request.Context(), user, leadID, params)
 	if err != nil {
 		writeError(c, err)
@@ -218,6 +312,7 @@ func interactionListParams(c *gin.Context) (InteractionListParams, bool) {
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))
 	params := InteractionListParams{
 		Type:  c.Query("type"),
+		All:   false,
 		Page:  page,
 		Limit: limit,
 		Sort:  c.Query("sort"),
@@ -261,6 +356,7 @@ func trainingListParams(c *gin.Context) (TrainingListParams, bool) {
 	params := TrainingListParams{
 		Status:       c.Query("status"),
 		TrainingType: c.Query("training_type"),
+		All:          false,
 		Page:         page,
 		Limit:        limit,
 		Sort:         c.Query("sort"),

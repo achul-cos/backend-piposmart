@@ -27,9 +27,13 @@ func (r *Repository) ListPackages(ctx context.Context, params ListParams) ([]Pac
 	if err != nil {
 		return nil, 0, err
 	}
-	offset := (params.Page - 1) * params.Limit
-	args = append(args, params.Limit, offset)
-	rows, err := r.db.QueryContext(ctx, packageSelect()+" WHERE "+where+" ORDER BY "+orderBy+" LIMIT ? OFFSET ?", args...)
+	query := packageSelect() + " WHERE " + where + " ORDER BY " + orderBy
+	if !params.All {
+		offset := (params.Page - 1) * params.Limit
+		args = append(args, params.Limit, offset)
+		query += " LIMIT ? OFFSET ?"
+	}
+	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -128,9 +132,13 @@ func (r *Repository) ListPlans(ctx context.Context, params ListParams) ([]Plan, 
 	if err != nil {
 		return nil, 0, err
 	}
-	offset := (params.Page - 1) * params.Limit
-	args = append(args, params.Limit, offset)
-	rows, err := r.db.QueryContext(ctx, planSelect()+" WHERE "+where+" ORDER BY "+orderBy+" LIMIT ? OFFSET ?", args...)
+	query := planSelect() + " WHERE " + where + " ORDER BY " + orderBy
+	if !params.All {
+		offset := (params.Page - 1) * params.Limit
+		args = append(args, params.Limit, offset)
+		query += " LIMIT ? OFFSET ?"
+	}
+	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -263,9 +271,13 @@ func (r *Repository) ListPromotions(ctx context.Context, params ListParams) ([]P
 	if err != nil {
 		return nil, 0, err
 	}
-	offset := (params.Page - 1) * params.Limit
-	args = append(args, params.Limit, offset)
-	rows, err := r.db.QueryContext(ctx, promotionSelect()+" WHERE "+where+" ORDER BY "+orderBy+" LIMIT ? OFFSET ?", args...)
+	query := promotionSelect() + " WHERE " + where + " ORDER BY " + orderBy
+	if !params.All {
+		offset := (params.Page - 1) * params.Limit
+		args = append(args, params.Limit, offset)
+		query += " LIMIT ? OFFSET ?"
+	}
+	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, 0, err
 	}

@@ -265,6 +265,7 @@ type ListParams struct {
 	ChargeType string
 	Scope      string
 	AsOf       *time.Time
+	All        bool
 	Page       int
 	Limit      int
 	Sort       string

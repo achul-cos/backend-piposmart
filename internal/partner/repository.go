@@ -182,8 +182,12 @@ func (r *Repository) ListPartners(ctx context.Context, limit int, offset int, se
 		return nil, 0, err
 	}
 	// Data query
-	query := "SELECT id, partner_type_id, code, name, phone, email, address, bank_account_encrypted, bank_account_last4, status, created_at, updated_at FROM partners " + where + " ORDER BY name LIMIT ? OFFSET ?"
-	dataArgs := append(args, limit, offset)
+	query := "SELECT id, partner_type_id, code, name, phone, email, address, bank_account_encrypted, bank_account_last4, status, created_at, updated_at FROM partners " + where + " ORDER BY name"
+	dataArgs := append([]any{}, args...)
+	if limit > 0 {
+		query += " LIMIT ? OFFSET ?"
+		dataArgs = append(dataArgs, limit, offset)
+	}
 	rows, err := r.db.QueryContext(ctx, query, dataArgs...)
 	if err != nil {
 		return nil, 0, err
@@ -406,10 +410,14 @@ func (r *Repository) ListPartnerInteractions(ctx context.Context, partnerID int6
 	query := `
 		SELECT id, partner_id, interaction_type, interaction_at, note, created_at
 		FROM partner_interactions ` + where + `
-		ORDER BY interaction_at DESC
+		ORDER BY interaction_at DESC`
+	queryArgs := append([]any{}, args...)
+	if limit > 0 {
+		query += `
 		LIMIT ? OFFSET ?`
-	args = append(args, limit, offset)
-	rows, err := r.db.QueryContext(ctx, query, args...)
+		queryArgs = append(queryArgs, limit, offset)
+	}
+	rows, err := r.db.QueryContext(ctx, query, queryArgs...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -762,8 +770,12 @@ func (r *Repository) ListPartnerCommissions(ctx context.Context, partnerID int64
 		return nil, 0, err
 	}
 
-	query := "SELECT " + commissionSelectColumns + commissionFromJoin + " " + where + " ORDER BY pc.created_at DESC LIMIT ? OFFSET ?"
-	dataArgs := append(args, limit, offset)
+	query := "SELECT " + commissionSelectColumns + commissionFromJoin + " " + where + " ORDER BY pc.created_at DESC"
+	dataArgs := append([]any{}, args...)
+	if limit > 0 {
+		query += " LIMIT ? OFFSET ?"
+		dataArgs = append(dataArgs, limit, offset)
+	}
 	rows, err := r.db.QueryContext(ctx, query, dataArgs...)
 	if err != nil {
 		return nil, 0, err
@@ -1222,8 +1234,12 @@ func (r *Repository) ListPartnerPayouts(ctx context.Context, partnerID int64, st
 		return nil, 0, err
 	}
 
-	query := "SELECT " + payoutSelectColumns + payoutFromJoin + " " + where + " ORDER BY pp.created_at DESC LIMIT ? OFFSET ?"
-	dataArgs := append(args, limit, offset)
+	query := "SELECT " + payoutSelectColumns + payoutFromJoin + " " + where + " ORDER BY pp.created_at DESC"
+	dataArgs := append([]any{}, args...)
+	if limit > 0 {
+		query += " LIMIT ? OFFSET ?"
+		dataArgs = append(dataArgs, limit, offset)
+	}
 	rows, err := r.db.QueryContext(ctx, query, dataArgs...)
 	if err != nil {
 		return nil, 0, err

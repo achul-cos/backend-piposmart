@@ -35,12 +35,16 @@ func (r *Repository) ListClosings(ctx context.Context, actor identity.User, para
 	if err != nil {
 		return nil, 0, err
 	}
-	offset := (params.Page - 1) * params.Limit
-	args = append(args, params.Limit, offset)
-	rows, err := r.db.QueryContext(ctx, closingSelect()+`
-		WHERE `+where+`
-		ORDER BY `+orderBy+`
-		LIMIT ? OFFSET ?`, args...)
+	query := closingSelect() + `
+		WHERE ` + where + `
+		ORDER BY ` + orderBy
+	if !params.All {
+		offset := (params.Page - 1) * params.Limit
+		args = append(args, params.Limit, offset)
+		query += `
+		LIMIT ? OFFSET ?`
+	}
+	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, 0, err
 	}
