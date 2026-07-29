@@ -3,6 +3,7 @@ package activity
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -586,27 +587,31 @@ func (r *Repository) findTrainingByIDRaw(ctx context.Context, id int64) (Trainin
 	return item, err
 }
 
-func (r *Repository) GetTraining(ctx context.Context, actor identity.User, id int64) (TrainingReport, error) {
-	item, err := r.findTrainingByIDRaw(ctx, id)
-	if err != nil {
-		return TrainingReport{}, err
-	}
-	// Visibility check: admin bisa lihat semua, supervisor/sales hanya milik mereka
-	switch actor.RoleCode {
-	case RoleAdmin:
-		// OK
-	case RoleSupervisor:
-		if !(item.SupervisorID.Valid && item.SupervisorID.Int64 == actor.ID) {
-			return TrainingReport{}, ErrForbidden
-		}
-	case RoleSales:
-		if !(item.SalesID.Valid && item.SalesID.Int64 == actor.ID) {
-			return TrainingReport{}, ErrForbidden
-		}
-	default:
+func (r *Repository) findTrainingByIDVisible(ctx context.Context, actor identity.User, id int64) (TrainingReport, error) {
+	where, args := trainingWhere(actor, TrainingListParams{})
+	args = append(args, id)
+
+	item, err := scanTraining(r.db.QueryRowContext(ctx, trainingSelect()+`
+		WHERE `+where+` AND tr.id = ?
+		LIMIT 1`, args...))
+	if err == sql.ErrNoRows {
 		return TrainingReport{}, ErrForbidden
 	}
-	return item, nil
+	return item, err
+}
+
+func (r *Repository) GetTraining(ctx context.Context, actor identity.User, id int64) (TrainingReport, error) {
+	item, err := r.findTrainingByIDVisible(ctx, actor, id)
+	if err == nil {
+		return item, nil
+	}
+	if !errors.Is(err, ErrForbidden) {
+		return TrainingReport{}, err
+	}
+	if _, rawErr := r.findTrainingByIDRaw(ctx, id); rawErr != nil {
+		return TrainingReport{}, rawErr
+	}
+	return TrainingReport{}, ErrForbidden
 }
 
 func (r *Repository) lockTraining(ctx context.Context, tx *sql.Tx, id int64) (TrainingReport, error) {

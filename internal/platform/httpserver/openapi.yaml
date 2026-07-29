@@ -1221,7 +1221,135 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/SuccessEnvelope"
+                $ref: "#/components/schemas/TrainingListSuccessEnvelope"
+              examples:
+                trainingList:
+                  summary: Contoh list training
+                  value:
+                    data:
+                      items:
+                        - id: 18
+                          lead_id: 41
+                          lead_code: LEAD-000041
+                          owner_id: 12
+                          owner_code: OWN-000012
+                          owner_name: Laundry Maju Bersama
+                          outlet_id: 19
+                          sales:
+                            id: 5
+                            name: Sinta Sales
+                            role: SALES
+                          supervisor:
+                            id: 3
+                            name: Rama Supervisor
+                            role: SUPERVISOR
+                          training_type: ONLINE
+                          status: SCHEDULED
+                          scheduled_at: "2026-07-30T13:00:00+07:00"
+                          completed_at: null
+                          canceled_at: null
+                          rescheduled_at: null
+                          location: ""
+                          meeting_url: https://meet.example.test/training/lead-41
+                          note: Demo fitur kasir dan laporan owner.
+                          result_note: ""
+                          cancel_reason: ""
+                          created_by:
+                            id: 5
+                            name: Sinta Sales
+                          updated_by:
+                            id: 5
+                            name: Sinta Sales
+                          created_at: "2026-07-29T09:15:00+07:00"
+                          updated_at: "2026-07-29T09:15:00+07:00"
+                      pagination:
+                        page: 1
+                        limit: 10
+                        total: 1
+                    meta:
+                      request_id: 9f1f3bbca2f0458ca4f74350b1d20d1a
+  /api/v1/trainings/{training_id}:
+    get:
+      summary: Detail training
+      operationId: getTraining
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/TrainingID"
+      responses:
+        "200":
+          description: Detail training
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrainingDetailSuccessEnvelope"
+              examples:
+                trainingDetail:
+                  summary: Contoh detail training
+                  value:
+                    data:
+                      id: 18
+                      lead_id: 41
+                      lead_code: LEAD-000041
+                      owner_id: 12
+                      owner_code: OWN-000012
+                      owner_name: Laundry Maju Bersama
+                      outlet_id: 19
+                      sales:
+                        id: 5
+                        name: Sinta Sales
+                        role: SALES
+                      supervisor:
+                        id: 3
+                        name: Rama Supervisor
+                        role: SUPERVISOR
+                      training_type: ONLINE
+                      status: COMPLETED
+                      scheduled_at: "2026-07-30T13:00:00+07:00"
+                      completed_at: "2026-07-30T14:28:00+07:00"
+                      canceled_at: null
+                      rescheduled_at: "2026-07-29T16:20:00+07:00"
+                      location: ""
+                      meeting_url: https://meet.example.test/training/lead-41
+                      note: Demo fokus ke alur transaksi laundry.
+                      result_note: Owner memahami penggunaan aplikasi dan meminta penawaran paket Business.
+                      cancel_reason: ""
+                      created_by:
+                        id: 5
+                        name: Sinta Sales
+                      updated_by:
+                        id: 5
+                        name: Sinta Sales
+                      created_at: "2026-07-29T09:15:00+07:00"
+                      updated_at: "2026-07-30T14:28:00+07:00"
+                    meta:
+                      request_id: 1ab482fb5d40494591a2583c0dd4df5b
+        "403":
+          description: Training ada, tetapi actor tidak memiliki visibility ke data ini
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              examples:
+                forbidden:
+                  value:
+                    error:
+                      code: FORBIDDEN
+                      message: akses ditolak
+                      request_id: 47b182662ef244c48d1ff75e7efb9931
+        "404":
+          description: Training tidak ditemukan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              examples:
+                notFound:
+                  value:
+                    error:
+                      code: NOT_FOUND
+                      message: data tidak ditemukan
+                      request_id: 9312f4d63fb14b2e9a4a1d0c5afdf0d8
   /api/v1/leads/{lead_id}/trainings:
     get:
       summary: List training pada satu lead
@@ -1238,7 +1366,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/SuccessEnvelope"
+                $ref: "#/components/schemas/TrainingListSuccessEnvelope"
     post:
       summary: Menjadwalkan training/demo aplikasi
       operationId: scheduleLeadTraining
@@ -1258,7 +1386,32 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/SuccessEnvelope"
+                $ref: "#/components/schemas/TrainingDetailSuccessEnvelope"
+        "400":
+          description: Payload training tidak valid
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              examples:
+                invalidType:
+                  value:
+                    error:
+                      code: BAD_REQUEST
+                      message: tipe aktivitas tidak valid
+                      request_id: e69d311db76c42cc8f29e13cff66d719
+                invalidSchedule:
+                  value:
+                    error:
+                      code: BAD_REQUEST
+                      message: transisi status tidak valid
+                      request_id: 2f8847bd6fb849e0aa991fa18f270c46
+        "403":
+          description: Actor tidak boleh menjadwalkan training pada lead ini
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
   /api/v1/trainings/{training_id}/reschedule:
     post:
       summary: Reschedule training
@@ -1279,7 +1432,25 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/SuccessEnvelope"
+                $ref: "#/components/schemas/TrainingDetailSuccessEnvelope"
+        "400":
+          description: Status training atau payload tidak valid untuk reschedule
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "403":
+          description: Actor tidak boleh mengubah training ini
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "404":
+          description: Training tidak ditemukan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
   /api/v1/trainings/{training_id}/complete:
     post:
       summary: Menyelesaikan training
@@ -1300,7 +1471,25 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/SuccessEnvelope"
+                $ref: "#/components/schemas/TrainingDetailSuccessEnvelope"
+        "400":
+          description: Status training tidak valid untuk diselesaikan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "403":
+          description: Actor tidak boleh mengubah training ini
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "404":
+          description: Training tidak ditemukan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
   /api/v1/trainings/{training_id}/cancel:
     post:
       summary: Membatalkan training
@@ -1321,7 +1510,25 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/SuccessEnvelope"
+                $ref: "#/components/schemas/TrainingDetailSuccessEnvelope"
+        "400":
+          description: Status training tidak valid untuk dibatalkan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "403":
+          description: Actor tidak boleh mengubah training ini
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "404":
+          description: Training tidak ditemukan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
   /api/v1/catalog/packages:
     get:
       summary: List subscription package
@@ -5806,7 +6013,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/SuccessEnvelope"
+                $ref: "#/components/schemas/TrainingListSuccessEnvelope"
   /api/v1/trainings/all-deleted:
     get:
       summary: Alias full training untuk kompatibilitas frontend
@@ -5853,7 +6060,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/SuccessEnvelope"
+                $ref: "#/components/schemas/TrainingListSuccessEnvelope"
   /api/v1/leads/{lead_id}/trainings/all:
     get:
       summary: List semua training per lead tanpa pagination
@@ -5895,7 +6102,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/SuccessEnvelope"
+                $ref: "#/components/schemas/TrainingListSuccessEnvelope"
   /api/v1/leads/{lead_id}/trainings/all-deleted:
     get:
       summary: Alias full training per lead untuk kompatibilitas frontend
@@ -5938,7 +6145,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/SuccessEnvelope"
+                $ref: "#/components/schemas/TrainingListSuccessEnvelope"
   /api/v1/wallets/all:
     get:
       tags: [Wallet]
@@ -7709,6 +7916,27 @@ components:
       schema:
         type: integer
         format: int64
+    PackageID:
+      name: package_id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+    PlanID:
+      name: plan_id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+    PromotionID:
+      name: promotion_id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
     TrainingID:
       name: training_id
       in: path
@@ -8589,12 +8817,6 @@ components:
         meeting_url:
           type: string
           example: https://meet.example.test/training
-        trainer_name:
-          type: string
-          example: Sales Demo 001
-        participant_name:
-          type: string
-          example: Owner Laundry
         note:
           type: string
           example: Demo fitur kasir, outlet, dan laporan.
@@ -8625,6 +8847,178 @@ components:
         cancel_reason:
           type: string
           example: Customer meminta pembatalan jadwal.
+    TrainingReportResponse:
+      type: object
+      description: Snapshot detail training/demo lead yang dikembalikan API.
+      required: [id, training_type, status, scheduled_at, created_at, updated_at]
+      properties:
+        id:
+          type: integer
+          format: int64
+          description: ID unik training report.
+          example: 18
+        lead_id:
+          type: integer
+          format: int64
+          nullable: true
+          description: ID lead terkait. Bisa null jika relasi historis sudah tidak tersedia.
+          example: 41
+        lead_code:
+          type: string
+          nullable: true
+          description: Kode lead untuk kebutuhan tampilan frontend.
+          example: LEAD-000041
+        owner_id:
+          type: integer
+          format: int64
+          nullable: true
+          description: ID owner yang menjadi subjek training.
+          example: 12
+        owner_code:
+          type: string
+          nullable: true
+          description: Kode owner saat training dibuat.
+          example: OWN-000012
+        owner_name:
+          type: string
+          nullable: true
+          description: Nama owner/customer.
+          example: Laundry Maju Bersama
+        outlet_id:
+          type: integer
+          format: int64
+          nullable: true
+          description: ID outlet yang berkaitan dengan training, jika ada.
+          example: 19
+        sales:
+          allOf:
+            - $ref: "#/components/schemas/UserBrief"
+          nullable: true
+          description: PIC Sales yang menangani lead/training saat record ini dibuat atau terakhir diupdate.
+        supervisor:
+          allOf:
+            - $ref: "#/components/schemas/UserBrief"
+          nullable: true
+          description: Supervisor yang menaungi lead/training saat record ini dibuat atau terakhir diupdate.
+        training_type:
+          type: string
+          enum: [ONLINE, OFFLINE]
+          description: Jenis training/demo.
+          example: ONLINE
+        status:
+          type: string
+          enum: [SCHEDULED, COMPLETED, CANCELED]
+          description: Status lifecycle training.
+          example: SCHEDULED
+        scheduled_at:
+          type: string
+          format: date-time
+          description: Jadwal training yang aktif saat ini.
+          example: "2026-07-30T13:00:00+07:00"
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: Waktu training ditandai selesai. Null jika belum selesai.
+          example: "2026-07-30T14:28:00+07:00"
+        canceled_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: Waktu training dibatalkan. Null jika tidak dibatalkan.
+          example: null
+        rescheduled_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: Waktu terakhir training di-reschedule. Null jika belum pernah diubah jadwalnya.
+          example: "2026-07-29T16:20:00+07:00"
+        location:
+          type: string
+          nullable: true
+          description: Lokasi training offline. Boleh string kosong untuk training online.
+          example: Outlet utama customer
+        meeting_url:
+          type: string
+          nullable: true
+          description: Link meeting untuk training online.
+          example: https://meet.example.test/training/lead-41
+        note:
+          type: string
+          nullable: true
+          description: Catatan penjadwalan atau konteks training.
+          example: Demo fitur kasir, outlet, dan laporan owner.
+        result_note:
+          type: string
+          nullable: true
+          description: Hasil training saat status COMPLETED.
+          example: Owner memahami penggunaan aplikasi dan meminta penawaran paket Business.
+        cancel_reason:
+          type: string
+          nullable: true
+          description: Alasan pembatalan saat status CANCELED.
+          example: Customer meminta pembatalan jadwal.
+        created_by:
+          allOf:
+            - $ref: "#/components/schemas/UserBrief"
+          nullable: true
+          description: User yang pertama kali membuat training.
+        updated_by:
+          allOf:
+            - $ref: "#/components/schemas/UserBrief"
+          nullable: true
+          description: User yang terakhir mengubah training.
+        created_at:
+          type: string
+          format: date-time
+          description: Timestamp record dibuat.
+          example: "2026-07-29T09:15:00+07:00"
+        updated_at:
+          type: string
+          format: date-time
+          description: Timestamp record terakhir diubah.
+          example: "2026-07-30T14:28:00+07:00"
+    TrainingPagination:
+      type: object
+      required: [page, limit, total]
+      properties:
+        page:
+          type: integer
+          description: Halaman aktif. Untuk route `/all`, nilainya tetap 1.
+          example: 1
+        limit:
+          type: integer
+          description: Batas data per halaman. Untuk route `/all`, nilainya mengikuti jumlah item yang dikembalikan.
+          example: 10
+        total:
+          type: integer
+          format: int64
+          description: Total data yang memenuhi filter visibility actor.
+          example: 57
+    TrainingListResponse:
+      type: object
+      required: [items, pagination]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/TrainingReportResponse"
+        pagination:
+          $ref: "#/components/schemas/TrainingPagination"
+    TrainingDetailSuccessEnvelope:
+      allOf:
+        - $ref: "#/components/schemas/SuccessEnvelope"
+        - type: object
+          properties:
+            data:
+              $ref: "#/components/schemas/TrainingReportResponse"
+    TrainingListSuccessEnvelope:
+      allOf:
+        - $ref: "#/components/schemas/SuccessEnvelope"
+        - type: object
+          properties:
+            data:
+              $ref: "#/components/schemas/TrainingListResponse"
     CreatePackageRequest:
       type: object
       required: [code, name, level_order]

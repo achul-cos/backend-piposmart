@@ -37,6 +37,7 @@ dapat dijadwalkan, di-reschedule, diselesaikan, atau dibatalkan.
   - `GET /api/v1/leads/{lead_id}/stage-history`
 - [x] Endpoint training:
   - `GET /api/v1/trainings`
+  - `GET /api/v1/trainings/{training_id}`
   - `GET /api/v1/leads/{lead_id}/trainings`
   - `POST /api/v1/leads/{lead_id}/trainings`
   - `POST /api/v1/trainings/{training_id}/reschedule`

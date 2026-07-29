@@ -1922,6 +1922,7 @@ Aturan remark:
 | Create Interaction | POST | `/api/v1/leads/{lead_id}/interactions` | Mencatat call/chat, remark, dan follow-up. |
 | Stage History | GET | `/api/v1/leads/{lead_id}/stage-history` | Melihat riwayat perubahan stage/score lead. |
 | List Training | GET | `/api/v1/trainings` | List jadwal/laporan training. |
+| Detail Training | GET | `/api/v1/trainings/{training_id}` | Detail satu training sesuai visibility actor. |
 | List Lead Training | GET | `/api/v1/leads/{lead_id}/trainings` | List training pada satu lead. |
 | Schedule Training | POST | `/api/v1/leads/{lead_id}/trainings` | Menjadwalkan training online/offline. |
 | Reschedule Training | POST | `/api/v1/trainings/{training_id}/reschedule` | Mengubah jadwal training. |
@@ -2024,8 +2025,6 @@ Body:
   "training_type": "ONLINE",
   "scheduled_at": "2026-07-30T13:00:00+07:00",
   "meeting_url": "https://meet.example.test/sprint-06",
-  "trainer_name": "Sales Demo 001",
-  "participant_name": "Owner Laundry",
   "note": "Demo aplikasi Piposmart"
 }
 ```
@@ -2037,9 +2036,66 @@ Response `201 Created`:
   "data": {
     "id": 4,
     "lead_id": 24,
+    "lead_code": "OWN-00024-LEAD-01",
+    "owner_id": 24,
+    "owner_code": "OWN-00024",
+    "owner_name": "Owner Laundry 024",
     "training_type": "ONLINE",
     "status": "SCHEDULED",
-    "scheduled_at": "2026-07-30T06:00:00Z"
+    "scheduled_at": "2026-07-30T06:00:00Z",
+    "meeting_url": "https://meet.example.test/sprint-06",
+    "note": "Demo aplikasi Piposmart"
+  },
+  "meta": {
+    "request_id": "generated-request-id"
+  }
+}
+```
+
+Catatan:
+
+- `trainer_name` dan `participant_name` tidak lagi menjadi field request API training.
+- Informasi trainer mengikuti akun user yang menjadwalkan/mengupdate training.
+- Identitas owner/lead dikembalikan melalui `owner_*` dan `lead_code`.
+
+#### GET `/api/v1/trainings/{training_id}`
+
+Request:
+
+```http
+GET /api/v1/trainings/4
+Authorization: Bearer {sales_access_token}
+Accept: application/json
+```
+
+Response `200 OK`:
+
+```json
+{
+  "data": {
+    "id": 4,
+    "lead_id": 24,
+    "lead_code": "OWN-00024-LEAD-01",
+    "owner_id": 24,
+    "owner_code": "OWN-00024",
+    "owner_name": "Owner Laundry 024",
+    "sales": {
+      "id": 7,
+      "name": "Sales Demo 007",
+      "role": "SALES"
+    },
+    "supervisor": {
+      "id": 3,
+      "name": "Supervisor Demo 003",
+      "role": "SUPERVISOR"
+    },
+    "training_type": "ONLINE",
+    "status": "SCHEDULED",
+    "scheduled_at": "2026-07-30T06:00:00Z",
+    "meeting_url": "https://meet.example.test/sprint-06",
+    "note": "Demo aplikasi Piposmart",
+    "created_at": "2026-07-29T08:00:00Z",
+    "updated_at": "2026-07-29T08:00:00Z"
   },
   "meta": {
     "request_id": "generated-request-id"

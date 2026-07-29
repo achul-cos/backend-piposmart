@@ -40,6 +40,7 @@ Accept: application/json
 | Create Interaction | POST | `/leads/{lead_id}/interactions` | Mencatat call/chat, remark, dan follow-up. |
 | Stage History | GET | `/leads/{lead_id}/stage-history` | Riwayat perubahan stage/score. |
 | List Training | GET | `/trainings` | List training sesuai visibility actor. |
+| Detail Training | GET | `/trainings/{training_id}` | Detail satu training sesuai visibility actor. |
 | Schedule Training | POST | `/leads/{lead_id}/trainings` | Menjadwalkan training. |
 | Reschedule Training | POST | `/trainings/{training_id}/reschedule` | Mengubah jadwal training. |
 | Complete Training | POST | `/trainings/{training_id}/complete` | Menyelesaikan training. |
@@ -129,13 +130,47 @@ Accept: application/json
   "training_type": "ONLINE",
   "scheduled_at": "2026-07-30T13:00:00+07:00",
   "meeting_url": "https://meet.example.test/sprint-06",
-  "trainer_name": "Sales Demo 001",
-  "participant_name": "Owner Smoke",
   "note": "Demo aplikasi Piposmart"
 }
 ```
 
 Response `201 Created`: training berstatus `SCHEDULED`.
+
+Catatan:
+
+- `trainer_name` dan `participant_name` tidak lagi menjadi field request API training.
+- Identitas owner/lead dikembalikan dari backend melalui `owner_*` dan `lead_code`.
+
+### GET `/trainings/{training_id}`
+
+```http
+GET /api/v1/trainings/4
+Authorization: Bearer {sales_access_token}
+Accept: application/json
+```
+
+Response `200 OK`:
+
+```json
+{
+  "data": {
+    "id": 4,
+    "lead_id": 24,
+    "lead_code": "OWN-00024-LEAD-01",
+    "owner_id": 24,
+    "owner_code": "OWN-00024",
+    "owner_name": "Owner Laundry 024",
+    "training_type": "ONLINE",
+    "status": "SCHEDULED",
+    "scheduled_at": "2026-07-30T06:00:00Z",
+    "meeting_url": "https://meet.example.test/sprint-06",
+    "note": "Demo aplikasi Piposmart"
+  },
+  "meta": {
+    "request_id": "generated-request-id"
+  }
+}
+```
 
 ### POST `/trainings/{training_id}/complete`
 
