@@ -228,6 +228,52 @@ func (r *Repository) ListSales(ctx context.Context, status string) ([]User, int6
 	return users, total, nil
 }
 
+// ListSupervisors returns all users with role SUPERVISOR, optionally filtered by status.
+func (r *Repository) ListSupervisors(ctx context.Context, status string) ([]User, int64, error) {
+	args := []any{RoleSupervisor}
+	where := "r.code = ? AND u.deleted_at IS NULL"
+	if status != "" {
+		where += " AND u.status = ?"
+		args = append(args, strings.ToUpper(strings.TrimSpace(status)))
+	}
+
+	var total int64
+	if err := r.db.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM users u
+		JOIN roles r ON r.id = u.role_id
+		WHERE `+where, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT
+			u.id, u.role_id, r.code, r.name, u.code, u.name, u.email, u.phone,
+			u.password_hash, u.status, u.must_change_password, u.password_changed_at,
+			u.last_login_at, u.deactivated_at, u.created_at, u.updated_at
+		FROM users u
+		JOIN roles r ON r.id = u.role_id
+		WHERE `+where+`
+		ORDER BY u.created_at DESC, u.id DESC`, args...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	var users []User
+	for rows.Next() {
+		user, err := scanUser(rows)
+		if err != nil {
+			return nil, 0, err
+		}
+		users = append(users, user)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	return users, total, nil
+}
+
 func (r *Repository) SetUserStatus(ctx context.Context, id int64, status string) (User, error) {
 	current, err := r.FindUserByID(ctx, id)
 	if err != nil {
