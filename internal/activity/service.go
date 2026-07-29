@@ -74,6 +74,14 @@ func (s *Service) ListLeadTrainings(ctx context.Context, actor identity.User, le
 	return s.ListTrainings(ctx, actor, params)
 }
 
+func (s *Service) GetTraining(ctx context.Context, actor identity.User, id int64) (TrainingReportResponse, error) {
+	item, err := s.repo.GetTraining(ctx, actor, id)
+	if err != nil {
+		return TrainingReportResponse{}, err
+	}
+	return NewTrainingReportResponse(item), nil
+}
+
 func (s *Service) ScheduleTraining(ctx context.Context, actor identity.User, leadID int64, req ScheduleTrainingRequest) (TrainingReportResponse, error) {
 	if err := validateScheduleTrainingRequest(req); err != nil {
 		return TrainingReportResponse{}, err

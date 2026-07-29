@@ -35,6 +35,7 @@ func (h *Handler) RegisterRoutes(api *gin.RouterGroup) {
 	api.GET("/trainings", h.listTrainings)
 	api.GET("/trainings/all", h.listAllTrainings)
 	api.GET("/trainings/all-deleted", h.listAllTrainings)
+	api.GET("/trainings/:training_id", h.getTraining)
 	api.GET("/leads/:lead_id/trainings", h.listLeadTrainings)
 	api.GET("/leads/:lead_id/trainings/all", h.listAllLeadTrainings)
 	api.GET("/leads/:lead_id/trainings/all-deleted", h.listAllLeadTrainings)
@@ -180,6 +181,20 @@ func (h *Handler) listTrainings(c *gin.Context) {
 		return
 	}
 	response, err := h.service.ListTrainings(c.Request.Context(), user, params)
+	if err != nil {
+		writeError(c, err)
+		return
+	}
+	httpx.Success(c, http.StatusOK, response)
+}
+
+func (h *Handler) getTraining(c *gin.Context) {
+	user, _ := identity.CurrentUser(c)
+	trainingID, ok := parsePathID(c, "training_id", "ID training tidak valid")
+	if !ok {
+		return
+	}
+	response, err := h.service.GetTraining(c.Request.Context(), user, trainingID)
 	if err != nil {
 		writeError(c, err)
 		return

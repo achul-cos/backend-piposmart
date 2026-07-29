@@ -109,7 +109,10 @@ type LeadStageHistory struct {
 type TrainingReport struct {
 	ID              int64
 	LeadID          sql.NullInt64
+	LeadCode        sql.NullString
 	OwnerID         sql.NullInt64
+	OwnerCode       sql.NullString
+	OwnerName       sql.NullString
 	OutletID        sql.NullInt64
 	SalesID         sql.NullInt64
 	SalesName       sql.NullString
@@ -123,8 +126,6 @@ type TrainingReport struct {
 	RescheduledAt   sql.NullTime
 	Location        sql.NullString
 	MeetingURL      sql.NullString
-	TrainerName     sql.NullString
-	ParticipantName sql.NullString
 	Note            sql.NullString
 	ResultNote      sql.NullString
 	CancelReason    sql.NullString
@@ -155,8 +156,6 @@ type ScheduleTrainingRequest struct {
 	ScheduledAt     time.Time `json:"scheduled_at" binding:"required"`
 	Location        string    `json:"location"`
 	MeetingURL      string    `json:"meeting_url"`
-	TrainerName     string    `json:"trainer_name"`
-	ParticipantName string    `json:"participant_name"`
 	Note            string    `json:"note"`
 }
 
@@ -260,7 +259,10 @@ type StageHistoryResponse struct {
 type TrainingReportResponse struct {
 	ID              int64      `json:"id"`
 	LeadID          *int64     `json:"lead_id,omitempty"`
+	LeadCode        string     `json:"lead_code,omitempty"`
 	OwnerID         *int64     `json:"owner_id,omitempty"`
+	OwnerCode       string     `json:"owner_code,omitempty"`
+	OwnerName       string     `json:"owner_name,omitempty"`
 	OutletID        *int64     `json:"outlet_id,omitempty"`
 	Sales           *UserBrief `json:"sales,omitempty"`
 	Supervisor      *UserBrief `json:"supervisor,omitempty"`
@@ -272,8 +274,6 @@ type TrainingReportResponse struct {
 	RescheduledAt   *time.Time `json:"rescheduled_at,omitempty"`
 	Location        string     `json:"location,omitempty"`
 	MeetingURL      string     `json:"meeting_url,omitempty"`
-	TrainerName     string     `json:"trainer_name,omitempty"`
-	ParticipantName string     `json:"participant_name,omitempty"`
 	Note            string     `json:"note,omitempty"`
 	ResultNote      string     `json:"result_note,omitempty"`
 	CancelReason    string     `json:"cancel_reason,omitempty"`
@@ -360,7 +360,10 @@ func NewTrainingReportResponse(item TrainingReport) TrainingReportResponse {
 	return TrainingReportResponse{
 		ID:              item.ID,
 		LeadID:          nullableInt64Ptr(item.LeadID),
+		LeadCode:        item.LeadCode.String,
 		OwnerID:         nullableInt64Ptr(item.OwnerID),
+		OwnerCode:       item.OwnerCode.String,
+		OwnerName:       item.OwnerName.String,
 		OutletID:        nullableInt64Ptr(item.OutletID),
 		Sales:           nullableUser(item.SalesID, item.SalesName, RoleSales),
 		Supervisor:      nullableUser(item.SupervisorID, item.SupervisorName, RoleSupervisor),
@@ -372,8 +375,6 @@ func NewTrainingReportResponse(item TrainingReport) TrainingReportResponse {
 		RescheduledAt:   nullableTimePtr(item.RescheduledAt),
 		Location:        item.Location.String,
 		MeetingURL:      item.MeetingURL.String,
-		TrainerName:     item.TrainerName.String,
-		ParticipantName: item.ParticipantName.String,
 		Note:            item.Note.String,
 		ResultNote:      item.ResultNote.String,
 		CancelReason:    item.CancelReason.String,
