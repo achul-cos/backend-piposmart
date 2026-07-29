@@ -38,6 +38,10 @@ func (h *Handler) RegisterRoutes(api *gin.RouterGroup) {
 	sales.POST("/:id/activate", h.activateSales)
 	sales.POST("/:id/deactivate", h.deactivateSales)
 	sales.POST("/:id/reset-password", h.resetSalesPassword)
+
+	supervisors := api.Group("/supervisors")
+	supervisors.Use(AuthMiddleware(h.service))
+	supervisors.GET("", h.listSupervisors)
 }
 
 func (h *Handler) login(c *gin.Context) {
@@ -98,6 +102,16 @@ func (h *Handler) changePassword(c *gin.Context) {
 func (h *Handler) listSales(c *gin.Context) {
 	user, _ := CurrentUser(c)
 	response, err := h.service.ListSales(c.Request.Context(), user, c.Query("status"))
+	if err != nil {
+		writeServiceError(c, err)
+		return
+	}
+	httpx.Success(c, http.StatusOK, response)
+}
+
+func (h *Handler) listSupervisors(c *gin.Context) {
+	user, _ := CurrentUser(c)
+	response, err := h.service.ListSupervisors(c.Request.Context(), user, c.Query("status"))
 	if err != nil {
 		writeServiceError(c, err)
 		return

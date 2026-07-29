@@ -195,6 +195,23 @@ func (s *Service) ListSales(ctx context.Context, actor User, status string) (Sal
 	return SalesListResponse{Items: items, Total: total}, nil
 }
 
+// ListSupervisors returns all active supervisors. Accessible by ADMIN and SUPERVISOR roles.
+func (s *Service) ListSupervisors(ctx context.Context, actor User, status string) (SalesListResponse, error) {
+	if actor.RoleCode != RoleAdmin && actor.RoleCode != RoleSupervisor {
+		return SalesListResponse{}, ErrForbidden
+	}
+	users, total, err := s.repo.ListSupervisors(ctx, status)
+	if err != nil {
+		return SalesListResponse{}, err
+	}
+	items := make([]UserResponse, 0, len(users))
+	for _, user := range users {
+		items = append(items, NewUserResponse(user))
+	}
+	return SalesListResponse{Items: items, Total: total}, nil
+}
+
+
 func (s *Service) GetSales(ctx context.Context, actor User, id int64) (UserResponse, error) {
 	if !hasPermission(actor, "users.read") && !hasPermission(actor, "users.manage_sales") {
 		return UserResponse{}, ErrForbidden
