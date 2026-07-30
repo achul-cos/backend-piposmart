@@ -28,6 +28,8 @@ func (h *Handler) RegisterRoutes(api *gin.RouterGroup) {
 	protected.POST("/logout", h.logout)
 	protected.GET("/me", h.me)
 	protected.POST("/change-password", h.changePassword)
+	protected.PATCH("/profile", h.updateProfile)
+	protected.PUT("/profile", h.updateProfile)
 
 	sales := api.Group("/sales")
 	sales.Use(AuthMiddleware(h.service))
@@ -47,6 +49,7 @@ func (h *Handler) RegisterRoutes(api *gin.RouterGroup) {
 
 	admins := api.Group("/admins")
 	admins.Use(AuthMiddleware(h.service))
+	admins.GET("", h.listAdmins)
 	admins.POST("", h.createAdmin)
 	admins.POST("/:id/reset-password", h.resetAdminPassword)
 }
@@ -106,6 +109,20 @@ func (h *Handler) changePassword(c *gin.Context) {
 	httpx.Success(c, http.StatusOK, gin.H{"status": "password_changed"})
 }
 
+func (h *Handler) updateProfile(c *gin.Context) {
+	user, _ := CurrentUser(c)
+	var req UpdateProfileRequest
+	if !bindJSON(c, &req) {
+		return
+	}
+	resp, err := h.service.UpdateProfile(c.Request.Context(), user, req, requestMeta(c, &user))
+	if err != nil {
+		writeServiceError(c, err)
+		return
+	}
+	httpx.Success(c, http.StatusOK, resp)
+}
+
 func (h *Handler) listSales(c *gin.Context) {
 	user, _ := CurrentUser(c)
 	response, err := h.service.ListSales(c.Request.Context(), user, c.Query("status"))
@@ -119,6 +136,16 @@ func (h *Handler) listSales(c *gin.Context) {
 func (h *Handler) listSupervisors(c *gin.Context) {
 	user, _ := CurrentUser(c)
 	response, err := h.service.ListSupervisors(c.Request.Context(), user, c.Query("status"))
+	if err != nil {
+		writeServiceError(c, err)
+		return
+	}
+	httpx.Success(c, http.StatusOK, response)
+}
+
+func (h *Handler) listAdmins(c *gin.Context) {
+	user, _ := CurrentUser(c)
+	response, err := h.service.ListAdmins(c.Request.Context(), user, c.Query("status"))
 	if err != nil {
 		writeServiceError(c, err)
 		return

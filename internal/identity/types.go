@@ -91,6 +91,11 @@ type ChangePasswordRequest struct {
 	NewPassword     string `json:"new_password" binding:"required,min=8"`
 }
 
+type UpdateProfileRequest struct {
+	Name  *string `json:"name"`
+	Email *string `json:"email"`
+}
+
 type AuthTokenResponse struct {
 	AccessToken           string       `json:"access_token"`
 	RefreshToken          string       `json:"refresh_token"`

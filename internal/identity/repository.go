@@ -183,6 +183,33 @@ func (r *Repository) UpdateSales(ctx context.Context, id int64, input UpdateSale
 	return r.FindUserByID(ctx, id)
 }
 
+func (r *Repository) UpdateUserProfile(ctx context.Context, id int64, input UpdateProfileRequest) (User, error) {
+	current, err := r.FindUserByID(ctx, id)
+	if err != nil {
+		return User{}, err
+	}
+
+	name := current.Name
+	email := current.Email
+	if input.Name != nil && strings.TrimSpace(*input.Name) != "" {
+		name = strings.TrimSpace(*input.Name)
+	}
+	if input.Email != nil && strings.TrimSpace(*input.Email) != "" {
+		email = strings.ToLower(strings.TrimSpace(*input.Email))
+	}
+
+	_, err = r.db.ExecContext(ctx, `
+		UPDATE users
+		SET name = ?, email = ?
+		WHERE id = ? AND deleted_at IS NULL`,
+		name, email, id,
+	)
+	if err != nil {
+		return User{}, mapDuplicateUserError(err)
+	}
+	return r.FindUserByID(ctx, id)
+}
+
 func (r *Repository) ListSales(ctx context.Context, status string) ([]User, int64, error) {
 	args := []any{RoleSales}
 	where := "r.code = ? AND u.deleted_at IS NULL"
@@ -231,6 +258,52 @@ func (r *Repository) ListSales(ctx context.Context, status string) ([]User, int6
 // ListSupervisors returns all users with role SUPERVISOR, optionally filtered by status.
 func (r *Repository) ListSupervisors(ctx context.Context, status string) ([]User, int64, error) {
 	args := []any{RoleSupervisor}
+	where := "r.code = ? AND u.deleted_at IS NULL"
+	if status != "" {
+		where += " AND u.status = ?"
+		args = append(args, strings.ToUpper(strings.TrimSpace(status)))
+	}
+
+	var total int64
+	if err := r.db.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM users u
+		JOIN roles r ON r.id = u.role_id
+		WHERE `+where, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT
+			u.id, u.role_id, r.code, r.name, u.code, u.name, u.email, u.phone,
+			u.password_hash, u.status, u.must_change_password, u.password_changed_at,
+			u.last_login_at, u.deactivated_at, u.created_at, u.updated_at
+		FROM users u
+		JOIN roles r ON r.id = u.role_id
+		WHERE `+where+`
+		ORDER BY u.created_at DESC, u.id DESC`, args...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	var users []User
+	for rows.Next() {
+		user, err := scanUser(rows)
+		if err != nil {
+			return nil, 0, err
+		}
+		users = append(users, user)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	return users, total, nil
+}
+
+// ListAdmins returns all users with role ADMIN, optionally filtered by status.
+func (r *Repository) ListAdmins(ctx context.Context, status string) ([]User, int64, error) {
+	args := []any{RoleAdmin}
 	where := "r.code = ? AND u.deleted_at IS NULL"
 	if status != "" {
 		where += " AND u.status = ?"
