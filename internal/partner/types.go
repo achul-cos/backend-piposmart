@@ -232,6 +232,21 @@ type CreatePartnerRequest struct {
 	Address       *string `json:"address,omitempty"`
 	BankAccount   *string `json:"bank_account,omitempty"` // plain account number, will be encrypted
 	Status        string  `json:"status,omitempty"`       // default ACTIVE
+	// SelfAssignPIC lets the creating user (typically a Sales rep) become the partner's PIC in
+	// the same request — the day-to-day referral/activity TUPOKSI for a partner is Sales' job,
+	// even though assigning ANOTHER user as PIC remains a Supervisor action via AssignPIC.
+	SelfAssignPIC bool `json:"self_assign_pic,omitempty"`
+}
+
+const (
+	PartnerActivityNotYetReferred = "BELUM_MEMBERIKAN_REFERAL"
+	PartnerActivityReferred       = "TELAH_MEMBERIKAN_REFERAL"
+)
+
+type PartnerActivityStatusResponse struct {
+	PartnerID int64  `json:"partner_id"`
+	Month     string `json:"month"` // YYYY-MM
+	Status    string `json:"status"`
 }
 
 type UpdatePartnerRequest struct {
@@ -520,18 +535,22 @@ func nullableTimePtr(t sql.NullTime) *time.Time {
 
 /* ---------- CommissionRule / CommissionTier ---------- */
 
-// CommissionRule is an optional, effective-dated, optionally package-scoped overlay on top of
+// CommissionRule is an optional, effective-dated, optionally plan-scoped overlay on top of
 // the legacy partner_types.commission_mode/value flat rate. SyncCommissions resolves the most
-// specific active rule covering a closing's confirmed_at date (package-specific beats
+// specific active rule covering a closing's confirmed_at date (plan-specific beats
 // type-wide, most recent effective_from wins ties); if none matches, calculation falls back to
 // partner_types.commission_mode/value unchanged from Sprint 12. Mode TIER has no Value of its
 // own — the rate is looked up from Tiers based on the partner's monthly confirmed-closing count.
+//
+// Sprint 15a: rescoped from PackageID to PlanID — commission is now tied to a specific plan
+// (package + tenure + price), matching the mitra MOU (data_admin/Ringkasan_Komisi_Piposmart.pdf),
+// since two plans of the same package (e.g. Business 12 vs 24 bulan) pay different commission.
 type CommissionRule struct {
 	ID              int64
 	PartnerTypeID   int64
-	PackageID       sql.NullInt64
-	PackageCode     sql.NullString
-	PackageName     sql.NullString
+	PlanID          sql.NullInt64
+	PlanCode        sql.NullString
+	PlanName        sql.NullString
 	Mode            string         // PERCENTAGE | FIXED | TIER
 	Value           sql.NullString // required for PERCENTAGE/FIXED, NULL for TIER
 	EffectiveFrom   time.Time
@@ -570,9 +589,9 @@ type CommissionTierResponse struct {
 type CommissionRuleResponse struct {
 	ID            int64                    `json:"id"`
 	PartnerTypeID int64                    `json:"partner_type_id"`
-	PackageID     *int64                   `json:"package_id,omitempty"`
-	PackageCode   *string                  `json:"package_code,omitempty"`
-	PackageName   *string                  `json:"package_name,omitempty"`
+	PlanID        *int64                   `json:"plan_id,omitempty"`
+	PlanCode      *string                  `json:"plan_code,omitempty"`
+	PlanName      *string                  `json:"plan_name,omitempty"`
 	Mode          string                   `json:"mode"`
 	Value         *string                  `json:"value,omitempty"`
 	EffectiveFrom time.Time                `json:"effective_from"`
@@ -598,7 +617,7 @@ type CreateCommissionTierRequest struct {
 }
 
 type CreateCommissionRuleRequest struct {
-	PackageID     *int64                        `json:"package_id,omitempty"`
+	PlanID        *int64                        `json:"plan_id,omitempty"`
 	Mode          string                        `json:"mode" binding:"required,oneof=PERCENTAGE FIXED TIER"`
 	Value         *string                       `json:"value,omitempty"` // required unless mode=TIER
 	EffectiveFrom time.Time                     `json:"effective_from" binding:"required"`
@@ -623,10 +642,10 @@ func NewCommissionTierResponse(t CommissionTier) CommissionTierResponse {
 }
 
 func NewCommissionRuleResponse(r CommissionRule) CommissionRuleResponse {
-	var packageID *int64
-	if r.PackageID.Valid {
-		v := r.PackageID.Int64
-		packageID = &v
+	var planID *int64
+	if r.PlanID.Valid {
+		v := r.PlanID.Int64
+		planID = &v
 	}
 	var value *string
 	if r.Value.Valid {
@@ -640,9 +659,9 @@ func NewCommissionRuleResponse(r CommissionRule) CommissionRuleResponse {
 	return CommissionRuleResponse{
 		ID:            r.ID,
 		PartnerTypeID: r.PartnerTypeID,
-		PackageID:     packageID,
-		PackageCode:   nullStringToPtr(r.PackageCode),
-		PackageName:   nullStringToPtr(r.PackageName),
+		PlanID:        planID,
+		PlanCode:      nullStringToPtr(r.PlanCode),
+		PlanName:      nullStringToPtr(r.PlanName),
 		Mode:          r.Mode,
 		Value:         value,
 		EffectiveFrom: r.EffectiveFrom,

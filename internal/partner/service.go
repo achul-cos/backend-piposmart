@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -216,7 +217,7 @@ func (s *Service) UpdatePartnerType(ctx context.Context, id int64, req UpdatePar
 
 /* ---------- Partner ---------- */
 
-func (s *Service) CreatePartner(ctx context.Context, req CreatePartnerRequest) (*PartnerResponse, error) {
+func (s *Service) CreatePartner(ctx context.Context, actor identity.User, req CreatePartnerRequest) (*PartnerResponse, error) {
 	// Validate partner type exists
 	if _, err := s.repo.GetPartnerTypeByID(ctx, req.PartnerTypeID); err != nil {
 		return nil, err
@@ -260,6 +261,18 @@ func (s *Service) CreatePartner(ctx context.Context, req CreatePartnerRequest) (
 	p.ID = id
 	p.CreatedAt = time.Now()
 	p.UpdatedAt = time.Now()
+
+	if req.SelfAssignPIC && actor.ID > 0 {
+		if _, err := s.repo.AssignPIC(ctx, PartnerAssignment{
+			PartnerID:    id,
+			UserID:       actor.ID,
+			AssignedByID: sql.NullInt64{Int64: actor.ID, Valid: true},
+			AssignedAt:   time.Now(),
+			Active:       true,
+		}); err != nil {
+			return nil, fmt.Errorf("partner: self-assign PIC: %w", err)
+		}
+	}
 
 	pt, _ := s.repo.GetPartnerTypeByID(ctx, p.PartnerTypeID)
 	attachPartnerType(&p, pt)
@@ -509,6 +522,27 @@ func (s *Service) CreateReferral(ctx context.Context, partnerID int64, leadID in
 	return &resp, nil
 }
 
+// GetMonthlyActivityStatus classifies a partner for the given month: TELAH_MEMBERIKAN_REFERAL if
+// the PIC sales rep logged at least one referral that month, BELUM_MEMBERIKAN_REFERAL otherwise.
+func (s *Service) GetMonthlyActivityStatus(ctx context.Context, partnerID int64, year int, month int) (*PartnerActivityStatusResponse, error) {
+	if _, err := s.repo.GetPartnerByID(ctx, partnerID); err != nil {
+		return nil, err
+	}
+	hasReferral, err := s.repo.HasReferralInMonth(ctx, partnerID, year, month)
+	if err != nil {
+		return nil, err
+	}
+	status := PartnerActivityNotYetReferred
+	if hasReferral {
+		status = PartnerActivityReferred
+	}
+	return &PartnerActivityStatusResponse{
+		PartnerID: partnerID,
+		Month:     fmt.Sprintf("%04d-%02d", year, month),
+		Status:    status,
+	}, nil
+}
+
 func (s *Service) ListReferrals(ctx context.Context, partnerID int64) ([]PartnerReferralResponse, error) {
 	list, err := s.repo.ListPartnerReferrals(ctx, partnerID)
 	if err != nil {
@@ -663,9 +697,9 @@ func (s *Service) CreateCommissionRule(ctx context.Context, actor identity.User,
 		return nil, ErrInvalidCommissionTier
 	}
 
-	var packageID sql.NullInt64
-	if req.PackageID != nil {
-		packageID = sql.NullInt64{Int64: *req.PackageID, Valid: true}
+	var planID sql.NullInt64
+	if req.PlanID != nil {
+		planID = sql.NullInt64{Int64: *req.PlanID, Valid: true}
 	}
 	var value sql.NullString
 	if req.Value != nil {
@@ -678,7 +712,7 @@ func (s *Service) CreateCommissionRule(ctx context.Context, actor identity.User,
 
 	rule := CommissionRule{
 		PartnerTypeID:   partnerTypeID,
-		PackageID:       packageID,
+		PlanID:          planID,
 		Mode:            req.Mode,
 		Value:           value,
 		EffectiveFrom:   req.EffectiveFrom,
@@ -697,11 +731,11 @@ func (s *Service) CreateCommissionRule(ctx context.Context, actor identity.User,
 	return &resp, nil
 }
 
-func (s *Service) ListCommissionRules(ctx context.Context, partnerTypeID int64, packageID *int64, activeOnly bool) ([]CommissionRuleResponse, error) {
+func (s *Service) ListCommissionRules(ctx context.Context, partnerTypeID int64, planID *int64, activeOnly bool) ([]CommissionRuleResponse, error) {
 	if _, err := s.repo.GetPartnerTypeByID(ctx, partnerTypeID); err != nil {
 		return nil, err
 	}
-	list, err := s.repo.ListCommissionRules(ctx, partnerTypeID, packageID, activeOnly)
+	list, err := s.repo.ListCommissionRules(ctx, partnerTypeID, planID, activeOnly)
 	if err != nil {
 		return nil, err
 	}

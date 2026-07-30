@@ -67,6 +67,7 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 
 			partnerGroup.GET("/referrals", h.ListReferrals)
 			partnerGroup.POST("/referrals", h.CreateReferral)
+			partnerGroup.GET("/activity", h.GetMonthlyActivityStatus)
 
 			partnerGroup.POST("/commissions/sync", h.SyncCommissions)
 			partnerGroup.GET("/commissions", h.ListCommissions)
@@ -265,7 +266,8 @@ func (h *Handler) CreatePartner(c *gin.Context) {
 		httpx.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", "Payload request tidak valid", gin.H{"error": err.Error()})
 		return
 	}
-	resp, err := h.service.CreatePartner(c.Request.Context(), req)
+	actor, _ := identity.CurrentUser(c)
+	resp, err := h.service.CreatePartner(c.Request.Context(), actor, req)
 	if err != nil {
 		switch err {
 		case ErrDuplicatePartner:
@@ -710,6 +712,39 @@ func (h *Handler) CreateReferral(c *gin.Context) {
 	httpx.Success(c, http.StatusCreated, resp)
 }
 
+// GetMonthlyActivityStatus godoc
+// @Summary Get partner monthly activity status
+// @Description BELUM_MEMBERIKAN_REFERAL / TELAH_MEMBERIKAN_REFERAL for the given month (defaults to current month)
+// @Tags partner-referrals
+// @Accept json
+// @Produce json
+// @Param partnerID path int64 true "Partner ID"
+// @Param month query string false "YYYY-MM, defaults to current month"
+// @Success 200 {object} PartnerActivityStatusResponse
+// @Router /partners/{partnerID}/activity [get]
+func (h *Handler) GetMonthlyActivityStatus(c *gin.Context) {
+	partnerID, err := strconv.ParseInt(c.Param("partnerID"), 10, 64)
+	if err != nil {
+		httpx.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", "invalid partner ID", nil)
+		return
+	}
+	year, month := time.Now().Year(), int(time.Now().Month())
+	if raw := c.Query("month"); raw != "" {
+		parsed, err := time.Parse("2006-01", raw)
+		if err != nil {
+			httpx.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", "invalid month, expected YYYY-MM", nil)
+			return
+		}
+		year, month = parsed.Year(), int(parsed.Month())
+	}
+	resp, err := h.service.GetMonthlyActivityStatus(c.Request.Context(), partnerID, year, month)
+	if err != nil {
+		writeCommissionError(c, err)
+		return
+	}
+	httpx.Success(c, http.StatusOK, resp)
+}
+
 // ListReferrals godoc
 // @Summary List partner referrals
 // @Description Get all referrals made by a partner
@@ -987,12 +1022,12 @@ func (h *Handler) CreateCommissionRule(c *gin.Context) {
 
 // ListCommissionRules godoc
 // @Summary List commission rules for a partner type
-// @Description Get commission rules for a partner type, optionally filtered by package and active status
+// @Description Get commission rules for a partner type, optionally filtered by plan and active status
 // @Tags partner-commission-rules
 // @Accept json
 // @Produce json
 // @Param id path int64 true "Partner Type ID"
-// @Param package_id query int64 false "Filter by subscription package ID"
+// @Param plan_id query int64 false "Filter by subscription plan ID"
 // @Param active_only query bool false "Only return active rules (default false)"
 // @Success 200 {array} CommissionRuleResponse
 // @Router /partner-types/{id}/commission-rules [get]
@@ -1002,17 +1037,17 @@ func (h *Handler) ListCommissionRules(c *gin.Context) {
 		httpx.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", "invalid partner type ID", nil)
 		return
 	}
-	var packageID *int64
-	if raw := c.Query("package_id"); raw != "" {
+	var planID *int64
+	if raw := c.Query("plan_id"); raw != "" {
 		v, err := strconv.ParseInt(raw, 10, 64)
 		if err != nil {
-			httpx.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", "invalid package_id", nil)
+			httpx.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", "invalid plan_id", nil)
 			return
 		}
-		packageID = &v
+		planID = &v
 	}
 	activeOnly := c.DefaultQuery("active_only", "false") == "true"
-	resp, err := h.service.ListCommissionRules(c.Request.Context(), partnerTypeID, packageID, activeOnly)
+	resp, err := h.service.ListCommissionRules(c.Request.Context(), partnerTypeID, planID, activeOnly)
 	if err != nil {
 		writeCommissionError(c, err)
 		return

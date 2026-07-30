@@ -32,6 +32,7 @@ func (h *Handler) RegisterRoutes(api *gin.RouterGroup) {
 	owners.DELETE("/bulk", h.bulkDeleteOwners)
 	owners.DELETE("/bulk/force", h.bulkForceDeleteOwners)
 	owners.GET("/:owner_id", h.getOwner)
+	owners.GET("/:owner_id/overview", h.getOwnerOverview)
 	owners.PATCH("/:owner_id", h.updateOwner)
 	owners.DELETE("/:owner_id", h.deleteOwner)
 	owners.PATCH("/:owner_id/restore", h.restoreOwner)
@@ -132,6 +133,19 @@ func (h *Handler) getOwner(c *gin.Context) {
 		return
 	}
 	response, err := h.service.GetOwner(c.Request.Context(), currentActor(c), ownerID)
+	if err != nil {
+		writeError(c, err)
+		return
+	}
+	httpx.Success(c, http.StatusOK, response)
+}
+
+func (h *Handler) getOwnerOverview(c *gin.Context) {
+	ownerID, ok := parseParamID(c, "owner_id")
+	if !ok {
+		return
+	}
+	response, err := h.service.GetOwnerOverview(c.Request.Context(), currentActor(c), ownerID)
 	if err != nil {
 		writeError(c, err)
 		return

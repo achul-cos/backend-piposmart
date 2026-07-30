@@ -293,6 +293,9 @@ func seedMaster(ctx context.Context, tx *sql.Tx) error {
 	if err := seedPromotions(ctx, tx); err != nil {
 		return err
 	}
+	if err := seedCommissionRulesDemo(ctx, tx); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -417,17 +420,18 @@ func seedRemarkReasons(ctx context.Context, tx *sql.Tx) error {
 	return nil
 }
 
+// Sprint 15a §5: 3 partner types only (down from the earlier 6 demo types) — REFERRAL,
+// PARTNERSHIP, STRATEGIC, matching data_admin/Ringkasan_Komisi_Piposmart.pdf. All FIXED: the
+// company applies a flat FIXED commission model generally, and the real per-plan nominal comes
+// from commission_rules (seedCommissionRulesDemo), not from these flat fallback values.
 func seedPartnerTypes(ctx context.Context, tx *sql.Tx) error {
 	rows := []struct {
 		code, name, mode, description string
 		value                         string
 	}{
-		{"SUPPLIER", "Supplier Hardware & POS", "PERCENTAGE", "Partner penyedia perangkat POS dan hardware kasir.", "5.00"},
-		{"DISTRIBUTOR", "Distributor Software", "PERCENTAGE", "Distributor lisensi aplikasi Piposmart.", "10.00"},
-		{"AGENT", "Agent Regional", "FIXED", "Agen pemasaran tingkat daerah/regional.", "150000.00"},
-		{"REFERRAL_PARTNER", "Referral Community", "PERCENTAGE", "Mitra komunitas perujuk calon pelanggan.", "3.00"},
-		{"REFERRAL_REGULAR", "Mitra Regular", "FIXED", "Mitra dengan komisi nominal tetap.", "0.00"},
-		{"REFERRAL_STRATEGIC", "Mitra Strategic", "PERCENTAGE", "Mitra strategis dengan komisi persentase.", "0.00"},
+		{"REFERRAL", "Referral", "FIXED", "Mitra perujuk calon pelanggan (referral).", "0.00"},
+		{"PARTNERSHIP", "Partnership", "FIXED", "Mitra kerja sama (partnership).", "0.00"},
+		{"STRATEGIC", "Strategic", "FIXED", "Mitra strategis.", "0.00"},
 	}
 	for _, row := range rows {
 		if _, err := tx.ExecContext(ctx, `
@@ -442,6 +446,80 @@ func seedPartnerTypes(ctx context.Context, tx *sql.Tx) error {
 			row.code, row.name, row.mode, row.value, row.description,
 		); err != nil {
 			return fmt.Errorf("seed partner type %s: %w", row.code, err)
+		}
+	}
+	// Deactivate the 6 legacy demo types (SUPPLIER/DISTRIBUTOR/AGENT/REFERRAL_PARTNER/
+	// REFERRAL_REGULAR/REFERRAL_STRATEGIC) rather than delete them — a prior seed run's
+	// partners may still reference them via partner_type_id FK, and deleting would break
+	// re-seeding on an existing dev DB. Deactivating keeps them out of active-type listings
+	// while leaving history intact.
+	legacyCodes := []string{"SUPPLIER", "DISTRIBUTOR", "AGENT", "REFERRAL_PARTNER", "REFERRAL_REGULAR", "REFERRAL_STRATEGIC"}
+	for _, code := range legacyCodes {
+		if _, err := tx.ExecContext(ctx, `UPDATE partner_types SET active = FALSE WHERE code = ?`, code); err != nil {
+			return fmt.Errorf("deactivate legacy partner type %s: %w", code, err)
+		}
+	}
+	return nil
+}
+
+// seedCommissionRulesDemo seeds the exact FIXED commission_rules matrix from
+// data_admin/Ringkasan_Komisi_Piposmart.pdf: 7 plans x 3 partner types = 21 rules. Per the mitra
+// MOU, these amounts hold indefinitely until explicitly superseded — update-by-versioning
+// (new EffectiveFrom + close out the old rule's EffectiveTo), never an in-place nominal edit,
+// so a partner's already-earned commissions (snapshotted onto partner_commissions at calc time)
+// are never retroactively changed by a later rate change.
+func seedCommissionRulesDemo(ctx context.Context, tx *sql.Tx) error {
+	matrix := []struct {
+		planCode                                  string
+		referral, partnership, strategic          string
+	}{
+		{"BASIC_12_MONTHS", "120000.00", "150000.00", "240000.00"},
+		{"BUSINESS_12_MONTHS", "180000.00", "210000.00", "320000.00"},
+		{"BUSINESS_18_MONTHS", "270000.00", "315000.00", "480000.00"},
+		{"BUSINESS_24_MONTHS", "360000.00", "420000.00", "640000.00"},
+		{"PRO_12_MONTHS", "220000.00", "250000.00", "400000.00"},
+		{"PRO_18_MONTHS", "330000.00", "375000.00", "600000.00"},
+		{"PRO_24_MONTHS", "440000.00", "500000.00", "800000.00"},
+	}
+	for _, row := range matrix {
+		planID, err := lookupID(ctx, tx, "subscription_plans", "code", row.planCode)
+		if err != nil {
+			return fmt.Errorf("seed commission rule lookup plan %s: %w", row.planCode, err)
+		}
+		for typeCode, value := range map[string]string{
+			"REFERRAL":    row.referral,
+			"PARTNERSHIP": row.partnership,
+			"STRATEGIC":   row.strategic,
+		} {
+			partnerTypeID, err := lookupID(ctx, tx, "partner_types", "code", typeCode)
+			if err != nil {
+				return fmt.Errorf("seed commission rule lookup partner type %s: %w", typeCode, err)
+			}
+			var existingID int64
+			err = tx.QueryRowContext(ctx, `
+				SELECT id FROM commission_rules
+				WHERE partner_type_id = ? AND plan_id = ? AND effective_from = '2026-07-01'`,
+				partnerTypeID, planID).Scan(&existingID)
+			switch {
+			case errors.Is(err, sql.ErrNoRows):
+				if _, err := tx.ExecContext(ctx, `
+					INSERT INTO commission_rules
+						(partner_type_id, plan_id, mode, value, effective_from, active)
+					VALUES (?, ?, 'FIXED', ?, '2026-07-01', TRUE)`,
+					partnerTypeID, planID, value,
+				); err != nil {
+					return fmt.Errorf("seed commission rule %s/%s: %w", typeCode, row.planCode, err)
+				}
+			case err != nil:
+				return fmt.Errorf("seed commission rule lookup existing %s/%s: %w", typeCode, row.planCode, err)
+			default:
+				if _, err := tx.ExecContext(ctx, `
+					UPDATE commission_rules SET mode = 'FIXED', value = ?, active = TRUE
+					WHERE id = ?`, value, existingID,
+				); err != nil {
+					return fmt.Errorf("seed commission rule update %s/%s: %w", typeCode, row.planCode, err)
+				}
+			}
 		}
 	}
 	return nil
@@ -485,6 +563,19 @@ func seedPackagesAndPlans(ctx context.Context, tx *sql.Tx) error {
 		{"PRO", "Pro", "Paket lanjutan untuk operasional laundry yang lebih kompleks.", 3, 199000},
 	}
 	tenures := []int{1, 9, 12, 18, 24}
+	// pdfPrices overrides the formula price for the 7 plans the partner commission summary
+	// (data_admin/Ringkasan_Komisi_Piposmart.pdf) actually prices — commission is a FIXED amount
+	// tied to these exact plan prices per the mitra MOU, so the plan price must match the PDF
+	// exactly for these tenures. Tenures the PDF doesn't cover (1, 9 months) keep the old formula.
+	pdfPrices := map[string]int{
+		"BASIC_12_MONTHS":    858000,
+		"BUSINESS_12_MONTHS": 1298000,
+		"BUSINESS_18_MONTHS": 1999000,
+		"BUSINESS_24_MONTHS": 2596000,
+		"PRO_12_MONTHS":      1688000,
+		"PRO_18_MONTHS":      2688000,
+		"PRO_24_MONTHS":      3368000,
+	}
 	for _, pkg := range packages {
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO subscription_packages (code, name, level_order, description, active)
@@ -510,6 +601,9 @@ func seedPackagesAndPlans(ctx context.Context, tx *sql.Tx) error {
 				price = price * 95 / 100
 			}
 			code := fmt.Sprintf("%s_%02d_MONTHS", pkg.code, tenure)
+			if pdfPrice, ok := pdfPrices[code]; ok {
+				price = pdfPrice
+			}
 			if _, err := tx.ExecContext(ctx, `
 				INSERT INTO subscription_plans
 					(package_id, code, name, tenure_months, duration_days, price, currency, effective_from, active)
@@ -788,15 +882,15 @@ func seedDemoMinimal(ctx context.Context, tx *sql.Tx, options Options) error {
 }
 
 func seedPartnersDemo(ctx context.Context, tx *sql.Tx, fake *factory.Factory) error {
-	supTypeID, err := lookupID(ctx, tx, "partner_types", "code", "SUPPLIER")
+	supTypeID, err := lookupID(ctx, tx, "partner_types", "code", "REFERRAL")
 	if err != nil {
 		return err
 	}
-	disTypeID, err := lookupID(ctx, tx, "partner_types", "code", "DISTRIBUTOR")
+	disTypeID, err := lookupID(ctx, tx, "partner_types", "code", "PARTNERSHIP")
 	if err != nil {
 		return err
 	}
-	refTypeID, err := lookupID(ctx, tx, "partner_types", "code", "REFERRAL_PARTNER")
+	refTypeID, err := lookupID(ctx, tx, "partner_types", "code", "STRATEGIC")
 	if err != nil {
 		return err
 	}
@@ -828,7 +922,7 @@ func seedPartnersDemo(ctx context.Context, tx *sql.Tx, fake *factory.Factory) er
 		res, err := tx.ExecContext(ctx, `
 			INSERT INTO partners (partner_type_id, code, name, phone, email, address, bank_account_encrypted, bank_account_last4, status, created_at, updated_at)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', NOW(), NOW())
-			ON DUPLICATE KEY UPDATE name = VALUES(name), phone = VALUES(phone)`,
+			ON DUPLICATE KEY UPDATE partner_type_id = VALUES(partner_type_id), name = VALUES(name), phone = VALUES(phone)`,
 			p.typeID, p.code, p.name, p.phone, p.email, p.address, []byte(p.encBank), p.bankLast4,
 		)
 		if err != nil {

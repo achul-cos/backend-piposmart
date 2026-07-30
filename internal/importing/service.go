@@ -131,7 +131,13 @@ func (s *Service) Upload(ctx context.Context, actor identity.User, file multipar
 		return nil, fmt.Errorf("importing: store upload: %w", err)
 	}
 
-	code := fmt.Sprintf("IMPORT-%s-%s", time.Now().Format("20060102"), hash[:12])
+	contextKey := fmt.Sprintf("%s|%s|", profileForRow, strings.TrimSpace(sheetName))
+	if targetSalesUserID != nil {
+		contextKey = fmt.Sprintf("%s%d", contextKey, *targetSalesUserID)
+	}
+	contextSum := sha256.Sum256([]byte(contextKey))
+	contextHash := hex.EncodeToString(contextSum[:])
+	code := fmt.Sprintf("IMPORT-%s-%s-%s", time.Now().Format("20060102"), hash[:8], contextHash[:6])
 
 	batchID, err := s.repo.CreateBatch(ctx, code, profileForRow, sheetName, targetSalesUserID, header.Filename, hash, filePath, actor.ID)
 	if err != nil {
