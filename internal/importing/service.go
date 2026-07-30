@@ -36,12 +36,36 @@ func isAdmin(actor identity.User) bool {
 	return actor.RoleCode == RoleAdmin
 }
 
+// profilesRequiringSheetName cannot rely on auto-detection: their workbooks (PBGC-style
+// per-sales-rep exports) contain several structurally-identical sheets — different sales reps,
+// legacy/duplicate copies — so the admin must say which sheet to use. The same two profiles also
+// never carry a sales-rep column, only a sheet-name suffix (e.g. "Call & Chat-Lidya"), so they
+// additionally require an explicit target_sales_user_id.
+var profilesRequiringSheetName = map[string]bool{
+	ProfileSalesCallChat: true,
+	ProfileSalesTarget:   true,
+}
+
+func isKnownProfile(name string) bool {
+	for _, p := range knownProfiles {
+		if p.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
 // Upload validates and stores an uploaded workbook, then enqueues async validation. Re-uploading
 // a byte-identical file returns the existing batch instead of creating a duplicate.
-func (s *Service) Upload(ctx context.Context, actor identity.User, file multipart.File, header *multipart.FileHeader, declaredProfile string) (*ImportBatchResponse, error) {
+func (s *Service) Upload(ctx context.Context, actor identity.User, file multipart.File, header *multipart.FileHeader, declaredProfile, sheetName string, targetSalesUserID *int64) (*ImportBatchResponse, error) {
 	if !isAdmin(actor) {
 		return nil, ErrForbidden
 	}
+	// Canonicalize whitespace once at the boundary — both the dedup key and ValidateHandler's
+	// sheet lookup compare against this trimmed form, so a batch is never keyed on accidental
+	// leading/trailing spaces the admin typed (or a browser/curl trimmed) differently between
+	// two uploads of the same file.
+	sheetName = strings.TrimSpace(sheetName)
 	if !strings.EqualFold(filepath.Ext(header.Filename), ".xlsx") {
 		return nil, ErrInvalidFileType
 	}
@@ -62,22 +86,39 @@ func (s *Service) Upload(ctx context.Context, actor identity.User, file multipar
 		return nil, ErrFileTooLarge
 	}
 
+	if declaredProfile != "" {
+		if !isKnownProfile(declaredProfile) {
+			return nil, ErrUnknownProfile
+		}
+		if profilesRequiringSheetName[declaredProfile] {
+			if strings.TrimSpace(sheetName) == "" {
+				return nil, ErrSheetNameRequired
+			}
+			if targetSalesUserID == nil || *targetSalesUserID < 1 {
+				return nil, ErrTargetSalesUserRequired
+			}
+		}
+	} else if strings.TrimSpace(sheetName) != "" {
+		// sheet_name only makes sense alongside an explicit profile — without a declared profile
+		// there is nothing to verify that sheet against.
+		return nil, ErrSheetNameNeedsProfile
+	}
+
 	sum := sha256.Sum256(content)
 	hash := hex.EncodeToString(sum[:])
 
-	existing, err := s.repo.FindBatchBySHA256(ctx, hash)
+	profileForRow := declaredProfile
+	if profileForRow == "" {
+		profileForRow = ProfilePendingDetection
+	}
+
+	existing, err := s.repo.FindBatchBySHA256AndProfile(ctx, hash, profileForRow, sheetName)
 	if err != nil {
 		return nil, err
 	}
 	if existing != nil {
 		resp := NewImportBatchResponse(*existing)
 		return &resp, nil
-	}
-
-	if declaredProfile != "" {
-		if declaredProfile != ProfileOwnerOutlet && declaredProfile != ProfileNonRegister {
-			return nil, ErrUnknownProfile
-		}
 	}
 
 	uploadDir := filepath.Join(s.storage.UploadDirectory, "imports")
@@ -91,12 +132,8 @@ func (s *Service) Upload(ctx context.Context, actor identity.User, file multipar
 	}
 
 	code := fmt.Sprintf("IMPORT-%s-%s", time.Now().Format("20060102"), hash[:12])
-	profileForRow := declaredProfile
-	if profileForRow == "" {
-		profileForRow = ProfilePendingDetection
-	}
 
-	batchID, err := s.repo.CreateBatch(ctx, code, profileForRow, header.Filename, hash, filePath, actor.ID)
+	batchID, err := s.repo.CreateBatch(ctx, code, profileForRow, sheetName, targetSalesUserID, header.Filename, hash, filePath, actor.ID)
 	if err != nil {
 		return nil, err
 	}

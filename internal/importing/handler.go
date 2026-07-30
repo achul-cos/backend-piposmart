@@ -49,7 +49,9 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 // @Accept multipart/form-data
 // @Produce json
 // @Param file formData file true "Excel (.xlsx) file"
-// @Param profile formData string false "OWNER_OUTLET or NON_REGISTER; omit to auto-detect from headers"
+// @Param profile formData string false "OWNER_OUTLET, NON_REGISTER, NEW_SUBSCRIBE, MONTHLY_ACTIVE, BONUS_MITRA, SALES_CALL_CHAT, or SALES_TARGET; omit to auto-detect from headers"
+// @Param sheet_name formData string false "Required for SALES_CALL_CHAT/SALES_TARGET (workbook has multiple similar sheets); optional/ignored otherwise"
+// @Param target_sales_user_id formData int false "Required for SALES_CALL_CHAT/SALES_TARGET (sales rep is only encoded in the sheet name, not a data column)"
 // @Success 201 {object} ImportBatchResponse
 // @Failure 400 {object} httpx.ErrorEnvelope
 // @Router /imports [post]
@@ -67,8 +69,18 @@ func (h *Handler) Upload(c *gin.Context) {
 	defer file.Close()
 
 	profile := c.PostForm("profile")
+	sheetName := c.PostForm("sheet_name")
+	var targetSalesUserID *int64
+	if raw := c.PostForm("target_sales_user_id"); raw != "" {
+		id, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || id < 1 {
+			httpx.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", "target_sales_user_id tidak valid", nil)
+			return
+		}
+		targetSalesUserID = &id
+	}
 	actor, _ := identity.CurrentUser(c)
-	resp, err := h.service.Upload(c.Request.Context(), actor, file, fileHeader, profile)
+	resp, err := h.service.Upload(c.Request.Context(), actor, file, fileHeader, profile, sheetName, targetSalesUserID)
 	if err != nil {
 		writeImportError(c, err)
 		return
@@ -318,6 +330,14 @@ func writeImportError(c *gin.Context, err error) {
 		httpx.Error(c, http.StatusBadRequest, "PROFILE_HEADER_MISMATCH", err.Error(), importErrorDetails("PROFILE_HEADER_MISMATCH", err, requestID))
 	case errors.Is(err, ErrUnknownProfile):
 		httpx.Error(c, http.StatusBadRequest, "UNKNOWN_PROFILE", err.Error(), importErrorDetails("UNKNOWN_PROFILE", err, requestID))
+	case errors.Is(err, ErrSheetNameRequired):
+		httpx.Error(c, http.StatusBadRequest, "SHEET_NAME_REQUIRED", err.Error(), importErrorDetails("SHEET_NAME_REQUIRED", err, requestID))
+	case errors.Is(err, ErrSheetNameNeedsProfile):
+		httpx.Error(c, http.StatusBadRequest, "SHEET_NAME_NEEDS_PROFILE", err.Error(), importErrorDetails("SHEET_NAME_NEEDS_PROFILE", err, requestID))
+	case errors.Is(err, ErrSheetNotFound):
+		httpx.Error(c, http.StatusBadRequest, "SHEET_NOT_FOUND", err.Error(), importErrorDetails("SHEET_NOT_FOUND", err, requestID))
+	case errors.Is(err, ErrTargetSalesUserRequired):
+		httpx.Error(c, http.StatusBadRequest, "TARGET_SALES_USER_REQUIRED", err.Error(), importErrorDetails("TARGET_SALES_USER_REQUIRED", err, requestID))
 	case errors.As(err, &batchStatusErr):
 		httpx.Error(c, http.StatusBadRequest, "INVALID_BATCH_STATUS", err.Error(), gin.H{
 			"root_cause":       "Frontend memanggil aksi import pada status batch yang belum sesuai alur backend.",
@@ -390,6 +410,22 @@ func importErrorDetails(code string, err error, requestID string) gin.H {
 		details["root_cause"] = "Nilai profile yang dikirim frontend tidak dikenal backend."
 		details["solution"] = "Gunakan hanya profile yang didukung backend."
 		details["frontend_prevent"] = "Gunakan enum profile yang dibekukan dari API/OpenAPI, jangan hardcode bebas."
+	case "SHEET_NAME_REQUIRED":
+		details["root_cause"] = "Profile import ini memakai workbook multi-sheet sehingga backend butuh nama sheet yang eksplisit."
+		details["solution"] = "Kirim parameter sheet_name yang sama dengan nama sheet pada file Excel."
+		details["frontend_prevent"] = "Wajibkan user memilih sheet ketika profile adalah SALES_CALL_CHAT atau SALES_TARGET."
+	case "SHEET_NAME_NEEDS_PROFILE":
+		details["root_cause"] = "Frontend mengirim sheet_name tanpa profile eksplisit."
+		details["solution"] = "Kirim profile yang sesuai bersama sheet_name."
+		details["frontend_prevent"] = "Jangan tampilkan input sheet_name bila profile belum dipilih."
+	case "SHEET_NOT_FOUND":
+		details["root_cause"] = "Nama sheet yang dikirim tidak ditemukan di workbook yang diunggah."
+		details["solution"] = "Periksa ejaan, spasi, dan kapitalisasi nama sheet lalu unggah ulang request."
+		details["frontend_prevent"] = "Baca daftar sheet dari file terlebih dahulu atau tampilkan helper nama sheet yang valid ke user."
+	case "TARGET_SALES_USER_REQUIRED":
+		details["root_cause"] = "Profile import ini membutuhkan target_sales_user_id karena sales hanya diketahui dari konteks sheet."
+		details["solution"] = "Kirim target_sales_user_id dari akun Sales yang sesuai."
+		details["frontend_prevent"] = "Wajibkan pemilihan Sales saat profile adalah SALES_CALL_CHAT atau SALES_TARGET."
 	case "INVALID_BATCH_STATUS":
 		details["root_cause"] = "Aksi import dipanggil saat status batch belum sesuai."
 		details["solution"] = "Ikuti state machine batch: upload -> validating -> validated -> committing -> committed."
