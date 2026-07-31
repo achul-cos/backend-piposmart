@@ -1030,9 +1030,9 @@ func outletOverviewSelect() string {
 // JOIN on wa.owner_id = ot.owner_id, which showed the identical number on every outlet an owner
 // had. That JOIN is gone from outletOverviewSelect; this is the only place wallet data is surfaced.
 //
-// total_topup filters on wp.status = 'PAID' (today's only "succeeded" literal). Sprint 15a §2
-// renames the top-up status lifecycle to PENDING/REJECTED/EXPIRED/ACCEPTED — update this filter to
-// 'ACCEPTED' in the same change that lands that migration.
+// total_topup filters on wp.status = 'ACCEPTED' (Sprint 15a §2's top-up lifecycle: a top-up only
+// credits the wallet, and only counts toward this rollup, once ACCEPTED — PENDING/REJECTED/EXPIRED
+// top-ups never touched balance in the first place).
 func ownerOverviewSelect() string {
 	return `
 		SELECT
@@ -1065,7 +1065,7 @@ func ownerOverviewSelect() string {
 			COALESCE(CAST((
 				SELECT COALESCE(SUM(wp.amount), 0)
 				FROM wallet_payments wp
-				WHERE wp.owner_id = o.id AND wp.payment_type = 'TOPUP' AND wp.status = 'PAID'
+				WHERE wp.owner_id = o.id AND wp.payment_type = 'TOPUP' AND wp.status = 'ACCEPTED'
 			) AS CHAR), '0.00') AS total_topup,
 			COALESCE(CAST((
 				SELECT COALESCE(SUM(wt.amount), 0)

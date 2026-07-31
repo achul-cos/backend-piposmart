@@ -39,6 +39,8 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 		imports.GET("/:id/rows/all-deleted", h.ListAllRows)
 		imports.GET("/:id/rejected-rows/export", h.ExportRejectedRows)
 		imports.POST("/:id/commit", h.Commit)
+		imports.POST("/:id/rows/:row_id/relink", h.RelinkRow)
+		imports.GET("/summary", h.GetSummary)
 	}
 }
 
@@ -297,6 +299,59 @@ func (h *Handler) Commit(c *gin.Context) {
 	httpx.Success(c, statusCode, resp)
 }
 
+// RelinkRow godoc
+// @Summary Manually resolve an UNMATCHED reconciliation-candidate row
+// @Description Admin only. Supplies the owner/outlet/lead ID the row's own data couldn't resolve at commit time, moving it back to VALID for the next batch commit to pick up.
+// @Tags imports
+// @Accept json
+// @Produce json
+// @Param id path int64 true "Batch ID"
+// @Param row_id path int64 true "Row ID"
+// @Param request body RelinkRowRequest true "Entity IDs to link"
+// @Success 200 {object} ImportRowResponse
+// @Failure 400 {object} httpx.ErrorEnvelope
+// @Router /imports/{id}/rows/{row_id}/relink [post]
+func (h *Handler) RelinkRow(c *gin.Context) {
+	batchID, ok := parseBatchID(c)
+	if !ok {
+		return
+	}
+	rowID, err := strconv.ParseInt(c.Param("row_id"), 10, 64)
+	if err != nil {
+		httpx.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", "invalid row ID", nil)
+		return
+	}
+	var req RelinkRowRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpx.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", "payload tidak valid", gin.H{"error": err.Error()})
+		return
+	}
+	actor, _ := identity.CurrentUser(c)
+	resp, err := h.service.RelinkRow(c.Request.Context(), actor, batchID, rowID, req)
+	if err != nil {
+		writeImportError(c, err)
+		return
+	}
+	httpx.Success(c, http.StatusOK, resp)
+}
+
+// GetSummary godoc
+// @Summary Aggregate batch counts per status
+// @Description Admin only. Reports how many batches need attention (VALIDATION_FAILED/COMMIT_FAILED) without paging through GET /imports?status=... one status at a time.
+// @Tags imports
+// @Produce json
+// @Success 200 {object} BatchSummaryResponse
+// @Router /imports/summary [get]
+func (h *Handler) GetSummary(c *gin.Context) {
+	actor, _ := identity.CurrentUser(c)
+	resp, err := h.service.GetSummary(c.Request.Context(), actor)
+	if err != nil {
+		writeImportError(c, err)
+		return
+	}
+	httpx.Success(c, http.StatusOK, resp)
+}
+
 func parseBatchID(c *gin.Context) (int64, bool) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
@@ -352,6 +407,10 @@ func writeImportError(c *gin.Context, err error) {
 		})
 	case errors.Is(err, ErrInvalidBatchStatus):
 		httpx.Error(c, http.StatusBadRequest, "INVALID_BATCH_STATUS", err.Error(), importErrorDetails("INVALID_BATCH_STATUS", err, requestID))
+	case errors.Is(err, ErrRowNotUnmatched):
+		httpx.Error(c, http.StatusConflict, "ROW_NOT_UNMATCHED", err.Error(), importErrorDetails("ROW_NOT_UNMATCHED", err, requestID))
+	case errors.Is(err, ErrRelinkEntityRequired):
+		httpx.Error(c, http.StatusBadRequest, "RELINK_ENTITY_REQUIRED", err.Error(), importErrorDetails("RELINK_ENTITY_REQUIRED", err, requestID))
 	default:
 		httpx.Error(c, http.StatusInternalServerError, "INTERNAL_ERROR", "unexpected error", importErrorDetails("INTERNAL_ERROR", err, requestID))
 	}

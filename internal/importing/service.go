@@ -233,6 +233,55 @@ func (s *Service) ListRows(ctx context.Context, actor identity.User, batchID int
 	return &ImportRowListResponse{Items: responses, Meta: ListMeta{Page: page, Limit: resolveReturnedLimit(params.All, limit, len(items), total), Total: total}}, nil
 }
 
+// RelinkRow manually resolves a reconciliation candidate (RowStatusUnmatched) — admin supplies
+// the owner/outlet/lead ID the row's own code/name couldn't resolve at commit time, moving it
+// back to VALID for the next batch commit to pick up. Deliberately does not re-trigger commit
+// itself (the batch-level commit endpoint already exists and handles the retry job wiring).
+func (s *Service) RelinkRow(ctx context.Context, actor identity.User, batchID, rowID int64, req RelinkRowRequest) (*ImportRowResponse, error) {
+	if !isAdmin(actor) {
+		return nil, ErrForbidden
+	}
+	if req.OwnerID == nil && req.OutletID == nil && req.LeadID == nil {
+		return nil, ErrRelinkEntityRequired
+	}
+	row, err := s.repo.FindRowByID(ctx, batchID, rowID)
+	if err != nil {
+		return nil, err
+	}
+	if row.Status != RowStatusUnmatched {
+		return nil, ErrRowNotUnmatched
+	}
+	if err := s.repo.RelinkRow(ctx, rowID, req.OwnerID, req.OutletID, req.LeadID); err != nil {
+		return nil, err
+	}
+	relinked, err := s.repo.FindRowByID(ctx, batchID, rowID)
+	if err != nil {
+		return nil, err
+	}
+	resp := NewImportRowResponse(relinked)
+	return &resp, nil
+}
+
+// GetSummary aggregates batch counts per status (GET /imports/summary) — so admin can see how
+// many batches need attention without paging through GET /imports?status=... one status at a time.
+func (s *Service) GetSummary(ctx context.Context, actor identity.User) (*BatchSummaryResponse, error) {
+	if !isAdmin(actor) {
+		return nil, ErrForbidden
+	}
+	counts, err := s.repo.GetBatchStatusCounts(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var total, needsAttention int64
+	for status, count := range counts {
+		total += count
+		if status == BatchStatusValidationFailed || status == BatchStatusCommitFailed {
+			needsAttention += count
+		}
+	}
+	return &BatchSummaryResponse{Total: total, CountsByStatus: counts, NeedsAttention: needsAttention}, nil
+}
+
 func resolveReturnedLimit(all bool, limit int, itemCount int, total int64) int {
 	if !all {
 		return limit

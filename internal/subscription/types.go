@@ -20,9 +20,10 @@ const (
 	SubscriptionStatusExpired  = "EXPIRED"
 	SubscriptionStatusCanceled = "CANCELED"
 
-	ReconciliationStatusPending   = "PENDING"
-	ReconciliationStatusConfirmed = "CONFIRMED"
-	ReconciliationStatusRejected  = "REJECTED"
+	ReconciliationStatusPending        = "PENDING"
+	ReconciliationStatusConfirmed      = "CONFIRMED"
+	ReconciliationStatusRejected       = "REJECTED"
+	ReconciliationStatusPartialConfirm = "PARTIAL_CONFIRM"
 
 	ReconciliationMatchAuto   = "AUTO"
 	ReconciliationMatchManual = "MANUAL"
@@ -129,6 +130,11 @@ type SubscriptionOrder struct {
 	DiscountAmount        string
 	AdditionalCharge      string
 	FinalAmount           string
+	// BalanceShortfallAmount is set when an Admin-created manual order (backfilling/correcting
+	// a self-service purchase already made in the real app) exceeded the owner's CRM-side
+	// balance — CreateOrder still proceeds (clamping the wallet to 0, never negative — the
+	// balance column has a CHECK >= 0), flagging the difference here instead of hard-blocking.
+	BalanceShortfallAmount sql.NullString
 	Currency              string
 	Status                string
 	IdempotencyKey        string
@@ -199,7 +205,14 @@ type Reconciliation struct {
 	MatchType        string
 	IssueCode        sql.NullString
 	AmountDifference string
-	Note             sql.NullString
+	// AdminTenureMonths/AdminFinalAmount are populated on PARTIAL_CONFIRM: the closing's data
+	// didn't match the admin dashboard's real record (e.g. closing said 24 bulan, admin dashboard
+	// says 12), admin approves anyway but pins the sales' omset to the admin's real numbers.
+	// AdminFinalAmount is written back onto sales_closings.final_amount (so partner commission
+	// sync reflects it); AdminTenureMonths is informational only.
+	AdminTenureMonths sql.NullInt64
+	AdminFinalAmount  sql.NullString
+	Note              sql.NullString
 	Reason           sql.NullString
 	ConfirmedAt      sql.NullTime
 	RejectedAt       sql.NullTime
@@ -235,9 +248,13 @@ type ReconciliationIssue struct {
 }
 
 type CreateOrderRequest struct {
-	PlanID                int64      `json:"plan_id"`
-	OutletID              *int64     `json:"outlet_id"`
-	PromotionID           *int64     `json:"promotion_id"`
+	PlanID      int64  `json:"plan_id"`
+	OutletID    *int64 `json:"outlet_id"`
+	PromotionID *int64 `json:"promotion_id"`
+	// PromotionIDs stacks multiple promotions on the same plan (Sprint 15a §4b) — used instead of
+	// PromotionID when set. Only applies to the direct-plan path (no ClosingID): a closing-driven
+	// order inherits whatever promotions the closing itself carries.
+	PromotionIDs          []int64    `json:"promotion_ids"`
 	ClosingID             *int64     `json:"closing_id"`
 	DiscountAmount        string     `json:"discount_amount"`
 	IdempotencyKey        string     `json:"idempotency_key"`
@@ -252,6 +269,9 @@ type ManualReconcileRequest struct {
 	Action    string `json:"action" binding:"required"`
 	Note      string `json:"note"`
 	Reason    string `json:"reason"`
+	// AdminTenureMonths/AdminFinalAmount are required when Action == PARTIAL_CONFIRM.
+	AdminTenureMonths *int    `json:"admin_tenure_months,omitempty"`
+	AdminFinalAmount  *string `json:"admin_final_amount,omitempty"`
 }
 
 type ListParams struct {
@@ -294,6 +314,7 @@ type SubscriptionOrderResponse struct {
 	Package               *EntityRef         `json:"package,omitempty"`
 	Plan                  *EntityRef         `json:"plan,omitempty"`
 	Promotion             *EntityRef         `json:"promotion,omitempty"`
+	Promotions            []EntityRef       `json:"promotions,omitempty"`
 	PackageSnapshot       PackageSnapshot    `json:"package_snapshot"`
 	PlanSnapshot          PlanSnapshot       `json:"plan_snapshot"`
 	PromotionSnapshot     *PromotionSnapshot `json:"promotion_snapshot,omitempty"`
@@ -303,6 +324,7 @@ type SubscriptionOrderResponse struct {
 	DiscountAmount        string             `json:"discount_amount"`
 	AdditionalCharge      string             `json:"additional_charge"`
 	FinalAmount           string             `json:"final_amount"`
+	BalanceShortfallAmount *string           `json:"balance_shortfall_amount,omitempty"`
 	Currency              string             `json:"currency"`
 	Status                string             `json:"status"`
 	IdempotencyKey        string             `json:"idempotency_key"`
@@ -358,6 +380,8 @@ type ReconciliationResponse struct {
 	MatchType        string     `json:"match_type"`
 	IssueCode        string     `json:"issue_code,omitempty"`
 	AmountDifference string     `json:"amount_difference"`
+	AdminTenureMonths *int      `json:"admin_tenure_months,omitempty"`
+	AdminFinalAmount  *string   `json:"admin_final_amount,omitempty"`
 	Note             string     `json:"note,omitempty"`
 	Reason           string     `json:"reason,omitempty"`
 	ConfirmedAt      *time.Time `json:"confirmed_at,omitempty"`
@@ -453,6 +477,7 @@ func NewOrderResponse(item SubscriptionOrder) SubscriptionOrderResponse {
 		DiscountAmount:        item.DiscountAmount,
 		AdditionalCharge:      item.AdditionalCharge,
 		FinalAmount:           item.FinalAmount,
+		BalanceShortfallAmount: nullableStringPtr(item.BalanceShortfallAmount),
 		Currency:              item.Currency,
 		Status:                item.Status,
 		IdempotencyKey:        item.IdempotencyKey,
@@ -511,10 +536,12 @@ func NewReconciliationResponse(item Reconciliation) ReconciliationResponse {
 		Closing:          nullableEntity(item.ClosingID, item.ClosingCode, sql.NullString{}),
 		Owner:            nullableEntity(item.OwnerID, item.OwnerCode, item.OwnerName),
 		Status:           item.Status,
-		MatchType:        item.MatchType,
-		IssueCode:        item.IssueCode.String,
-		AmountDifference: item.AmountDifference,
-		Note:             item.Note.String,
+		MatchType:         item.MatchType,
+		IssueCode:         item.IssueCode.String,
+		AmountDifference:  item.AmountDifference,
+		AdminTenureMonths: nullableIntPtr(item.AdminTenureMonths),
+		AdminFinalAmount:  nullableStringPtr(item.AdminFinalAmount),
+		Note:              item.Note.String,
 		Reason:           item.Reason.String,
 		ConfirmedAt:      nullableTimePtr(item.ConfirmedAt),
 		RejectedAt:       nullableTimePtr(item.RejectedAt),
@@ -563,6 +590,22 @@ func nullableInt64Ptr(value sql.NullInt64) *int64 {
 		return nil
 	}
 	out := value.Int64
+	return &out
+}
+
+func nullableStringPtr(value sql.NullString) *string {
+	if !value.Valid {
+		return nil
+	}
+	out := value.String
+	return &out
+}
+
+func nullableIntPtr(value sql.NullInt64) *int {
+	if !value.Valid {
+		return nil
+	}
+	out := int(value.Int64)
 	return &out
 }
 

@@ -470,8 +470,8 @@ func seedPartnerTypes(ctx context.Context, tx *sql.Tx) error {
 // are never retroactively changed by a later rate change.
 func seedCommissionRulesDemo(ctx context.Context, tx *sql.Tx) error {
 	matrix := []struct {
-		planCode                                  string
-		referral, partnership, strategic          string
+		planCode                         string
+		referral, partnership, strategic string
 	}{
 		{"BASIC_12_MONTHS", "120000.00", "150000.00", "240000.00"},
 		{"BUSINESS_12_MONTHS", "180000.00", "210000.00", "320000.00"},
@@ -664,6 +664,18 @@ func seedPromotions(ctx context.Context, tx *sql.Tx) error {
 			quantity:           sql.NullInt64{Int64: 1, Valid: true},
 			benefitDescription: "POS Android + 20 kertas thermal.",
 		},
+		// Sprint 15a §4b — second promotion eligible for PRO_12_MONTHS, so a demo closing/order can
+		// stack it together with PRO_12_ANDROID_POS_BUNDLE and exercise the new multi-promotion path
+		// (sales_closing_promotions / subscription_order_promotions), not just single-promotion.
+		{
+			code: "FREE_ONBOARDING_PRO_12", name: "Pro 12 Bulan Sesi Onboarding Gratis", promoType: "FREE_SERVICE",
+			chargeType: "FREE", additionalCharge: "0.00", priority: 20,
+			description:        "Promo gratis sesi onboarding untuk Pro 12 bulan, bisa digabung dengan promo lain.",
+			planCodes:          []string{"PRO_12_MONTHS"},
+			benefitType:        "SERVICE",
+			quantity:           sql.NullInt64{Int64: 1, Valid: true},
+			benefitDescription: "1x sesi onboarding aplikasi bersama tim support.",
+		},
 	}
 
 	for _, promo := range promotions {
@@ -804,6 +816,9 @@ func seedDemoMinimal(ctx context.Context, tx *sql.Tx, options Options) error {
 		fake.BuildClosing(2, "BUSINESS_12_MONTHS", "FREE_1_MONTH_BUSINESS_12", "CONFIRMED"),
 		fake.BuildClosing(3, "PRO_12_MONTHS", "PRO_12_ANDROID_POS_BUNDLE", "PENDING_RECONCILIATION"),
 	}
+	// Sprint 15a §4b — stack a second promotion on the Pro 12 closing to demo multi-promotion
+	// (sales_closing_promotions); the linked subscription order below inherits both automatically.
+	closingScenarios[2].PromotionCodes = []string{"PRO_12_ANDROID_POS_BUNDLE", "FREE_ONBOARDING_PRO_12"}
 	closingIDs := []int64{}
 	for index, closing := range closingScenarios {
 		if index >= len(leadIDs) {
@@ -836,6 +851,50 @@ func seedDemoMinimal(ctx context.Context, tx *sql.Tx, options Options) error {
 		if _, err := fake.CreateWalletTopup(ctx, tx, ownerIDs[1], unusedTopup); err != nil {
 			return err
 		}
+
+		// Sprint 15a §2/§3 — Top Up lifecycle variety (PENDING/REJECTED) and the Transfer they can
+		// be matched against, so the demo dataset actually exercises the new lifecycle/Transfer UI
+		// instead of only ever showing the terminal ACCEPTED state.
+		pendingTopup := fake.BuildWalletTopup(3, "750000.00")
+		pendingTopup.Status = "PENDING"
+		pendingTopup.ExternalReference = "DEMO-TOPUP-PENDING-OWNER-001"
+		pendingTopup.IdempotencyKey = "demo:topup:pending-owner-001"
+		pendingTopup.Note = "Demo Sprint 15a: top-up menunggu verifikasi transfer"
+		pendingPaymentID, err := fake.CreateWalletTopup(ctx, tx, ownerIDs[0], pendingTopup)
+		if err != nil {
+			return err
+		}
+		suggestedTransfer := fake.BuildTransfer(3, "750000.00", "SUGGESTED")
+		suggestedTransfer.TransferDate = pendingTopup.PaidAt
+		suggestedTransfer.Note = "Demo Sprint 15a: transfer disarankan cocok dengan top-up PENDING"
+		suggestedTransfer.MatchedWalletPaymentID = sql.NullInt64{Int64: pendingPaymentID, Valid: true}
+		suggestedTransfer.ExternalReference = "DEMO-TRF-SUGGESTED-OWNER-001"
+		if _, err := fake.CreateTransfer(ctx, tx, ownerIDs[0], suggestedTransfer); err != nil {
+			return err
+		}
+
+		rejectedTopup := fake.BuildWalletTopup(4, "300000.00")
+		rejectedTopup.Status = "REJECTED"
+		rejectedTopup.RejectNote = "Demo Sprint 15a: ditolak, nominal transfer tidak sesuai"
+		rejectedTopup.ExternalReference = "DEMO-TOPUP-REJECTED-OWNER-002"
+		rejectedTopup.IdempotencyKey = "demo:topup:rejected-owner-002"
+		if _, err := fake.CreateWalletTopup(ctx, tx, ownerIDs[1], rejectedTopup); err != nil {
+			return err
+		}
+		rejectedMatchTransfer := fake.BuildTransfer(4, "300000.00", "REJECTED_MATCH")
+		rejectedMatchTransfer.TransferDate = rejectedTopup.PaidAt
+		rejectedMatchTransfer.Note = "Demo Sprint 15a: kecocokan ditolak admin, nominal tidak sama"
+		rejectedMatchTransfer.ExternalReference = "DEMO-TRF-REJECTED-OWNER-002"
+		if _, err := fake.CreateTransfer(ctx, tx, ownerIDs[1], rejectedMatchTransfer); err != nil {
+			return err
+		}
+
+		unmatchedTransfer := fake.BuildTransfer(5, "500000.00", "UNMATCHED")
+		unmatchedTransfer.Note = "Demo Sprint 15a: transfer baru masuk, belum ada saran kecocokan"
+		unmatchedTransfer.ExternalReference = "DEMO-TRF-UNMATCHED-OWNER-004"
+		if _, err := fake.CreateTransfer(ctx, tx, ownerIDs[3], unmatchedTransfer); err != nil {
+			return err
+		}
 	}
 
 	if len(ownerIDs) >= 4 && len(closingIDs) >= 3 {
@@ -844,7 +903,8 @@ func seedDemoMinimal(ctx context.Context, tx *sql.Tx, options Options) error {
 		aprilTopup.IdempotencyKey = "demo:topup:april-owner-003"
 		aprilTopup.PaidAt = time.Date(2026, 4, 15, 10, 0, 0, 0, time.UTC)
 		aprilTopup.Note = "Demo Sprint 10: top-up April, saldo dipakai beli subscription Juli"
-		if _, err := fake.CreateWalletTopup(ctx, tx, ownerIDs[2], aprilTopup); err != nil {
+		aprilPaymentID, err := fake.CreateWalletTopup(ctx, tx, ownerIDs[2], aprilTopup)
+		if err != nil {
 			return err
 		}
 		julyOrder := fake.BuildSubscriptionOrder(10, "PRO_12_MONTHS", "", sql.NullInt64{Int64: closingIDs[2], Valid: true})
@@ -853,7 +913,20 @@ func seedDemoMinimal(ctx context.Context, tx *sql.Tx, options Options) error {
 		julyOrder.PurchasedAt = time.Date(2026, 7, 10, 13, 0, 0, 0, time.UTC)
 		julyOrder.SubscriptionStartDate = time.Date(2026, 7, 10, 0, 0, 0, 0, time.UTC)
 		julyOrder.Note = "Demo Sprint 10: pembelian Juli dari top-up April dan auto reconciliation closing"
-		if _, err := fake.CreateSubscriptionOrder(ctx, tx, ownerIDs[2], julyOrder); err != nil {
+		julyOrderID, err := fake.CreateSubscriptionOrder(ctx, tx, ownerIDs[2], julyOrder)
+		if err != nil {
+			return err
+		}
+		if err := seedPartialConfirmDemo(ctx, tx, julyOrderID); err != nil {
+			return err
+		}
+
+		matchedTransfer := fake.BuildTransfer(10, "4500000.00", "MATCHED")
+		matchedTransfer.TransferDate = aprilTopup.PaidAt
+		matchedTransfer.Note = "Demo Sprint 15a: transfer sudah dikonfirmasi cocok dengan top-up April"
+		matchedTransfer.MatchedWalletPaymentID = sql.NullInt64{Int64: aprilPaymentID, Valid: true}
+		matchedTransfer.ExternalReference = "DEMO-TRF-MATCHED-OWNER-003"
+		if _, err := fake.CreateTransfer(ctx, tx, ownerIDs[2], matchedTransfer); err != nil {
 			return err
 		}
 
@@ -877,6 +950,53 @@ func seedDemoMinimal(ctx context.Context, tx *sql.Tx, options Options) error {
 	}
 	if err := seedPartnersDemo(ctx, tx, fake); err != nil {
 		return err
+	}
+	return nil
+}
+
+// seedPartialConfirmDemo converts an already-auto-reconciled demo order (CreateSubscriptionOrder
+// always inserts a plain CONFIRMED reconciliation, matching+consistent final_amount) into a
+// PARTIAL_CONFIRM demo scenario — Sprint 15a §4's admin correction path, where the admin dashboard's
+// real final amount differs slightly from what Sales entered. Mirrors production's
+// confirmOrderAndClosingWithAmount: admin_final_amount overrides sales_closings.final_amount, order
+// status stays RECONCILED (PARTIAL_CONFIRM only changes the reconciliation, not the order status).
+func seedPartialConfirmDemo(ctx context.Context, tx *sql.Tx, orderID int64) error {
+	var reconciliationID, closingID int64
+	var finalAmount string
+	var tenureMonths int
+	err := tx.QueryRowContext(ctx, `
+		SELECT sr.id, sr.closing_id, CAST(sc.final_amount AS CHAR), sc.tenure_months
+		FROM subscription_reconciliations sr
+		JOIN sales_closings sc ON sc.id = sr.closing_id
+		WHERE sr.order_id = ? AND sr.deleted_at IS NULL
+		LIMIT 1`, orderID).Scan(&reconciliationID, &closingID, &finalAmount, &tenureMonths)
+	if err != nil {
+		return fmt.Errorf("seed partial confirm demo lookup order=%d: %w", orderID, err)
+	}
+
+	finalAmountCents, err := parseDecimalToCents(finalAmount)
+	if err != nil {
+		return err
+	}
+	// Admin dashboard's real number is Rp 50.000 lower than what Sales originally entered.
+	adminFinalAmount := formatCentsToDecimal(finalAmountCents - 5000)
+
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE subscription_reconciliations
+		SET status = 'PARTIAL_CONFIRM', admin_final_amount = ?, admin_tenure_months = ?,
+			note = ?
+		WHERE id = ?`,
+		adminFinalAmount, tenureMonths,
+		"Demo Sprint 15a: dikoreksi admin, nominal dashboard berbeda tipis dari input Sales.",
+		reconciliationID,
+	); err != nil {
+		return fmt.Errorf("seed partial confirm demo update reconciliation order=%d: %w", orderID, err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE sales_closings SET final_amount = ? WHERE id = ?`,
+		adminFinalAmount, closingID,
+	); err != nil {
+		return fmt.Errorf("seed partial confirm demo update closing order=%d: %w", orderID, err)
 	}
 	return nil
 }
@@ -1008,6 +1128,31 @@ func lookupID(ctx context.Context, tx *sql.Tx, table, column, value string) (int
 func checksumFor(options Options) string {
 	sum := sha256.Sum256([]byte(fmt.Sprintf("%s|%s|%d|%s|%s|%d|%.4f", options.Mode, options.Preset, options.Seed, options.From.Format("2006-01-02"), options.To.Format("2006-01-02"), options.Scale, options.Variation)))
 	return hex.EncodeToString(sum[:])
+}
+
+func parseDecimalToCents(value string) (int64, error) {
+	value = strings.TrimSpace(value)
+	parts := strings.SplitN(value, ".", 2)
+	whole, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("parse decimal seed %q: %w", value, err)
+	}
+	var cents int64
+	if len(parts) == 2 {
+		fraction := parts[1]
+		if len(fraction) == 1 {
+			fraction += "0"
+		}
+		cents, err = strconv.ParseInt(fraction[:2], 10, 64)
+		if err != nil {
+			return 0, fmt.Errorf("parse decimal seed %q: %w", value, err)
+		}
+	}
+	return whole*100 + cents, nil
+}
+
+func formatCentsToDecimal(cents int64) string {
+	return fmt.Sprintf("%d.%02d", cents/100, cents%100)
 }
 
 func nullableString(value string) sql.NullString {

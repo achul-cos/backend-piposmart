@@ -223,20 +223,20 @@ type OwnerStatusResponse struct {
 }
 
 type OwnerOverviewResponse struct {
-	ID        int64               `json:"id"`
-	Code      string              `json:"code"`
-	Name      string              `json:"name"`
-	Phone     string              `json:"phone,omitempty"`
-	Email     string              `json:"email,omitempty"`
-	BrandName string              `json:"brand_name,omitempty"`
-	Province  string              `json:"province,omitempty"`
-	City      string              `json:"city,omitempty"`
-	Address   string              `json:"address,omitempty"`
-	Status    string              `json:"status"`
-	Balance   OwnerBalanceResponse `json:"balance"`
-	OwnerStatus OwnerStatusResponse `json:"owner_status"`
-	CreatedAt time.Time           `json:"created_at"`
-	UpdatedAt time.Time           `json:"updated_at"`
+	ID          int64                `json:"id"`
+	Code        string               `json:"code"`
+	Name        string               `json:"name"`
+	Phone       string               `json:"phone,omitempty"`
+	Email       string               `json:"email,omitempty"`
+	BrandName   string               `json:"brand_name,omitempty"`
+	Province    string               `json:"province,omitempty"`
+	City        string               `json:"city,omitempty"`
+	Address     string               `json:"address,omitempty"`
+	Status      string               `json:"status"`
+	Balance     OwnerBalanceResponse `json:"balance"`
+	OwnerStatus OwnerStatusResponse  `json:"owner_status"`
+	CreatedAt   time.Time            `json:"created_at"`
+	UpdatedAt   time.Time            `json:"updated_at"`
 }
 
 type CreateOwnerRequest struct {

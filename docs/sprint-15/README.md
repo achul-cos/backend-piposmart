@@ -227,6 +227,8 @@ Ini berguna untuk:
 
 ## 10. Dokumen Terkait
 
+- [Briefing Frontend Sprint 15](./FRONTEND_BRIEFING.md) — mulai dari sini untuk integrasi frontend,
+  termasuk endpoint baru `relink` dan `/imports/summary` (ditambahkan 30 Juli 2026 setelah Sprint 15a).
 - [API Testing Sprint 15](./api-testing.md)
 - [Sprint Report Sprint 15](./sprint-15.md)
 

@@ -87,7 +87,8 @@ func RunWorker(ctx context.Context, cfg config.Config, logger *slog.Logger) erro
 	importingRepository := importing.NewRepository(connection.SQL)
 	customerService := customer.NewService(customer.NewRepository(connection.SQL))
 	leadService := lead.NewService(lead.NewRepository(connection.SQL))
-	walletService := wallet.NewService(wallet.NewRepository(connection.SQL))
+	walletRepository := wallet.NewRepository(connection.SQL)
+	walletService := wallet.NewService(walletRepository)
 	subscriptionService := subscription.NewService(subscription.NewRepository(connection.SQL))
 	catalogService := catalog.NewService(catalog.NewRepository(connection.SQL))
 	targetService := target.NewService(target.NewRepository(connection.SQL))
@@ -128,6 +129,14 @@ func RunWorker(ctx context.Context, cfg config.Config, logger *slog.Logger) erro
 				logger.Error("worker stale job reclaim failed", slog.String("error", err.Error()))
 			} else if reclaimed > 0 {
 				logger.Warn("worker reclaimed stale jobs", slog.Int64("count", reclaimed))
+			}
+
+			// Sprint 15a §2: a cheap idempotent bulk UPDATE, not worth a dedicated job type —
+			// PENDING top-ups older than their 24h session window auto-EXPIRE every tick.
+			if expired, err := walletRepository.ExpireStaleTopups(ctx); err != nil {
+				logger.Error("worker top-up expiry failed", slog.String("error", err.Error()))
+			} else if expired > 0 {
+				logger.Info("worker expired stale top-ups", slog.Int64("count", expired))
 			}
 
 			// Drain the queue each tick rather than handling one job per tick, so a burst of

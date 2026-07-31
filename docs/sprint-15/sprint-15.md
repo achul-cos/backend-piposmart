@@ -59,6 +59,25 @@ Demo Evidence:
   - `docs/sprint-15/README.md`
   - `docs/sprint-15/api-testing.md`
 
+Addendum (30 Juli 2026, setelah Sprint 15a): melanjutkan carry-over yang tersisa dari sprint ini —
+- `POST /imports/{id}/rows/{row_id}/relink` — resolusi manual baris berstatus UNMATCHED (admin
+  memasok owner/outlet/lead ID yang tidak bisa ditemukan otomatis saat commit), baris kembali ke
+  VALID untuk di-commit ulang. Diverifikasi live (flip UNMATCHED->VALID, serta 409 saat dipanggil
+  pada baris yang bukan UNMATCHED).
+- `GET /imports/summary` — agregat jumlah batch per status, `needs_attention` untuk
+  VALIDATION_FAILED/COMMIT_FAILED. Diverifikasi live.
+- Unit test parser untuk 3 profil yang sebelumnya belum punya test eksplisit: `NEW_SUBSCRIBE`,
+  `SALES_CALL_CHAT`, `SALES_TARGET` (`TestParseNewSubscribeRow_*`, `TestParseSalesCallChatRow_*`,
+  `TestParseSalesTargetRow_*` di `excel_test.go`) — melengkapi `MONTHLY_ACTIVE`/`BONUS_MITRA` yang
+  sudah punya test sejak sebelumnya.
+- Diverifikasi ulang: kelima profil (`NEW_SUBSCRIBE`, `MONTHLY_ACTIVE`, `BONUS_MITRA`,
+  `SALES_CALL_CHAT`, `SALES_TARGET`) re-upload fixture existing (`.cache/sprint15-fixtures/*.xlsx`)
+  → seluruhnya idempotent-return batch COMMITTED yang sama seperti sebelumnya, mengonfirmasi tidak
+  ada regresi dari perubahan skema commission (§5 Sprint 15a) terhadap `BONUS_MITRA` (profil ini
+  menyimpan data sebagai snapshot historis di `partner_bonus_referral_snapshots`, tidak menyentuh
+  `partner`/`commission_rules` sama sekali — jadi aman dari restrukturisasi package_id->plan_id).
+- `go build/vet/test ./...` bersih di seluruh repo setelah penambahan ini.
+
 Quality:
 - Unit/integration test:
   - `go test ./internal/importing/...` PASS
