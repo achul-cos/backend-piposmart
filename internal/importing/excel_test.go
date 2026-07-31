@@ -18,6 +18,21 @@ var nonRegisterHeaderRow = []string{
 	"Created Date Kode OTP", "Status Nomor Telepon", "Status FU (Sales)", "Status Akun",
 	"Tanggal Follow UP", "Remarks", "Status FU OTP (ADM)",
 }
+var monthlyActiveTitleRow = []string{
+	"", "", "", "", " ", "", "", "", "berlangganan maret", "", "", "", "", "", "",
+	"2024", "", "", "", "", "", "", "", "", "", "", "", "Berlangganan 2025",
+}
+var monthlyActiveHeaderRow = []string{
+	"46548", "Share Ke CMO", "", "Kode Owner", "Nama Owner ", "No. Hp Owner", "Nama Brand/Outlet",
+	"No Hp & Nama PIC Kelolaan", "Kota", "Wilayah", "Tahun", "", "Nama Brand", "Nama Outlet",
+	"Des", "Jan", "Feb", "Mar", "Apr ", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des", "Jan",
+}
+var bonusMitraHeaderRow = []string{
+	"No", "MITRA", "Kode Owner", "Nama ", "Nama Brand / Outlet", "Kode Owner", "Nama Owner",
+	"Nama Brand /Outlet", "Bukti Fu", "Kategory Mitra", "Paket Langganan", "PIC", "Link Bukti Follow Up",
+	"Date Top Up", "Date of Renewal\t", "Status", "Tanggal Pencairan 1", "Tanggal Pencairan 2",
+	"Status Pencairan Komisi Mitra", "CMO",
+}
 
 func TestDetectProfile_OwnerOutlet(t *testing.T) {
 	rows := [][]string{ownerOutletHeaderRow, {"1", "46204", "Wilma", "Akun Baru"}}
@@ -193,5 +208,91 @@ func TestJoinNonEmpty(t *testing.T) {
 	want := "Jl. Merdeka, Kel. Sail"
 	if got != want {
 		t.Fatalf("joinNonEmpty = %q, want %q", got, want)
+	}
+}
+
+func TestInferMonthlyActiveColumns(t *testing.T) {
+	idx := buildHeaderIndex(monthlyActiveHeaderRow)
+	cols, err := inferMonthlyActiveColumns([][]string{monthlyActiveTitleRow, monthlyActiveHeaderRow}, 1, idx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(cols) < 14 {
+		t.Fatalf("expected many monthly columns, got %d", len(cols))
+	}
+	if cols[0].Year != 2023 || cols[0].Month != 12 {
+		t.Fatalf("first monthly column = %04d-%02d, want 2023-12", cols[0].Year, cols[0].Month)
+	}
+	if cols[1].Year != 2024 || cols[1].Month != 1 {
+		t.Fatalf("second monthly column = %04d-%02d, want 2024-01", cols[1].Year, cols[1].Month)
+	}
+}
+
+func TestParseMonthlyActiveRow(t *testing.T) {
+	idx := buildHeaderIndex(monthlyActiveHeaderRow)
+	months, err := inferMonthlyActiveColumns([][]string{monthlyActiveTitleRow, monthlyActiveHeaderRow}, 1, idx)
+	if err != nil {
+		t.Fatalf("unexpected infer error: %v", err)
+	}
+	row := make([]string, len(monthlyActiveHeaderRow))
+	row[idx["KODE OWNER"]] = "14514"
+	row[idx["NAMA OWNER"]] = "CuCumbah Laundry"
+	row[idx["NAMA BRAND/OUTLET"]] = "Cucumbah Laundry/Cucumbah Laundry"
+	row[idx["NAMA OUTLET"]] = "Cucumbah Laundry"
+	row[idx["KOTA"]] = "Kota Bekasi"
+	row[idx["WILAYAH"]] = "JABAR"
+	row[14] = "N-BC"
+	row[15] = "S-BC"
+	row[16] = "F-BC(6)"
+	parsed, errs := parseMonthlyActiveRow(row, idx, months)
+	if len(errs) != 0 {
+		t.Fatalf("expected no validation errors, got %v", errs)
+	}
+	if len(parsed.Activities) != 3 {
+		t.Fatalf("expected 3 activities, got %d", len(parsed.Activities))
+	}
+	if parsed.Activities[0].Category != "NEW" {
+		t.Fatalf("expected first category NEW, got %s", parsed.Activities[0].Category)
+	}
+	if parsed.Activities[2].TenorMonths == nil || *parsed.Activities[2].TenorMonths != 6 {
+		t.Fatalf("expected tenor 6, got %+v", parsed.Activities[2].TenorMonths)
+	}
+}
+
+func TestParseBonusMitraRow(t *testing.T) {
+	row := make([]string, 70)
+	row[1] = "REFERAL (Berlangganan)"
+	row[2] = "4181"
+	row[3] = "DIGNITY SINAGA"
+	row[4] = "DIGNITY LAUNDRY"
+	row[5] = "11384"
+	row[6] = "irwan derano parulian sinaga"
+	row[7] = "monang londry"
+	row[9] = "Referral"
+	row[10] = "Bisnis 1 Bulan"
+	row[11] = "Lidya"
+	row[13] = "45341"
+	row[14] = "45341"
+	row[15] = "Belum 1 Tahun"
+	row[18] = "Dicairkan Sebagian"
+	row[19] = "Share CMO"
+	row[65] = "50000"
+	row[66] = "0"
+	row[67] = "0"
+	row[68] = "12500"
+	row[69] = "62500"
+
+	parsed, errs := parseBonusMitraRow(row, buildHeaderIndex(bonusMitraHeaderRow))
+	if len(errs) != 0 {
+		t.Fatalf("expected no validation errors, got %v", errs)
+	}
+	if parsed.ReferredOwnerCode != "11384" {
+		t.Fatalf("unexpected referred owner code: %s", parsed.ReferredOwnerCode)
+	}
+	if parsed.TotalAmount != "62500" {
+		t.Fatalf("expected total 62500, got %s", parsed.TotalAmount)
+	}
+	if parsed.RenewalDate == "" {
+		t.Fatal("expected renewal date to be normalized")
 	}
 }

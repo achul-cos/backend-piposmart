@@ -8,6 +8,9 @@ import (
 	"net/http"
 	"time"
 
+	"backend_crm_piposmart/internal/activity"
+	"backend_crm_piposmart/internal/catalog"
+	"backend_crm_piposmart/internal/closing"
 	"backend_crm_piposmart/internal/customer"
 	"backend_crm_piposmart/internal/identity"
 	"backend_crm_piposmart/internal/importing"
@@ -17,6 +20,9 @@ import (
 	"backend_crm_piposmart/internal/platform/database"
 	"backend_crm_piposmart/internal/platform/httpserver"
 	"backend_crm_piposmart/internal/platform/jobqueue"
+	"backend_crm_piposmart/internal/subscription"
+	"backend_crm_piposmart/internal/target"
+	"backend_crm_piposmart/internal/wallet"
 )
 
 func RunAPI(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
@@ -81,10 +87,20 @@ func RunWorker(ctx context.Context, cfg config.Config, logger *slog.Logger) erro
 	importingRepository := importing.NewRepository(connection.SQL)
 	customerService := customer.NewService(customer.NewRepository(connection.SQL))
 	leadService := lead.NewService(lead.NewRepository(connection.SQL))
+	walletService := wallet.NewService(wallet.NewRepository(connection.SQL))
+	subscriptionService := subscription.NewService(subscription.NewRepository(connection.SQL))
+	catalogService := catalog.NewService(catalog.NewRepository(connection.SQL))
+	targetService := target.NewService(target.NewRepository(connection.SQL))
+	activityService := activity.NewService(activity.NewRepository(connection.SQL))
+	closingService := closing.NewService(closing.NewRepository(connection.SQL))
 	registry := jobqueue.Registry{
 		kpi.JobTypeRecompute:      kpi.RecomputeHandler(kpiRepository),
 		importing.JobTypeValidate: importing.ValidateHandler(importingRepository),
-		importing.JobTypeCommit:   importing.CommitHandler(importingRepository, customerService, leadService),
+		importing.JobTypeCommit: importing.CommitHandler(
+			importingRepository, customerService, leadService,
+			walletService, subscriptionService, catalogService, targetService,
+			activityService, closingService,
+		),
 	}
 
 	logger.Info("worker started",

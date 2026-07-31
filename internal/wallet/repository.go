@@ -445,10 +445,15 @@ func (r *Repository) lockWalletByOwner(ctx context.Context, tx *sql.Tx, ownerID 
 	return item, err
 }
 
+// findWalletByID has no GROUP BY, matching FindWalletByOwner/ListWallets below: the wtl subquery
+// inside walletSelect() already aggregates to at most one row per wallet_account_id before the
+// join, so the join itself can never fan out — an explicit GROUP BY here was redundant and, under
+// MySQL 8's default ONLY_FULL_GROUP_BY sql_mode, actively broke this query (it can't prove
+// wtl.ledger_balance, coming from an ungrouped-at-the-call-site derived table, is functionally
+// dependent on wa.id, even though it provably is).
 func (r *Repository) findWalletByID(ctx context.Context, q queryExecutor, id int64) (WalletAccount, error) {
 	item, err := scanWallet(q.QueryRowContext(ctx, walletSelect()+`
-		WHERE wa.id = ? AND wa.deleted_at IS NULL
-		GROUP BY wa.id`, id))
+		WHERE wa.id = ? AND wa.deleted_at IS NULL`, id))
 	if err == sql.ErrNoRows {
 		return WalletAccount{}, ErrNotFound
 	}
