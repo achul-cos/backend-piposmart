@@ -150,9 +150,9 @@ func TestNewCommissionRuleResponse(t *testing.T) {
 	r := partner.CommissionRule{
 		ID:            1,
 		PartnerTypeID: 2,
-		PackageID:     sql.NullInt64{Int64: 3, Valid: true},
-		PackageCode:   sql.NullString{String: "PRO", Valid: true},
-		PackageName:   sql.NullString{String: "Pro Package", Valid: true},
+		PlanID:        sql.NullInt64{Int64: 3, Valid: true},
+		PlanCode:      sql.NullString{String: "PRO_12_MONTHS", Valid: true},
+		PlanName:      sql.NullString{String: "Pro 12 Bulan", Valid: true},
 		Mode:          partner.CommissionModePercentage,
 		Value:         sql.NullString{String: "7.00", Valid: true},
 		EffectiveFrom: now,
@@ -161,8 +161,8 @@ func TestNewCommissionRuleResponse(t *testing.T) {
 		UpdatedAt:     now,
 	}
 	resp := partner.NewCommissionRuleResponse(r)
-	if resp.PackageID == nil || *resp.PackageID != 3 {
-		t.Errorf("expected package_id 3, got %v", resp.PackageID)
+	if resp.PlanID == nil || *resp.PlanID != 3 {
+		t.Errorf("expected plan_id 3, got %v", resp.PlanID)
 	}
 	if resp.Value == nil || *resp.Value != "7.00" {
 		t.Errorf("expected value 7.00, got %v", resp.Value)

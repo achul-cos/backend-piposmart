@@ -26,7 +26,13 @@ func (s *Service) GetOrder(ctx context.Context, actor identity.User, id int64) (
 	if err != nil {
 		return SubscriptionOrderResponse{}, err
 	}
-	return NewOrderResponse(item), nil
+	response := NewOrderResponse(item)
+	promotions, err := s.repo.ListOrderPromotions(ctx, id)
+	if err != nil {
+		return SubscriptionOrderResponse{}, err
+	}
+	response.Promotions = promotions
+	return response, nil
 }
 
 func (s *Service) CreateOrder(ctx context.Context, actor identity.User, ownerID int64, req CreateOrderRequest) (OrderCreateResponse, error) {
@@ -41,6 +47,11 @@ func (s *Service) CreateOrder(ctx context.Context, actor identity.User, ownerID 
 		return OrderCreateResponse{}, err
 	}
 	response := OrderCreateResponse{Order: NewOrderResponse(result.Order), Subscription: NewSubscriptionResponse(result.Subscription), Period: NewPeriodResponse(result.Period), Idempotent: result.Idempotent}
+	promotions, err := s.repo.ListOrderPromotions(ctx, result.Order.ID)
+	if err != nil {
+		return OrderCreateResponse{}, err
+	}
+	response.Order.Promotions = promotions
 	if result.Reconciliation != nil {
 		value := NewReconciliationResponse(*result.Reconciliation)
 		response.Reconciliation = &value
@@ -118,6 +129,11 @@ func validateCreateOrderRequest(req CreateOrderRequest) error {
 	}
 	if req.PromotionID != nil && *req.PromotionID < 1 {
 		return ErrInvalidRequest
+	}
+	for _, id := range req.PromotionIDs {
+		if id < 1 {
+			return ErrInvalidRequest
+		}
 	}
 	if _, err := parseMoneyToCents(req.DiscountAmount); err != nil {
 		return err

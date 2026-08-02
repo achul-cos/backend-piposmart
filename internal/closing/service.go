@@ -34,7 +34,13 @@ func (s *Service) GetClosing(ctx context.Context, actor identity.User, id int64)
 	if err != nil {
 		return ClosingResponse{}, err
 	}
-	return NewClosingResponse(item), nil
+	response := NewClosingResponse(item)
+	promotions, err := s.repo.ListClosingPromotions(ctx, id)
+	if err != nil {
+		return ClosingResponse{}, err
+	}
+	response.Promotions = promotions
+	return response, nil
 }
 
 func (s *Service) CreateClosing(ctx context.Context, actor identity.User, leadID int64, req CreateClosingRequest) (ClosingResponse, error) {
@@ -48,7 +54,13 @@ func (s *Service) CreateClosing(ctx context.Context, actor identity.User, leadID
 	if err != nil {
 		return ClosingResponse{}, err
 	}
-	return NewClosingResponse(item), nil
+	response := NewClosingResponse(item)
+	promotions, err := s.repo.ListClosingPromotions(ctx, item.ID)
+	if err != nil {
+		return ClosingResponse{}, err
+	}
+	response.Promotions = promotions
+	return response, nil
 }
 
 func (s *Service) ConfirmClosing(ctx context.Context, actor identity.User, id int64, req UpdateClosingStatusRequest) (ClosingResponse, error) {
@@ -124,6 +136,11 @@ func validateCreateClosingRequest(req CreateClosingRequest) error {
 	}
 	if req.PromotionID != nil && *req.PromotionID < 1 {
 		return ErrInvalidRequest
+	}
+	for _, id := range req.PromotionIDs {
+		if id < 1 {
+			return ErrInvalidRequest
+		}
 	}
 	if req.UniqueTransferCode != nil && (*req.UniqueTransferCode < 0 || *req.UniqueTransferCode > 999) {
 		return ErrInvalidRequest

@@ -3,6 +3,7 @@ package wallet
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -20,9 +21,10 @@ type queryExecutor interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
 }
 
+// Transaction is nil while the top-up is PENDING (no ledger entry exists yet — see AcceptTopup).
 type TopupResult struct {
 	Payment     WalletPayment
-	Transaction WalletTransaction
+	Transaction *WalletTransaction
 	Wallet      WalletAccount
 	Idempotent  bool
 }
@@ -148,6 +150,11 @@ func (r *Repository) ListTransactions(ctx context.Context, actor identity.User, 
 	return scanTransactions(rows, total)
 }
 
+// CreateTopup records a top-up REQUEST as PENDING — it does NOT touch balance or the ledger.
+// The owner is presumed to be about to transfer funds; the wallet is only credited once the
+// transfer is verified and the payment is explicitly ACCEPTED (AcceptTopup), matching the real
+// PENDING (menunggu transfer) -> ACCEPTED flow described for Sprint 15a. A PENDING payment
+// auto-EXPIREs after topupSessionDuration if left untouched (ExpireStaleTopups).
 func (r *Repository) CreateTopup(ctx context.Context, actor identity.User, ownerID int64, req CreateTopupRequest) (TopupResult, error) {
 	key, err := topupIdempotencyKey(req)
 	if err != nil {
@@ -162,7 +169,7 @@ func (r *Repository) CreateTopup(ctx context.Context, actor identity.User, owner
 	if existing, found, err := r.findPaymentByIdempotency(ctx, tx, key); err != nil {
 		return TopupResult{}, err
 	} else if found {
-		transaction, err := r.findTransactionByPaymentID(ctx, tx, existing.ID)
+		transaction, err := r.findOptionalTransactionByPaymentID(ctx, tx, existing.ID)
 		if err != nil {
 			return TopupResult{}, err
 		}
@@ -187,28 +194,21 @@ func (r *Repository) CreateTopup(ctx context.Context, actor identity.User, owner
 	if err != nil {
 		return TopupResult{}, err
 	}
-	balanceBeforeCents, err := parseMoneyToCents(wallet.Balance)
-	if err != nil {
-		return TopupResult{}, err
-	}
-	balanceAfterCents, err := applyBalance(balanceBeforeCents, amountCents, DirectionCredit)
-	if err != nil {
-		return TopupResult{}, err
-	}
-	paidAt := time.Now().UTC()
+	requestedAt := time.Now().UTC()
 	if req.PaidAt != nil {
-		paidAt = req.PaidAt.UTC()
+		requestedAt = req.PaidAt.UTC()
 	}
 	channel := normalizeCode(req.PaymentChannel)
 	if channel == "" {
-		channel = "MANUAL"
+		channel = "TF/BRI"
 	}
 	paymentCode := nextCode("PAY", time.Now().UTC(), ownerID)
+	sessionExpiresAt := time.Now().UTC().Add(topupSessionDuration)
 	paymentResult, err := tx.ExecContext(ctx, `
 		INSERT INTO wallet_payments
 			(code, owner_id, wallet_account_id, payment_type, payment_channel, external_reference,
-			 idempotency_key, amount, currency, status, paid_at, note, created_by_user_id)
-		VALUES (?, ?, ?, 'TOPUP', ?, ?, ?, ?, ?, 'PAID', ?, ?, ?)`,
+			 idempotency_key, amount, currency, status, paid_at, session_expires_at, note, created_by_user_id)
+		VALUES (?, ?, ?, 'TOPUP', ?, ?, ?, ?, ?, 'PENDING', ?, ?, ?, ?)`,
 		paymentCode,
 		ownerID,
 		wallet.ID,
@@ -217,7 +217,8 @@ func (r *Repository) CreateTopup(ctx context.Context, actor identity.User, owner
 		key,
 		formatCents(amountCents),
 		wallet.Currency,
-		paidAt,
+		requestedAt,
+		sessionExpiresAt,
 		nullableString(req.Note),
 		actor.ID,
 	)
@@ -228,20 +229,66 @@ func (r *Repository) CreateTopup(ctx context.Context, actor identity.User, owner
 	if err != nil {
 		return TopupResult{}, err
 	}
+	if err := tx.Commit(); err != nil {
+		return TopupResult{}, err
+	}
+	payment, err := r.findPaymentByIDRaw(ctx, r.db, paymentID)
+	if err != nil {
+		return TopupResult{}, err
+	}
+	return TopupResult{Payment: payment, Wallet: wallet}, nil
+}
+
+// AcceptTopup credits the wallet for a PENDING top-up and marks it ACCEPTED. The credited amount
+// is always payment.Amount (the round number originally requested) — a manual-transfer unique
+// code (e.g. request Rp 34.000, transfer Rp 34.123) is recorded via uniqueCode but never counted
+// as revenue. transferDateOverride lets admin record the transfer date from the payment proof
+// when it differs from paid_at (the system-recorded timestamp).
+func (r *Repository) AcceptTopup(ctx context.Context, actor identity.User, paymentID int64, uniqueCode string, transferDateOverride *time.Time) (TopupResult, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return TopupResult{}, err
+	}
+	defer tx.Rollback()
+
+	payment, err := r.findPaymentByIDForUpdate(ctx, tx, paymentID)
+	if err != nil {
+		return TopupResult{}, err
+	}
+	if payment.Status != PaymentStatusPending {
+		return TopupResult{}, ErrTopupNotPending
+	}
+	wallet, err := r.findWalletByID(ctx, tx, payment.WalletAccountID.Int64)
+	if err != nil {
+		return TopupResult{}, err
+	}
+	amountCents, err := parsePositiveMoneyToCents(payment.Amount)
+	if err != nil {
+		return TopupResult{}, err
+	}
+	balanceBeforeCents, err := parseMoneyToCents(wallet.Balance)
+	if err != nil {
+		return TopupResult{}, err
+	}
+	balanceAfterCents, err := applyBalance(balanceBeforeCents, amountCents, DirectionCredit)
+	if err != nil {
+		return TopupResult{}, err
+	}
+	acceptedAt := time.Now().UTC()
 	transactionID, err := r.insertLedgerTransaction(ctx, tx, ledgerInput{
 		Wallet:            wallet,
-		PaymentID:         sql.NullInt64{Int64: paymentID, Valid: true},
+		PaymentID:         sql.NullInt64{Int64: payment.ID, Valid: true},
 		TransactionType:   TransactionTypeCredit,
 		Direction:         DirectionCredit,
 		AmountCents:       amountCents,
 		BalanceBefore:     balanceBeforeCents,
 		BalanceAfter:      balanceAfterCents,
 		SourceType:        SourceTopup,
-		SourceReference:   paymentCode,
-		ExternalReference: req.ExternalReference,
-		IdempotencyKey:    key,
-		OccurredAt:        paidAt,
-		Note:              req.Note,
+		SourceReference:   payment.Code,
+		ExternalReference: payment.ExternalReference.String,
+		IdempotencyKey:    payment.IdempotencyKey,
+		OccurredAt:        acceptedAt,
+		Note:              payment.Note.String,
 		ActorID:           actor.ID,
 	})
 	if err != nil {
@@ -250,10 +297,18 @@ func (r *Repository) CreateTopup(ctx context.Context, actor identity.User, owner
 	if err := r.updateWalletBalance(ctx, tx, wallet.ID, balanceAfterCents); err != nil {
 		return TopupResult{}, err
 	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE wallet_payments
+		SET status = 'ACCEPTED', paid_at = ?, transfer_date_override = ?, unique_code = ?, updated_at = NOW()
+		WHERE id = ?`,
+		acceptedAt, nullableTime(transferDateOverride), nullableString(uniqueCode), payment.ID,
+	); err != nil {
+		return TopupResult{}, err
+	}
 	if err := tx.Commit(); err != nil {
 		return TopupResult{}, err
 	}
-	payment, err := r.findPaymentByIDRaw(ctx, r.db, paymentID)
+	updatedPayment, err := r.findPaymentByIDRaw(ctx, r.db, payment.ID)
 	if err != nil {
 		return TopupResult{}, err
 	}
@@ -265,7 +320,62 @@ func (r *Repository) CreateTopup(ctx context.Context, actor identity.User, owner
 	if err != nil {
 		return TopupResult{}, err
 	}
-	return TopupResult{Payment: payment, Transaction: transaction, Wallet: updatedWallet}, nil
+	return TopupResult{Payment: updatedPayment, Transaction: &transaction, Wallet: updatedWallet}, nil
+}
+
+// RejectTopup marks a PENDING top-up as REJECTED. No balance/ledger effect — PENDING never had
+// one to undo.
+func (r *Repository) RejectTopup(ctx context.Context, actor identity.User, paymentID int64, note string) (WalletPayment, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return WalletPayment{}, err
+	}
+	defer tx.Rollback()
+
+	payment, err := r.findPaymentByIDForUpdate(ctx, tx, paymentID)
+	if err != nil {
+		return WalletPayment{}, err
+	}
+	if payment.Status != PaymentStatusPending {
+		return WalletPayment{}, ErrTopupNotPending
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE wallet_payments SET status = 'REJECTED', note = ?, updated_at = NOW() WHERE id = ?`,
+		nullableString(note), payment.ID,
+	); err != nil {
+		return WalletPayment{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return WalletPayment{}, err
+	}
+	return r.findPaymentByIDRaw(ctx, r.db, payment.ID)
+}
+
+// SetTransferDateOverride lets admin correct a top-up's effective transfer date from the payment
+// proof/receipt — some owners transfer first, then top up in the app afterward attaching
+// yesterday's receipt, while the system recorded paid_at in real time at top-up.
+func (r *Repository) SetTransferDateOverride(ctx context.Context, paymentID int64, transferDate time.Time) (WalletPayment, error) {
+	if _, err := r.db.ExecContext(ctx, `
+		UPDATE wallet_payments SET transfer_date_override = ?, updated_at = NOW() WHERE id = ?`,
+		transferDate, paymentID,
+	); err != nil {
+		return WalletPayment{}, err
+	}
+	return r.findPaymentByIDRaw(ctx, r.db, paymentID)
+}
+
+// ExpireStaleTopups moves every PENDING top-up whose session_expires_at has passed to EXPIRED.
+// Called from the worker tick (no dedicated job type needed — this is a cheap, idempotent bulk
+// UPDATE, not a per-row job).
+func (r *Repository) ExpireStaleTopups(ctx context.Context) (int64, error) {
+	result, err := r.db.ExecContext(ctx, `
+		UPDATE wallet_payments
+		SET status = 'EXPIRED', updated_at = NOW()
+		WHERE status = 'PENDING' AND session_expires_at IS NOT NULL AND session_expires_at < NOW()`)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 func (r *Repository) CreateDebit(ctx context.Context, actor identity.User, ownerID int64, req CreateWalletTransactionRequest) (WalletTransaction, error) {
@@ -504,6 +614,33 @@ func (r *Repository) findTransactionByPaymentID(ctx context.Context, q queryExec
 	return item, err
 }
 
+// findOptionalTransactionByPaymentID is like findTransactionByPaymentID but returns (nil, nil)
+// instead of ErrNotFound — a PENDING top-up (re-hit via idempotency key before ever being
+// ACCEPTED) legitimately has no ledger transaction yet.
+func (r *Repository) findOptionalTransactionByPaymentID(ctx context.Context, q queryExecutor, paymentID int64) (*WalletTransaction, error) {
+	item, err := r.findTransactionByPaymentID(ctx, q, paymentID)
+	if errors.Is(err, ErrNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &item, nil
+}
+
+// findPaymentByIDForUpdate locks a wallet_payments row within tx — used by AcceptTopup/RejectTopup
+// so two concurrent decisions on the same PENDING top-up can't both succeed.
+func (r *Repository) findPaymentByIDForUpdate(ctx context.Context, tx *sql.Tx, id int64) (WalletPayment, error) {
+	item, err := scanPayment(tx.QueryRowContext(ctx, paymentSelect()+`
+		WHERE wp.id = ? AND wp.deleted_at IS NULL
+		LIMIT 1
+		FOR UPDATE`, id))
+	if err == sql.ErrNoRows {
+		return WalletPayment{}, ErrNotFound
+	}
+	return item, err
+}
+
 func (r *Repository) findTransactionByIdempotency(ctx context.Context, q queryExecutor, key string) (WalletTransaction, bool, error) {
 	item, err := scanTransaction(q.QueryRowContext(ctx, transactionSelect()+`
 		WHERE wt.idempotency_key = ? AND wt.deleted_at IS NULL
@@ -547,7 +684,8 @@ func paymentSelect() string {
 	return `
 		SELECT wp.id, wp.code, wp.owner_id, o.code, o.name, wp.wallet_account_id,
 			wp.payment_type, wp.payment_channel, wp.external_reference, wp.idempotency_key,
-			CAST(wp.amount AS CHAR), wp.currency, wp.status, wp.paid_at, wp.note,
+			CAST(wp.amount AS CHAR), wp.currency, wp.status, wp.paid_at,
+			wp.session_expires_at, wp.transfer_date_override, wp.unique_code, wp.note,
 			wp.created_by_user_id, u.name, wp.created_at, wp.updated_at
 		FROM wallet_payments wp
 		LEFT JOIN owners o ON o.id = wp.owner_id AND o.deleted_at IS NULL
@@ -610,6 +748,10 @@ func paymentWhere(actor identity.User, params ListParams) (string, []any) {
 	if params.Channel != "" {
 		where = append(where, "wp.payment_channel = ?")
 		args = append(args, params.Channel)
+	}
+	if params.Status != "" {
+		where = append(where, "wp.status = ?")
+		args = append(args, params.Status)
 	}
 	if params.PaidFrom != nil {
 		where = append(where, "wp.paid_at >= ?")
@@ -753,7 +895,7 @@ func scanWallet(row scanner) (WalletAccount, error) {
 
 func scanPayment(row scanner) (WalletPayment, error) {
 	var item WalletPayment
-	err := row.Scan(&item.ID, &item.Code, &item.OwnerID, &item.OwnerCode, &item.OwnerName, &item.WalletAccountID, &item.PaymentType, &item.PaymentChannel, &item.ExternalReference, &item.IdempotencyKey, &item.Amount, &item.Currency, &item.Status, &item.PaidAt, &item.Note, &item.CreatedByUserID, &item.CreatedByName, &item.CreatedAt, &item.UpdatedAt)
+	err := row.Scan(&item.ID, &item.Code, &item.OwnerID, &item.OwnerCode, &item.OwnerName, &item.WalletAccountID, &item.PaymentType, &item.PaymentChannel, &item.ExternalReference, &item.IdempotencyKey, &item.Amount, &item.Currency, &item.Status, &item.PaidAt, &item.SessionExpiresAt, &item.TransferDateOverride, &item.UniqueCode, &item.Note, &item.CreatedByUserID, &item.CreatedByName, &item.CreatedAt, &item.UpdatedAt)
 	return item, err
 }
 
@@ -807,6 +949,13 @@ func nullableString(value string) sql.NullString {
 		return sql.NullString{}
 	}
 	return sql.NullString{String: value, Valid: true}
+}
+
+func nullableTime(value *time.Time) sql.NullTime {
+	if value == nil {
+		return sql.NullTime{}
+	}
+	return sql.NullTime{Time: *value, Valid: true}
 }
 
 func orderBy(sort string, allowed map[string]string, fallback string) (string, error) {

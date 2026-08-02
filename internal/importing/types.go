@@ -214,6 +214,20 @@ type ImportRowResponse struct {
 	CommitError      *string         `json:"commit_error,omitempty"`
 }
 
+// RelinkRowRequest supplies the entity ID(s) an UNMATCHED row's own data couldn't resolve. At
+// least one must be set; any left nil keep whatever the row already has (which may itself be nil).
+type RelinkRowRequest struct {
+	OwnerID  *int64 `json:"owner_id,omitempty"`
+	OutletID *int64 `json:"outlet_id,omitempty"`
+	LeadID   *int64 `json:"lead_id,omitempty"`
+}
+
+type BatchSummaryResponse struct {
+	Total          int64            `json:"total"`
+	CountsByStatus map[string]int64 `json:"counts_by_status"`
+	NeedsAttention int64            `json:"needs_attention"`
+}
+
 func NewImportRowResponse(r ImportRow) ImportRowResponse {
 	resp := ImportRowResponse{
 		ID:         r.ID,

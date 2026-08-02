@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"time"
 
-	"backend_crm_piposmart/internal/analytics"
 	"backend_crm_piposmart/internal/activity"
+	"backend_crm_piposmart/internal/analytics"
 	"backend_crm_piposmart/internal/catalog"
 	"backend_crm_piposmart/internal/closing"
 	"backend_crm_piposmart/internal/customer"
@@ -22,6 +22,7 @@ import (
 	"backend_crm_piposmart/internal/platform/jobqueue"
 	"backend_crm_piposmart/internal/subscription"
 	"backend_crm_piposmart/internal/target"
+	"backend_crm_piposmart/internal/transfer"
 	"backend_crm_piposmart/internal/wallet"
 
 	"database/sql"
@@ -143,6 +144,12 @@ func NewRouter(cfg config.Config, logger *slog.Logger, connection Connection) *g
 		walletRoutes := api.Group("")
 		walletRoutes.Use(identity.AuthMiddleware(identityService))
 		wallet.NewHandler(walletService).RegisterRoutes(walletRoutes)
+
+		transferRepository := transfer.NewRepository(connection.SQLDB())
+		transferService := transfer.NewService(transferRepository, walletService)
+		transferRoutes := api.Group("")
+		transferRoutes.Use(identity.AuthMiddleware(identityService))
+		transfer.NewHandler(transferService).RegisterRoutes(transferRoutes)
 
 		subscriptionRepository := subscription.NewRepository(connection.SQLDB())
 		subscriptionService := subscription.NewService(subscriptionRepository)

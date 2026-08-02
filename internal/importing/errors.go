@@ -21,6 +21,8 @@ var (
 	ErrSheetNotFound           = errors.New("importing: declared sheet_name was not found in the workbook")
 	ErrTargetSalesUserRequired = errors.New("importing: this profile requires an explicit target_sales_user_id (the sales rep is only encoded in the sheet name)")
 	ErrInvalidBatchStatus      = errors.New("importing: batch is not in a state that allows this action")
+	ErrRowNotUnmatched         = errors.New("importing: row is not in UNMATCHED status")
+	ErrRelinkEntityRequired    = errors.New("importing: relink requires at least one of owner_id/outlet_id/lead_id")
 )
 
 type BatchStatusActionError struct {

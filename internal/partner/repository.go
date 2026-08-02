@@ -482,6 +482,22 @@ func (r *Repository) ListPartnerReferrals(ctx context.Context, partnerID int64) 
 	return list, nil
 }
 
+// HasReferralInMonth reports whether partnerID has at least one partner_referrals row whose
+// referral_date falls within the given calendar month — the basis for the monthly partner
+// activity status (BELUM_MEMBERIKAN_REFERAL / TELAH_MEMBERIKAN_REFERAL).
+func (r *Repository) HasReferralInMonth(ctx context.Context, partnerID int64, year int, month int) (bool, error) {
+	var count int
+	err := r.db.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM partner_referrals
+		WHERE partner_id = ? AND YEAR(referral_date) = ? AND MONTH(referral_date) = ?`,
+		partnerID, year, month).Scan(&count)
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
 // GetReferralByPartnerLead returns a referral for a given partner-lead pair, if exists.
 func (r *Repository) GetReferralByPartnerLead(ctx context.Context, partnerID int64, leadID int64) (*PartnerReferral, error) {
 	query := `
@@ -507,7 +523,7 @@ type commissionSyncCandidate struct {
 	ClosingID       int64
 	FinalAmount     string
 	Currency        string
-	PackageID       sql.NullInt64
+	PlanID          sql.NullInt64
 	ConfirmedAt     time.Time
 	PartnerTypeID   int64
 	CommissionMode  string // legacy partner_types fallback, used when no commission_rules row matches
@@ -521,7 +537,7 @@ type commissionSyncCandidate struct {
 // back to these columns.
 func (r *Repository) findSyncableClosings(ctx context.Context, tx *sql.Tx, partnerID int64) ([]commissionSyncCandidate, error) {
 	rows, err := tx.QueryContext(ctx, `
-		SELECT pr.id, sc.id, CAST(sc.final_amount AS CHAR), sc.currency, sc.package_id, sc.confirmed_at,
+		SELECT pr.id, sc.id, CAST(sc.final_amount AS CHAR), sc.currency, sc.plan_id, sc.confirmed_at,
 		       p.partner_type_id, pt.commission_mode, CAST(pt.commission_value AS CHAR)
 		FROM partner_referrals pr
 		JOIN sales_closings sc ON sc.lead_id = pr.lead_id AND sc.status = 'CONFIRMED' AND sc.deleted_at IS NULL
@@ -536,7 +552,7 @@ func (r *Repository) findSyncableClosings(ctx context.Context, tx *sql.Tx, partn
 	var list []commissionSyncCandidate
 	for rows.Next() {
 		var c commissionSyncCandidate
-		if err := rows.Scan(&c.ReferralID, &c.ClosingID, &c.FinalAmount, &c.Currency, &c.PackageID, &c.ConfirmedAt,
+		if err := rows.Scan(&c.ReferralID, &c.ClosingID, &c.FinalAmount, &c.Currency, &c.PlanID, &c.ConfirmedAt,
 			&c.PartnerTypeID, &c.CommissionMode, &c.CommissionValue); err != nil {
 			return nil, err
 		}
@@ -557,10 +573,10 @@ type resolvedCommissionRule struct {
 }
 
 // resolveCommissionRule finds the most specific active commission_rules row covering
-// partnerTypeID (+ optional packageID) on asOf's date: a package-specific rule beats a
+// partnerTypeID (+ optional planID) on asOf's date: a plan-specific rule beats a
 // type-wide rule, ties broken by most recent effective_from. Returns (nil, nil) if no rule
 // matches — the caller falls back to the legacy partner_types.commission_mode/value.
-func (r *Repository) resolveCommissionRule(ctx context.Context, tx *sql.Tx, partnerTypeID int64, packageID sql.NullInt64, asOf time.Time) (*resolvedCommissionRule, error) {
+func (r *Repository) resolveCommissionRule(ctx context.Context, tx *sql.Tx, partnerTypeID int64, planID sql.NullInt64, asOf time.Time) (*resolvedCommissionRule, error) {
 	asOfDate := asOf.Format("2006-01-02")
 	row := tx.QueryRowContext(ctx, `
 		SELECT id, mode, value
@@ -569,9 +585,9 @@ func (r *Repository) resolveCommissionRule(ctx context.Context, tx *sql.Tx, part
 		  AND active = TRUE
 		  AND effective_from <= ?
 		  AND (effective_to IS NULL OR effective_to >= ?)
-		  AND (package_id = ? OR package_id IS NULL)
-		ORDER BY (package_id IS NOT NULL) DESC, effective_from DESC, id DESC
-		LIMIT 1`, partnerTypeID, asOfDate, asOfDate, packageID)
+		  AND (plan_id = ? OR plan_id IS NULL)
+		ORDER BY (plan_id IS NOT NULL) DESC, effective_from DESC, id DESC
+		LIMIT 1`, partnerTypeID, asOfDate, asOfDate, planID)
 	var rule resolvedCommissionRule
 	if err := row.Scan(&rule.ID, &rule.Mode, &rule.Value); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -651,7 +667,7 @@ func (r *Repository) SyncCommissions(ctx context.Context, partnerID int64) ([]Pa
 		var ruleID sql.NullInt64
 		var tierOrdinal sql.NullInt64
 
-		rule, err := r.resolveCommissionRule(ctx, tx, cand.PartnerTypeID, cand.PackageID, cand.ConfirmedAt)
+		rule, err := r.resolveCommissionRule(ctx, tx, cand.PartnerTypeID, cand.PlanID, cand.ConfirmedAt)
 		if err != nil {
 			return nil, err
 		}
@@ -911,13 +927,13 @@ func (r *Repository) CancelCommission(ctx context.Context, id int64, note string
 /* ---------- CommissionRule ---------- */
 
 const commissionRuleSelectColumns = `
-		cr.id, cr.partner_type_id, cr.package_id, sp.code, sp.name,
+		cr.id, cr.partner_type_id, cr.plan_id, spl.code, spl.name,
 		cr.mode, cr.value, cr.effective_from, cr.effective_to, cr.active,
 		cr.created_by_user_id, cu.name, cr.created_at, cr.updated_at`
 
 const commissionRuleFromJoin = `
 		FROM commission_rules cr
-		LEFT JOIN subscription_packages sp ON sp.id = cr.package_id
+		LEFT JOIN subscription_plans spl ON spl.id = cr.plan_id
 		LEFT JOIN users cu ON cu.id = cr.created_by_user_id`
 
 func scanCommissionRule(scanner interface {
@@ -925,7 +941,7 @@ func scanCommissionRule(scanner interface {
 }) (CommissionRule, error) {
 	var r CommissionRule
 	err := scanner.Scan(
-		&r.ID, &r.PartnerTypeID, &r.PackageID, &r.PackageCode, &r.PackageName,
+		&r.ID, &r.PartnerTypeID, &r.PlanID, &r.PlanCode, &r.PlanName,
 		&r.Mode, &r.Value, &r.EffectiveFrom, &r.EffectiveTo, &r.Active,
 		&r.CreatedByUserID, &r.CreatedByName, &r.CreatedAt, &r.UpdatedAt)
 	return r, err
@@ -942,9 +958,9 @@ func (r *Repository) CreateCommissionRule(ctx context.Context, rule CommissionRu
 
 	result, err := tx.ExecContext(ctx, `
 		INSERT INTO commission_rules (
-			partner_type_id, package_id, mode, value, effective_from, effective_to, active, created_by_user_id, created_at, updated_at)
+			partner_type_id, plan_id, mode, value, effective_from, effective_to, active, created_by_user_id, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, TRUE, ?, NOW(), NOW())`,
-		rule.PartnerTypeID, rule.PackageID, rule.Mode, rule.Value, rule.EffectiveFrom, rule.EffectiveTo, rule.CreatedByUserID)
+		rule.PartnerTypeID, rule.PlanID, rule.Mode, rule.Value, rule.EffectiveFrom, rule.EffectiveTo, rule.CreatedByUserID)
 	if err != nil {
 		return 0, fmt.Errorf("database partner: %w", err)
 	}
@@ -1005,12 +1021,12 @@ func (r *Repository) GetCommissionRuleByID(ctx context.Context, id int64) (*Comm
 	return &rule, nil
 }
 
-func (r *Repository) ListCommissionRules(ctx context.Context, partnerTypeID int64, packageID *int64, activeOnly bool) ([]CommissionRule, error) {
+func (r *Repository) ListCommissionRules(ctx context.Context, partnerTypeID int64, planID *int64, activeOnly bool) ([]CommissionRule, error) {
 	args := []any{partnerTypeID}
 	where := "WHERE cr.partner_type_id = ?"
-	if packageID != nil {
-		where += " AND cr.package_id = ?"
-		args = append(args, *packageID)
+	if planID != nil {
+		where += " AND cr.plan_id = ?"
+		args = append(args, *planID)
 	}
 	if activeOnly {
 		where += " AND cr.active = TRUE"

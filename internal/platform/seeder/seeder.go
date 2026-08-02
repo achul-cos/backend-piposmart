@@ -293,6 +293,9 @@ func seedMaster(ctx context.Context, tx *sql.Tx) error {
 	if err := seedPromotions(ctx, tx); err != nil {
 		return err
 	}
+	if err := seedCommissionRulesDemo(ctx, tx); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -417,17 +420,18 @@ func seedRemarkReasons(ctx context.Context, tx *sql.Tx) error {
 	return nil
 }
 
+// Sprint 15a §5: 3 partner types only (down from the earlier 6 demo types) — REFERRAL,
+// PARTNERSHIP, STRATEGIC, matching data_admin/Ringkasan_Komisi_Piposmart.pdf. All FIXED: the
+// company applies a flat FIXED commission model generally, and the real per-plan nominal comes
+// from commission_rules (seedCommissionRulesDemo), not from these flat fallback values.
 func seedPartnerTypes(ctx context.Context, tx *sql.Tx) error {
 	rows := []struct {
 		code, name, mode, description string
 		value                         string
 	}{
-		{"SUPPLIER", "Supplier Hardware & POS", "PERCENTAGE", "Partner penyedia perangkat POS dan hardware kasir.", "5.00"},
-		{"DISTRIBUTOR", "Distributor Software", "PERCENTAGE", "Distributor lisensi aplikasi Piposmart.", "10.00"},
-		{"AGENT", "Agent Regional", "FIXED", "Agen pemasaran tingkat daerah/regional.", "150000.00"},
-		{"REFERRAL_PARTNER", "Referral Community", "PERCENTAGE", "Mitra komunitas perujuk calon pelanggan.", "3.00"},
-		{"REFERRAL_REGULAR", "Mitra Regular", "FIXED", "Mitra dengan komisi nominal tetap.", "0.00"},
-		{"REFERRAL_STRATEGIC", "Mitra Strategic", "PERCENTAGE", "Mitra strategis dengan komisi persentase.", "0.00"},
+		{"REFERRAL", "Referral", "FIXED", "Mitra perujuk calon pelanggan (referral).", "0.00"},
+		{"PARTNERSHIP", "Partnership", "FIXED", "Mitra kerja sama (partnership).", "0.00"},
+		{"STRATEGIC", "Strategic", "FIXED", "Mitra strategis.", "0.00"},
 	}
 	for _, row := range rows {
 		if _, err := tx.ExecContext(ctx, `
@@ -442,6 +446,80 @@ func seedPartnerTypes(ctx context.Context, tx *sql.Tx) error {
 			row.code, row.name, row.mode, row.value, row.description,
 		); err != nil {
 			return fmt.Errorf("seed partner type %s: %w", row.code, err)
+		}
+	}
+	// Deactivate the 6 legacy demo types (SUPPLIER/DISTRIBUTOR/AGENT/REFERRAL_PARTNER/
+	// REFERRAL_REGULAR/REFERRAL_STRATEGIC) rather than delete them — a prior seed run's
+	// partners may still reference them via partner_type_id FK, and deleting would break
+	// re-seeding on an existing dev DB. Deactivating keeps them out of active-type listings
+	// while leaving history intact.
+	legacyCodes := []string{"SUPPLIER", "DISTRIBUTOR", "AGENT", "REFERRAL_PARTNER", "REFERRAL_REGULAR", "REFERRAL_STRATEGIC"}
+	for _, code := range legacyCodes {
+		if _, err := tx.ExecContext(ctx, `UPDATE partner_types SET active = FALSE WHERE code = ?`, code); err != nil {
+			return fmt.Errorf("deactivate legacy partner type %s: %w", code, err)
+		}
+	}
+	return nil
+}
+
+// seedCommissionRulesDemo seeds the exact FIXED commission_rules matrix from
+// data_admin/Ringkasan_Komisi_Piposmart.pdf: 7 plans x 3 partner types = 21 rules. Per the mitra
+// MOU, these amounts hold indefinitely until explicitly superseded — update-by-versioning
+// (new EffectiveFrom + close out the old rule's EffectiveTo), never an in-place nominal edit,
+// so a partner's already-earned commissions (snapshotted onto partner_commissions at calc time)
+// are never retroactively changed by a later rate change.
+func seedCommissionRulesDemo(ctx context.Context, tx *sql.Tx) error {
+	matrix := []struct {
+		planCode                         string
+		referral, partnership, strategic string
+	}{
+		{"BASIC_12_MONTHS", "120000.00", "150000.00", "240000.00"},
+		{"BUSINESS_12_MONTHS", "180000.00", "210000.00", "320000.00"},
+		{"BUSINESS_18_MONTHS", "270000.00", "315000.00", "480000.00"},
+		{"BUSINESS_24_MONTHS", "360000.00", "420000.00", "640000.00"},
+		{"PRO_12_MONTHS", "220000.00", "250000.00", "400000.00"},
+		{"PRO_18_MONTHS", "330000.00", "375000.00", "600000.00"},
+		{"PRO_24_MONTHS", "440000.00", "500000.00", "800000.00"},
+	}
+	for _, row := range matrix {
+		planID, err := lookupID(ctx, tx, "subscription_plans", "code", row.planCode)
+		if err != nil {
+			return fmt.Errorf("seed commission rule lookup plan %s: %w", row.planCode, err)
+		}
+		for typeCode, value := range map[string]string{
+			"REFERRAL":    row.referral,
+			"PARTNERSHIP": row.partnership,
+			"STRATEGIC":   row.strategic,
+		} {
+			partnerTypeID, err := lookupID(ctx, tx, "partner_types", "code", typeCode)
+			if err != nil {
+				return fmt.Errorf("seed commission rule lookup partner type %s: %w", typeCode, err)
+			}
+			var existingID int64
+			err = tx.QueryRowContext(ctx, `
+				SELECT id FROM commission_rules
+				WHERE partner_type_id = ? AND plan_id = ? AND effective_from = '2026-07-01'`,
+				partnerTypeID, planID).Scan(&existingID)
+			switch {
+			case errors.Is(err, sql.ErrNoRows):
+				if _, err := tx.ExecContext(ctx, `
+					INSERT INTO commission_rules
+						(partner_type_id, plan_id, mode, value, effective_from, active)
+					VALUES (?, ?, 'FIXED', ?, '2026-07-01', TRUE)`,
+					partnerTypeID, planID, value,
+				); err != nil {
+					return fmt.Errorf("seed commission rule %s/%s: %w", typeCode, row.planCode, err)
+				}
+			case err != nil:
+				return fmt.Errorf("seed commission rule lookup existing %s/%s: %w", typeCode, row.planCode, err)
+			default:
+				if _, err := tx.ExecContext(ctx, `
+					UPDATE commission_rules SET mode = 'FIXED', value = ?, active = TRUE
+					WHERE id = ?`, value, existingID,
+				); err != nil {
+					return fmt.Errorf("seed commission rule update %s/%s: %w", typeCode, row.planCode, err)
+				}
+			}
 		}
 	}
 	return nil
@@ -485,6 +563,19 @@ func seedPackagesAndPlans(ctx context.Context, tx *sql.Tx) error {
 		{"PRO", "Pro", "Paket lanjutan untuk operasional laundry yang lebih kompleks.", 3, 199000},
 	}
 	tenures := []int{1, 9, 12, 18, 24}
+	// pdfPrices overrides the formula price for the 7 plans the partner commission summary
+	// (data_admin/Ringkasan_Komisi_Piposmart.pdf) actually prices — commission is a FIXED amount
+	// tied to these exact plan prices per the mitra MOU, so the plan price must match the PDF
+	// exactly for these tenures. Tenures the PDF doesn't cover (1, 9 months) keep the old formula.
+	pdfPrices := map[string]int{
+		"BASIC_12_MONTHS":    858000,
+		"BUSINESS_12_MONTHS": 1298000,
+		"BUSINESS_18_MONTHS": 1999000,
+		"BUSINESS_24_MONTHS": 2596000,
+		"PRO_12_MONTHS":      1688000,
+		"PRO_18_MONTHS":      2688000,
+		"PRO_24_MONTHS":      3368000,
+	}
 	for _, pkg := range packages {
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO subscription_packages (code, name, level_order, description, active)
@@ -510,6 +601,9 @@ func seedPackagesAndPlans(ctx context.Context, tx *sql.Tx) error {
 				price = price * 95 / 100
 			}
 			code := fmt.Sprintf("%s_%02d_MONTHS", pkg.code, tenure)
+			if pdfPrice, ok := pdfPrices[code]; ok {
+				price = pdfPrice
+			}
 			if _, err := tx.ExecContext(ctx, `
 				INSERT INTO subscription_plans
 					(package_id, code, name, tenure_months, duration_days, price, currency, effective_from, active)
@@ -569,6 +663,18 @@ func seedPromotions(ctx context.Context, tx *sql.Tx) error {
 			benefitType:        "DEVICE",
 			quantity:           sql.NullInt64{Int64: 1, Valid: true},
 			benefitDescription: "POS Android + 20 kertas thermal.",
+		},
+		// Sprint 15a §4b — second promotion eligible for PRO_12_MONTHS, so a demo closing/order can
+		// stack it together with PRO_12_ANDROID_POS_BUNDLE and exercise the new multi-promotion path
+		// (sales_closing_promotions / subscription_order_promotions), not just single-promotion.
+		{
+			code: "FREE_ONBOARDING_PRO_12", name: "Pro 12 Bulan Sesi Onboarding Gratis", promoType: "FREE_SERVICE",
+			chargeType: "FREE", additionalCharge: "0.00", priority: 20,
+			description:        "Promo gratis sesi onboarding untuk Pro 12 bulan, bisa digabung dengan promo lain.",
+			planCodes:          []string{"PRO_12_MONTHS"},
+			benefitType:        "SERVICE",
+			quantity:           sql.NullInt64{Int64: 1, Valid: true},
+			benefitDescription: "1x sesi onboarding aplikasi bersama tim support.",
 		},
 	}
 
@@ -710,6 +816,9 @@ func seedDemoMinimal(ctx context.Context, tx *sql.Tx, options Options) error {
 		fake.BuildClosing(2, "BUSINESS_12_MONTHS", "FREE_1_MONTH_BUSINESS_12", "CONFIRMED"),
 		fake.BuildClosing(3, "PRO_12_MONTHS", "PRO_12_ANDROID_POS_BUNDLE", "PENDING_RECONCILIATION"),
 	}
+	// Sprint 15a §4b — stack a second promotion on the Pro 12 closing to demo multi-promotion
+	// (sales_closing_promotions); the linked subscription order below inherits both automatically.
+	closingScenarios[2].PromotionCodes = []string{"PRO_12_ANDROID_POS_BUNDLE", "FREE_ONBOARDING_PRO_12"}
 	closingIDs := []int64{}
 	for index, closing := range closingScenarios {
 		if index >= len(leadIDs) {
@@ -742,6 +851,50 @@ func seedDemoMinimal(ctx context.Context, tx *sql.Tx, options Options) error {
 		if _, err := fake.CreateWalletTopup(ctx, tx, ownerIDs[1], unusedTopup); err != nil {
 			return err
 		}
+
+		// Sprint 15a §2/§3 — Top Up lifecycle variety (PENDING/REJECTED) and the Transfer they can
+		// be matched against, so the demo dataset actually exercises the new lifecycle/Transfer UI
+		// instead of only ever showing the terminal ACCEPTED state.
+		pendingTopup := fake.BuildWalletTopup(3, "750000.00")
+		pendingTopup.Status = "PENDING"
+		pendingTopup.ExternalReference = "DEMO-TOPUP-PENDING-OWNER-001"
+		pendingTopup.IdempotencyKey = "demo:topup:pending-owner-001"
+		pendingTopup.Note = "Demo Sprint 15a: top-up menunggu verifikasi transfer"
+		pendingPaymentID, err := fake.CreateWalletTopup(ctx, tx, ownerIDs[0], pendingTopup)
+		if err != nil {
+			return err
+		}
+		suggestedTransfer := fake.BuildTransfer(3, "750000.00", "SUGGESTED")
+		suggestedTransfer.TransferDate = pendingTopup.PaidAt
+		suggestedTransfer.Note = "Demo Sprint 15a: transfer disarankan cocok dengan top-up PENDING"
+		suggestedTransfer.MatchedWalletPaymentID = sql.NullInt64{Int64: pendingPaymentID, Valid: true}
+		suggestedTransfer.ExternalReference = "DEMO-TRF-SUGGESTED-OWNER-001"
+		if _, err := fake.CreateTransfer(ctx, tx, ownerIDs[0], suggestedTransfer); err != nil {
+			return err
+		}
+
+		rejectedTopup := fake.BuildWalletTopup(4, "300000.00")
+		rejectedTopup.Status = "REJECTED"
+		rejectedTopup.RejectNote = "Demo Sprint 15a: ditolak, nominal transfer tidak sesuai"
+		rejectedTopup.ExternalReference = "DEMO-TOPUP-REJECTED-OWNER-002"
+		rejectedTopup.IdempotencyKey = "demo:topup:rejected-owner-002"
+		if _, err := fake.CreateWalletTopup(ctx, tx, ownerIDs[1], rejectedTopup); err != nil {
+			return err
+		}
+		rejectedMatchTransfer := fake.BuildTransfer(4, "300000.00", "REJECTED_MATCH")
+		rejectedMatchTransfer.TransferDate = rejectedTopup.PaidAt
+		rejectedMatchTransfer.Note = "Demo Sprint 15a: kecocokan ditolak admin, nominal tidak sama"
+		rejectedMatchTransfer.ExternalReference = "DEMO-TRF-REJECTED-OWNER-002"
+		if _, err := fake.CreateTransfer(ctx, tx, ownerIDs[1], rejectedMatchTransfer); err != nil {
+			return err
+		}
+
+		unmatchedTransfer := fake.BuildTransfer(5, "500000.00", "UNMATCHED")
+		unmatchedTransfer.Note = "Demo Sprint 15a: transfer baru masuk, belum ada saran kecocokan"
+		unmatchedTransfer.ExternalReference = "DEMO-TRF-UNMATCHED-OWNER-004"
+		if _, err := fake.CreateTransfer(ctx, tx, ownerIDs[3], unmatchedTransfer); err != nil {
+			return err
+		}
 	}
 
 	if len(ownerIDs) >= 4 && len(closingIDs) >= 3 {
@@ -750,7 +903,8 @@ func seedDemoMinimal(ctx context.Context, tx *sql.Tx, options Options) error {
 		aprilTopup.IdempotencyKey = "demo:topup:april-owner-003"
 		aprilTopup.PaidAt = time.Date(2026, 4, 15, 10, 0, 0, 0, time.UTC)
 		aprilTopup.Note = "Demo Sprint 10: top-up April, saldo dipakai beli subscription Juli"
-		if _, err := fake.CreateWalletTopup(ctx, tx, ownerIDs[2], aprilTopup); err != nil {
+		aprilPaymentID, err := fake.CreateWalletTopup(ctx, tx, ownerIDs[2], aprilTopup)
+		if err != nil {
 			return err
 		}
 		julyOrder := fake.BuildSubscriptionOrder(10, "PRO_12_MONTHS", "", sql.NullInt64{Int64: closingIDs[2], Valid: true})
@@ -759,7 +913,20 @@ func seedDemoMinimal(ctx context.Context, tx *sql.Tx, options Options) error {
 		julyOrder.PurchasedAt = time.Date(2026, 7, 10, 13, 0, 0, 0, time.UTC)
 		julyOrder.SubscriptionStartDate = time.Date(2026, 7, 10, 0, 0, 0, 0, time.UTC)
 		julyOrder.Note = "Demo Sprint 10: pembelian Juli dari top-up April dan auto reconciliation closing"
-		if _, err := fake.CreateSubscriptionOrder(ctx, tx, ownerIDs[2], julyOrder); err != nil {
+		julyOrderID, err := fake.CreateSubscriptionOrder(ctx, tx, ownerIDs[2], julyOrder)
+		if err != nil {
+			return err
+		}
+		if err := seedPartialConfirmDemo(ctx, tx, julyOrderID); err != nil {
+			return err
+		}
+
+		matchedTransfer := fake.BuildTransfer(10, "4500000.00", "MATCHED")
+		matchedTransfer.TransferDate = aprilTopup.PaidAt
+		matchedTransfer.Note = "Demo Sprint 15a: transfer sudah dikonfirmasi cocok dengan top-up April"
+		matchedTransfer.MatchedWalletPaymentID = sql.NullInt64{Int64: aprilPaymentID, Valid: true}
+		matchedTransfer.ExternalReference = "DEMO-TRF-MATCHED-OWNER-003"
+		if _, err := fake.CreateTransfer(ctx, tx, ownerIDs[2], matchedTransfer); err != nil {
 			return err
 		}
 
@@ -787,16 +954,63 @@ func seedDemoMinimal(ctx context.Context, tx *sql.Tx, options Options) error {
 	return nil
 }
 
+// seedPartialConfirmDemo converts an already-auto-reconciled demo order (CreateSubscriptionOrder
+// always inserts a plain CONFIRMED reconciliation, matching+consistent final_amount) into a
+// PARTIAL_CONFIRM demo scenario — Sprint 15a §4's admin correction path, where the admin dashboard's
+// real final amount differs slightly from what Sales entered. Mirrors production's
+// confirmOrderAndClosingWithAmount: admin_final_amount overrides sales_closings.final_amount, order
+// status stays RECONCILED (PARTIAL_CONFIRM only changes the reconciliation, not the order status).
+func seedPartialConfirmDemo(ctx context.Context, tx *sql.Tx, orderID int64) error {
+	var reconciliationID, closingID int64
+	var finalAmount string
+	var tenureMonths int
+	err := tx.QueryRowContext(ctx, `
+		SELECT sr.id, sr.closing_id, CAST(sc.final_amount AS CHAR), sc.tenure_months
+		FROM subscription_reconciliations sr
+		JOIN sales_closings sc ON sc.id = sr.closing_id
+		WHERE sr.order_id = ? AND sr.deleted_at IS NULL
+		LIMIT 1`, orderID).Scan(&reconciliationID, &closingID, &finalAmount, &tenureMonths)
+	if err != nil {
+		return fmt.Errorf("seed partial confirm demo lookup order=%d: %w", orderID, err)
+	}
+
+	finalAmountCents, err := parseDecimalToCents(finalAmount)
+	if err != nil {
+		return err
+	}
+	// Admin dashboard's real number is Rp 50.000 lower than what Sales originally entered.
+	adminFinalAmount := formatCentsToDecimal(finalAmountCents - 5000)
+
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE subscription_reconciliations
+		SET status = 'PARTIAL_CONFIRM', admin_final_amount = ?, admin_tenure_months = ?,
+			note = ?
+		WHERE id = ?`,
+		adminFinalAmount, tenureMonths,
+		"Demo Sprint 15a: dikoreksi admin, nominal dashboard berbeda tipis dari input Sales.",
+		reconciliationID,
+	); err != nil {
+		return fmt.Errorf("seed partial confirm demo update reconciliation order=%d: %w", orderID, err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE sales_closings SET final_amount = ? WHERE id = ?`,
+		adminFinalAmount, closingID,
+	); err != nil {
+		return fmt.Errorf("seed partial confirm demo update closing order=%d: %w", orderID, err)
+	}
+	return nil
+}
+
 func seedPartnersDemo(ctx context.Context, tx *sql.Tx, fake *factory.Factory) error {
-	supTypeID, err := lookupID(ctx, tx, "partner_types", "code", "SUPPLIER")
+	supTypeID, err := lookupID(ctx, tx, "partner_types", "code", "REFERRAL")
 	if err != nil {
 		return err
 	}
-	disTypeID, err := lookupID(ctx, tx, "partner_types", "code", "DISTRIBUTOR")
+	disTypeID, err := lookupID(ctx, tx, "partner_types", "code", "PARTNERSHIP")
 	if err != nil {
 		return err
 	}
-	refTypeID, err := lookupID(ctx, tx, "partner_types", "code", "REFERRAL_PARTNER")
+	refTypeID, err := lookupID(ctx, tx, "partner_types", "code", "STRATEGIC")
 	if err != nil {
 		return err
 	}
@@ -828,7 +1042,7 @@ func seedPartnersDemo(ctx context.Context, tx *sql.Tx, fake *factory.Factory) er
 		res, err := tx.ExecContext(ctx, `
 			INSERT INTO partners (partner_type_id, code, name, phone, email, address, bank_account_encrypted, bank_account_last4, status, created_at, updated_at)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', NOW(), NOW())
-			ON DUPLICATE KEY UPDATE name = VALUES(name), phone = VALUES(phone)`,
+			ON DUPLICATE KEY UPDATE partner_type_id = VALUES(partner_type_id), name = VALUES(name), phone = VALUES(phone)`,
 			p.typeID, p.code, p.name, p.phone, p.email, p.address, []byte(p.encBank), p.bankLast4,
 		)
 		if err != nil {
@@ -914,6 +1128,31 @@ func lookupID(ctx context.Context, tx *sql.Tx, table, column, value string) (int
 func checksumFor(options Options) string {
 	sum := sha256.Sum256([]byte(fmt.Sprintf("%s|%s|%d|%s|%s|%d|%.4f", options.Mode, options.Preset, options.Seed, options.From.Format("2006-01-02"), options.To.Format("2006-01-02"), options.Scale, options.Variation)))
 	return hex.EncodeToString(sum[:])
+}
+
+func parseDecimalToCents(value string) (int64, error) {
+	value = strings.TrimSpace(value)
+	parts := strings.SplitN(value, ".", 2)
+	whole, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("parse decimal seed %q: %w", value, err)
+	}
+	var cents int64
+	if len(parts) == 2 {
+		fraction := parts[1]
+		if len(fraction) == 1 {
+			fraction += "0"
+		}
+		cents, err = strconv.ParseInt(fraction[:2], 10, 64)
+		if err != nil {
+			return 0, fmt.Errorf("parse decimal seed %q: %w", value, err)
+		}
+	}
+	return whole*100 + cents, nil
+}
+
+func formatCentsToDecimal(cents int64) string {
+	return fmt.Sprintf("%d.%02d", cents/100, cents%100)
 }
 
 func nullableString(value string) sql.NullString {

@@ -131,7 +131,13 @@ func (s *Service) Upload(ctx context.Context, actor identity.User, file multipar
 		return nil, fmt.Errorf("importing: store upload: %w", err)
 	}
 
-	code := fmt.Sprintf("IMPORT-%s-%s", time.Now().Format("20060102"), hash[:12])
+	contextKey := fmt.Sprintf("%s|%s|", profileForRow, strings.TrimSpace(sheetName))
+	if targetSalesUserID != nil {
+		contextKey = fmt.Sprintf("%s%d", contextKey, *targetSalesUserID)
+	}
+	contextSum := sha256.Sum256([]byte(contextKey))
+	contextHash := hex.EncodeToString(contextSum[:])
+	code := fmt.Sprintf("IMPORT-%s-%s-%s", time.Now().Format("20060102"), hash[:8], contextHash[:6])
 
 	batchID, err := s.repo.CreateBatch(ctx, code, profileForRow, sheetName, targetSalesUserID, header.Filename, hash, filePath, actor.ID)
 	if err != nil {
@@ -225,6 +231,55 @@ func (s *Service) ListRows(ctx context.Context, actor identity.User, batchID int
 		responses = append(responses, NewImportRowResponse(item))
 	}
 	return &ImportRowListResponse{Items: responses, Meta: ListMeta{Page: page, Limit: resolveReturnedLimit(params.All, limit, len(items), total), Total: total}}, nil
+}
+
+// RelinkRow manually resolves a reconciliation candidate (RowStatusUnmatched) — admin supplies
+// the owner/outlet/lead ID the row's own code/name couldn't resolve at commit time, moving it
+// back to VALID for the next batch commit to pick up. Deliberately does not re-trigger commit
+// itself (the batch-level commit endpoint already exists and handles the retry job wiring).
+func (s *Service) RelinkRow(ctx context.Context, actor identity.User, batchID, rowID int64, req RelinkRowRequest) (*ImportRowResponse, error) {
+	if !isAdmin(actor) {
+		return nil, ErrForbidden
+	}
+	if req.OwnerID == nil && req.OutletID == nil && req.LeadID == nil {
+		return nil, ErrRelinkEntityRequired
+	}
+	row, err := s.repo.FindRowByID(ctx, batchID, rowID)
+	if err != nil {
+		return nil, err
+	}
+	if row.Status != RowStatusUnmatched {
+		return nil, ErrRowNotUnmatched
+	}
+	if err := s.repo.RelinkRow(ctx, rowID, req.OwnerID, req.OutletID, req.LeadID); err != nil {
+		return nil, err
+	}
+	relinked, err := s.repo.FindRowByID(ctx, batchID, rowID)
+	if err != nil {
+		return nil, err
+	}
+	resp := NewImportRowResponse(relinked)
+	return &resp, nil
+}
+
+// GetSummary aggregates batch counts per status (GET /imports/summary) — so admin can see how
+// many batches need attention without paging through GET /imports?status=... one status at a time.
+func (s *Service) GetSummary(ctx context.Context, actor identity.User) (*BatchSummaryResponse, error) {
+	if !isAdmin(actor) {
+		return nil, ErrForbidden
+	}
+	counts, err := s.repo.GetBatchStatusCounts(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var total, needsAttention int64
+	for status, count := range counts {
+		total += count
+		if status == BatchStatusValidationFailed || status == BatchStatusCommitFailed {
+			needsAttention += count
+		}
+	}
+	return &BatchSummaryResponse{Total: total, CountsByStatus: counts, NeedsAttention: needsAttention}, nil
 }
 
 func resolveReturnedLimit(all bool, limit int, itemCount int, total int64) int {

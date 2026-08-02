@@ -296,3 +296,126 @@ func TestParseBonusMitraRow(t *testing.T) {
 		t.Fatal("expected renewal date to be normalized")
 	}
 }
+
+var newSubscribeHeaderRow = []string{
+	"Kode", "Kode Owner", "Nama Owner", "No. Hp Owner/Outlet", "Project/Outlet", "Kota", "Provinsi",
+	"Nominal Aktivasi", "Tanggal Aktivasi", "Balance Top Up System", "Diskon Langganan",
+	"Fee Midtrans", "Settlement", "Metode Pembayaran", "Date of Renewal On Member", "Expired Date",
+	"Tenor", "Paket Membership", "Status",
+}
+
+func TestParseNewSubscribeRow_Valid(t *testing.T) {
+	idx := buildHeaderIndex(newSubscribeHeaderRow)
+	row := make([]string, len(newSubscribeHeaderRow))
+	row[idx["KODE"]] = "07-01.1"
+	row[idx["KODE OWNER"]] = "4181"
+	row[idx["NAMA OWNER"]] = "Dignity Sinaga"
+	row[idx["NO. HP OWNER/OUTLET"]] = "081234567890"
+	row[idx["PROJECT/OUTLET"]] = "Dignity Laundry/Dignity Outlet 1"
+	row[idx["KOTA"]] = "Bekasi"
+	row[idx["PROVINSI"]] = "Jawa Barat"
+	row[idx["NOMINAL AKTIVASI"]] = "858.000"
+	row[idx["BALANCE TOP UP SYSTEM"]] = "858.000"
+	row[idx["TENOR"]] = "12"
+	row[idx["PAKET MEMBERSHIP"]] = "Basic"
+	row[idx["STATUS"]] = "Aktif"
+
+	parsed, errs := parseNewSubscribeRow(row, idx)
+	if len(errs) != 0 {
+		t.Fatalf("expected no validation errors, got %v", errs)
+	}
+	if parsed.ProjectName != "Dignity Laundry" || parsed.OutletName != "Dignity Outlet 1" {
+		t.Fatalf("expected Project/Outlet split, got project=%q outlet=%q", parsed.ProjectName, parsed.OutletName)
+	}
+	if parsed.NominalAktivasi != "858000" {
+		t.Fatalf("expected dot-thousands nominal parsed to 858000, got %s", parsed.NominalAktivasi)
+	}
+	if parsed.TenorMonths != 12 {
+		t.Fatalf("expected tenor 12, got %d", parsed.TenorMonths)
+	}
+}
+
+func TestParseNewSubscribeRow_MissingRequiredFields(t *testing.T) {
+	idx := buildHeaderIndex(newSubscribeHeaderRow)
+	row := make([]string, len(newSubscribeHeaderRow))
+	_, errs := parseNewSubscribeRow(row, idx)
+	if len(errs) == 0 {
+		t.Fatal("expected validation errors for empty row")
+	}
+}
+
+var salesCallChatHeaderRow = []string{
+	"Kode Owner", "Nama Owner", "No. HP Owner", "Tanggal FU", "Call", "Chat", "Validitas",
+	"Remaks", "Scor", "Finalisasi (Closing)", "Nominal",
+}
+
+func TestParseSalesCallChatRow_Closing(t *testing.T) {
+	idx := buildHeaderIndex(salesCallChatHeaderRow)
+	row := make([]string, len(salesCallChatHeaderRow))
+	row[idx["KODE OWNER"]] = "4181"
+	row[idx["NAMA OWNER"]] = "Dignity Sinaga"
+	row[idx["SCOR"]] = "3"
+	row[idx["FINALISASI (CLOSING)"]] = "Berlangganan Basic"
+	row[idx["NOMINAL"]] = "858000"
+
+	parsed, errs := parseSalesCallChatRow(row, idx)
+	if len(errs) != 0 {
+		t.Fatalf("expected no validation errors, got %v", errs)
+	}
+	if !parsed.IsClosing {
+		t.Fatal("expected IsClosing true for Scor 3 with a real package name")
+	}
+	if parsed.Nominal != "858000" {
+		t.Fatalf("expected nominal 858000, got %s", parsed.Nominal)
+	}
+}
+
+func TestParseSalesCallChatRow_NotYetSentinel(t *testing.T) {
+	idx := buildHeaderIndex(salesCallChatHeaderRow)
+	row := make([]string, len(salesCallChatHeaderRow))
+	row[idx["KODE OWNER"]] = "4181"
+	row[idx["SCOR"]] = "1"
+	row[idx["FINALISASI (CLOSING)"]] = "Not Yet"
+
+	parsed, errs := parseSalesCallChatRow(row, idx)
+	if len(errs) != 0 {
+		t.Fatalf("expected no validation errors, got %v", errs)
+	}
+	if parsed.IsClosing {
+		t.Fatal("expected IsClosing false for the 'Not Yet' sentinel")
+	}
+}
+
+var salesTargetHeaderRow = []string{"Bulan", "Target User", "Target Omset"}
+
+func TestParseSalesTargetRow_Valid(t *testing.T) {
+	idx := buildHeaderIndex(salesTargetHeaderRow)
+	row := make([]string, len(salesTargetHeaderRow))
+	row[idx["BULAN"]] = "Juli"
+	row[idx["TARGET USER"]] = "10"
+	row[idx["TARGET OMSET"]] = "10.000.000"
+
+	parsed, errs := parseSalesTargetRow(row, idx, 2026)
+	if len(errs) != 0 {
+		t.Fatalf("expected no validation errors, got %v", errs)
+	}
+	if parsed.PeriodMonth != 7 {
+		t.Fatalf("expected month 7 (Juli), got %d", parsed.PeriodMonth)
+	}
+	if parsed.TargetOmset != "10000000" {
+		t.Fatalf("expected dot-thousands omset parsed to 10000000, got %s", parsed.TargetOmset)
+	}
+}
+
+func TestParseSalesTargetRow_YearMissing(t *testing.T) {
+	idx := buildHeaderIndex(salesTargetHeaderRow)
+	row := make([]string, len(salesTargetHeaderRow))
+	row[idx["BULAN"]] = "Juli"
+	row[idx["TARGET USER"]] = "10"
+	row[idx["TARGET OMSET"]] = "10000000"
+
+	_, errs := parseSalesTargetRow(row, idx, 0)
+	if len(errs) == 0 {
+		t.Fatal("expected validation error when year could not be found in the sheet title rows")
+	}
+}

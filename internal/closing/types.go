@@ -159,7 +159,11 @@ type ClosingResponse struct {
 	Supervisor         *UserBrief         `json:"supervisor,omitempty"`
 	Package            *EntityRef         `json:"package,omitempty"`
 	Plan               *EntityRef         `json:"plan,omitempty"`
+	// Promotion/PromotionSnapshot are the FIRST applied promotion, kept for any old consumer of
+	// this single field. Promotions is the full stacked list (Sprint 15a §4b) — always use this
+	// one for anything beyond simple display, since a closing can now carry more than one.
 	Promotion          *EntityRef         `json:"promotion,omitempty"`
+	Promotions         []EntityRef        `json:"promotions,omitempty"`
 	PackageSnapshot    PackageSnapshot    `json:"package_snapshot"`
 	PlanSnapshot       PlanSnapshot       `json:"plan_snapshot"`
 	PromotionSnapshot  *PromotionSnapshot `json:"promotion_snapshot,omitempty"`
@@ -195,8 +199,12 @@ type ClosingListResponse struct {
 }
 
 type CreateClosingRequest struct {
-	PlanID             int64      `json:"plan_id" binding:"required,min=1"`
-	PromotionID        *int64     `json:"promotion_id"`
+	PlanID      int64  `json:"plan_id" binding:"required,min=1"`
+	PromotionID *int64 `json:"promotion_id"`
+	// PromotionIDs stacks multiple promotions on the same plan (Sprint 15a §4b) — if set, it's
+	// used instead of PromotionID (which stays for backward compat with older single-promotion
+	// clients). Every ID must be eligible for PlanID or the whole request is rejected.
+	PromotionIDs       []int64    `json:"promotion_ids"`
 	DiscountAmount     string     `json:"discount_amount"`
 	UniqueTransferCode *int       `json:"unique_transfer_code"`
 	ClosedAt           *time.Time `json:"closed_at"`

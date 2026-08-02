@@ -13,4 +13,5 @@ var (
 	ErrInvalidDirection    = errors.New("arah transaksi tidak valid")
 	ErrOwnerNotFound       = errors.New("owner tidak ditemukan")
 	ErrLedgerOutOfSync     = errors.New("balance wallet tidak cocok dengan ledger")
+	ErrTopupNotPending     = errors.New("top up tidak dalam status PENDING")
 )

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -142,6 +143,27 @@ func (r *Repository) ListBatches(ctx context.Context, params ListBatchesParams) 
 	return items, total, rows.Err()
 }
 
+// GetBatchStatusCounts powers GET /imports/summary — a count of batches per status, so an admin
+// doesn't have to page through GET /imports?status=... one status at a time to know how many
+// batches currently need attention (VALIDATION_FAILED/COMMIT_FAILED especially).
+func (r *Repository) GetBatchStatusCounts(ctx context.Context) (map[string]int64, error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT status, COUNT(*) FROM import_batches GROUP BY status`)
+	if err != nil {
+		return nil, fmt.Errorf("importing: count batch statuses: %w", err)
+	}
+	defer rows.Close()
+	counts := map[string]int64{}
+	for rows.Next() {
+		var status string
+		var count int64
+		if err := rows.Scan(&status, &count); err != nil {
+			return nil, err
+		}
+		counts[status] = count
+	}
+	return counts, rows.Err()
+}
+
 func (r *Repository) SetValidateJobID(ctx context.Context, batchID, jobID int64) error {
 	_, err := r.db.ExecContext(ctx, `UPDATE import_batches SET validate_job_id = ? WHERE id = ?`, jobID, batchID)
 	return err
@@ -271,6 +293,33 @@ func nullableJSON(b []byte) any {
 		return nil
 	}
 	return b
+}
+
+// FindRowByID fetches a single row scoped to batchID — the relink handler uses this to confirm
+// the row actually belongs to the batch in the URL before mutating it.
+func (r *Repository) FindRowByID(ctx context.Context, batchID, rowID int64) (ImportRow, error) {
+	row, err := scanRow(r.db.QueryRowContext(ctx, `
+		SELECT `+rowSelectColumns+` FROM import_rows WHERE id = ? AND batch_id = ?`, rowID, batchID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return ImportRow{}, ErrNotFound
+	}
+	return row, err
+}
+
+// RelinkRow is the manual resolution for a reconciliation candidate (RowStatusUnmatched): admin
+// supplies the entity ID(s) the row's own data couldn't resolve automatically (owner/outlet/lead
+// code didn't match anything at commit time), moving the row back to VALID so the next batch
+// commit picks it up again. Deliberately does NOT touch raw_payload — the row's original parsed
+// data is unchanged, only which entities it resolves to.
+func (r *Repository) RelinkRow(ctx context.Context, rowID int64, ownerID, outletID, leadID *int64) error {
+	_, err := r.db.ExecContext(ctx, `
+		UPDATE import_rows
+		SET status = ?, owner_id = COALESCE(?, owner_id), outlet_id = COALESCE(?, outlet_id),
+		    lead_id = COALESCE(?, lead_id), commit_error = NULL
+		WHERE id = ?`,
+		RowStatusValid, ownerID, outletID, leadID, rowID,
+	)
+	return err
 }
 
 func (r *Repository) ListRows(ctx context.Context, batchID int64, params ListRowsParams) ([]ImportRow, int64, error) {

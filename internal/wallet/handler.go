@@ -3,8 +3,10 @@ package wallet
 import (
 	"context"
 	"errors"
+	"log"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"backend_crm_piposmart/internal/identity"
 	"backend_crm_piposmart/internal/platform/httpx"
@@ -32,6 +34,9 @@ func (h *Handler) RegisterRoutes(api *gin.RouterGroup) {
 	api.GET("/owners/:owner_id/wallet/transactions/all", h.listAllOwnerTransactions)
 	api.GET("/owners/:owner_id/wallet/transactions/all-deleted", h.listAllOwnerTransactions)
 	api.POST("/owners/:owner_id/wallet/topups", h.createTopup)
+	api.PATCH("/wallet-payments/:payment_id/accept", h.acceptTopup)
+	api.PATCH("/wallet-payments/:payment_id/reject", h.rejectTopup)
+	api.PATCH("/wallet-payments/:payment_id/transfer-date", h.setTransferDateOverride)
 	api.POST("/owners/:owner_id/wallet/debits", h.createDebit)
 	api.POST("/owners/:owner_id/wallet/adjustments", h.createAdjustment)
 	api.POST("/owners/:owner_id/wallet/refunds", h.createRefund)
@@ -207,6 +212,60 @@ func (h *Handler) createTopup(c *gin.Context) {
 	httpx.Success(c, http.StatusCreated, response)
 }
 
+func (h *Handler) acceptTopup(c *gin.Context) {
+	user, _ := identity.CurrentUser(c)
+	paymentID, ok := parsePathID(c, "payment_id", "ID top up tidak valid")
+	if !ok {
+		return
+	}
+	var req AcceptTopupRequest
+	if !bindJSON(c, &req) {
+		return
+	}
+	response, err := h.service.AcceptTopup(c.Request.Context(), user, paymentID, req)
+	if err != nil {
+		writeError(c, err)
+		return
+	}
+	httpx.Success(c, http.StatusOK, response)
+}
+
+func (h *Handler) rejectTopup(c *gin.Context) {
+	user, _ := identity.CurrentUser(c)
+	paymentID, ok := parsePathID(c, "payment_id", "ID top up tidak valid")
+	if !ok {
+		return
+	}
+	var req RejectTopupRequest
+	if !bindJSON(c, &req) {
+		return
+	}
+	response, err := h.service.RejectTopup(c.Request.Context(), user, paymentID, req)
+	if err != nil {
+		writeError(c, err)
+		return
+	}
+	httpx.Success(c, http.StatusOK, response)
+}
+
+func (h *Handler) setTransferDateOverride(c *gin.Context) {
+	user, _ := identity.CurrentUser(c)
+	paymentID, ok := parsePathID(c, "payment_id", "ID top up tidak valid")
+	if !ok {
+		return
+	}
+	var req SetTransferDateOverrideRequest
+	if !bindJSON(c, &req) {
+		return
+	}
+	response, err := h.service.SetTransferDateOverride(c.Request.Context(), user, paymentID, req)
+	if err != nil {
+		writeError(c, err)
+		return
+	}
+	httpx.Success(c, http.StatusOK, response)
+}
+
 func (h *Handler) createDebit(c *gin.Context) { h.createManualTransaction(c, h.service.CreateDebit) }
 func (h *Handler) createAdjustment(c *gin.Context) {
 	h.createManualTransaction(c, h.service.CreateAdjustment)
@@ -313,9 +372,22 @@ func writeError(c *gin.Context, err error) {
 		httpx.Error(c, http.StatusBadRequest, "INVALID_DIRECTION", err.Error(), nil)
 	case errors.Is(err, ErrLedgerOutOfSync):
 		httpx.Error(c, http.StatusConflict, "LEDGER_OUT_OF_SYNC", err.Error(), nil)
+	case errors.Is(err, ErrTopupNotPending):
+		httpx.Error(c, http.StatusConflict, "TOPUP_NOT_PENDING", err.Error(), nil)
 	case errors.Is(err, ErrInvalidRequest):
 		httpx.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
+	case err != nil && strings.Contains(err.Error(), "Duplicate entry"):
+		if strings.Contains(err.Error(), "external_reference") {
+			httpx.Error(c, http.StatusBadRequest, "DUPLICATE_REFERENCE", "External reference sudah pernah digunakan pada transaksi/topup lain.", nil)
+		} else if strings.Contains(err.Error(), "idempotency") {
+			httpx.Error(c, http.StatusBadRequest, "DUPLICATE_IDEMPOTENCY", "Idempotency key sudah pernah digunakan.", nil)
+		} else {
+			httpx.Error(c, http.StatusBadRequest, "DUPLICATE_ENTRY", "Data transaksi/referensi wallet sudah pernah digunakan.", nil)
+		}
 	default:
+		if err != nil {
+			log.Printf("[wallet writeError 500] %v", err)
+		}
 		httpx.Error(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Terjadi kesalahan pada server", nil)
 	}
 }

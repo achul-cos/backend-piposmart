@@ -61,13 +61,6 @@ type OutletOverview struct {
 	OwnerPhone               sql.NullString
 	OwnerEmail               sql.NullString
 	OwnerBrandName           sql.NullString
-	AccountCode              string
-	WalletID                 int64
-	WalletBalance            string
-	WalletLedgerBalance      string
-	WalletStatus             string
-	WalletCreatedAt          time.Time
-	WalletUpdatedAt          time.Time
 	Code                     string
 	Name                     string
 	Phone                    sql.NullString
@@ -82,6 +75,46 @@ type OutletOverview struct {
 	LatestSubscriptionUntil  sql.NullTime
 	CreatedAt                time.Time
 	UpdatedAt                time.Time
+}
+
+// OwnerAge/OwnerSubscriptionStatus classify an owner for the Owner overview endpoint. Wallet
+// balance is owner-scoped (see internal/wallet) — this is the only place it's surfaced now that
+// OutletOverview no longer carries a redundant per-outlet copy of the same owner wallet.
+const (
+	OwnerAgeNew = "NEW"
+	OwnerAgeOld = "OLD"
+
+	OwnerSubscriptionStatusSubscribed    = "BERLANGGANAN"
+	OwnerSubscriptionStatusNotSubscribed = "NOT_SUBSCRIBE"
+)
+
+type OwnerOverview struct {
+	ID                    int64
+	Code                  string
+	Name                  string
+	Phone                 sql.NullString
+	Email                 sql.NullString
+	BrandName             sql.NullString
+	Province              sql.NullString
+	City                  sql.NullString
+	Address               sql.NullString
+	Status                string
+	AccountCode           string
+	WalletID              int64
+	WalletBalance         string
+	WalletLedgerBalance   string
+	WalletStatus          string
+	WalletCreatedAt       time.Time
+	WalletUpdatedAt       time.Time
+	TotalTransferred      string
+	TotalTopup            string
+	TotalSpent            string
+	AgeStatus             string
+	SubscriptionStatus    string
+	SubscribedOutletCount int64
+	OutletCount           int64
+	CreatedAt             time.Time
+	UpdatedAt             time.Time
 }
 
 type OwnerResponse struct {
@@ -146,7 +179,6 @@ type SubscriptionSummaryResponse struct {
 type OutletOverviewResponse struct {
 	ID                  int64                       `json:"id"`
 	Owner               OwnerBriefResponse          `json:"owner"`
-	Wallet              WalletBriefResponse         `json:"wallet"`
 	Code                string                      `json:"code"`
 	Name                string                      `json:"name"`
 	Phone               string                      `json:"phone,omitempty"`
@@ -162,7 +194,6 @@ type OutletOverviewResponse struct {
 type OutletDetailResponse struct {
 	ID                  int64                       `json:"id"`
 	Owner               OwnerBriefResponse          `json:"owner"`
-	Wallet              WalletBriefResponse         `json:"wallet"`
 	Code                string                      `json:"code"`
 	Name                string                      `json:"name"`
 	Phone               string                      `json:"phone,omitempty"`
@@ -173,6 +204,39 @@ type OutletDetailResponse struct {
 	SubscriptionSummary SubscriptionSummaryResponse `json:"subscription_summary"`
 	CreatedAt           time.Time                   `json:"created_at"`
 	UpdatedAt           time.Time                   `json:"updated_at"`
+}
+
+// OwnerBalanceResponse surfaces the owner-scoped wallet plus the rollups the client asked for:
+// how much has been transferred in, topped up, and spent across every outlet this owner owns.
+type OwnerBalanceResponse struct {
+	Wallet           WalletBriefResponse `json:"wallet"`
+	TotalTransferred string              `json:"total_transferred"`
+	TotalTopup       string              `json:"total_topup"`
+	TotalSpent       string              `json:"total_spent"`
+}
+
+type OwnerStatusResponse struct {
+	AgeStatus             string `json:"age_status"`
+	SubscriptionStatus    string `json:"subscription_status"`
+	SubscribedOutletCount int64  `json:"subscribed_outlet_count"`
+	OutletCount           int64  `json:"outlet_count"`
+}
+
+type OwnerOverviewResponse struct {
+	ID          int64                `json:"id"`
+	Code        string               `json:"code"`
+	Name        string               `json:"name"`
+	Phone       string               `json:"phone,omitempty"`
+	Email       string               `json:"email,omitempty"`
+	BrandName   string               `json:"brand_name,omitempty"`
+	Province    string               `json:"province,omitempty"`
+	City        string               `json:"city,omitempty"`
+	Address     string               `json:"address,omitempty"`
+	Status      string               `json:"status"`
+	Balance     OwnerBalanceResponse `json:"balance"`
+	OwnerStatus OwnerStatusResponse  `json:"owner_status"`
+	CreatedAt   time.Time            `json:"created_at"`
+	UpdatedAt   time.Time            `json:"updated_at"`
 }
 
 type CreateOwnerRequest struct {
@@ -364,18 +428,8 @@ func NewOutletResponse(outlet Outlet) OutletResponse {
 
 func NewOutletOverviewResponse(item OutletOverview) OutletOverviewResponse {
 	return OutletOverviewResponse{
-		ID:    item.ID,
-		Owner: newOwnerBriefResponse(item),
-		Wallet: WalletBriefResponse{
-			ID:            item.WalletID,
-			AccountCode:   item.AccountCode,
-			Currency:      "IDR",
-			Balance:       item.WalletBalance,
-			LedgerBalance: item.WalletLedgerBalance,
-			Status:        item.WalletStatus,
-			CreatedAt:     item.WalletCreatedAt,
-			UpdatedAt:     item.WalletUpdatedAt,
-		},
+		ID:       item.ID,
+		Owner:    newOwnerBriefResponse(item),
 		Code:     item.Code,
 		Name:     item.Name,
 		Phone:    item.Phone.String,
@@ -400,7 +454,6 @@ func NewOutletDetailResponse(item OutletOverview) OutletDetailResponse {
 	return OutletDetailResponse{
 		ID:                  overview.ID,
 		Owner:               overview.Owner,
-		Wallet:              overview.Wallet,
 		Code:                overview.Code,
 		Name:                overview.Name,
 		Phone:               overview.Phone,
@@ -411,6 +464,44 @@ func NewOutletDetailResponse(item OutletOverview) OutletDetailResponse {
 		SubscriptionSummary: overview.SubscriptionSummary,
 		CreatedAt:           overview.CreatedAt,
 		UpdatedAt:           overview.UpdatedAt,
+	}
+}
+
+func NewOwnerOverviewResponse(item OwnerOverview) OwnerOverviewResponse {
+	return OwnerOverviewResponse{
+		ID:        item.ID,
+		Code:      item.Code,
+		Name:      item.Name,
+		Phone:     item.Phone.String,
+		Email:     item.Email.String,
+		BrandName: item.BrandName.String,
+		Province:  item.Province.String,
+		City:      item.City.String,
+		Address:   item.Address.String,
+		Status:    item.Status,
+		Balance: OwnerBalanceResponse{
+			Wallet: WalletBriefResponse{
+				ID:            item.WalletID,
+				AccountCode:   item.AccountCode,
+				Currency:      "IDR",
+				Balance:       item.WalletBalance,
+				LedgerBalance: item.WalletLedgerBalance,
+				Status:        item.WalletStatus,
+				CreatedAt:     item.WalletCreatedAt,
+				UpdatedAt:     item.WalletUpdatedAt,
+			},
+			TotalTransferred: item.TotalTransferred,
+			TotalTopup:       item.TotalTopup,
+			TotalSpent:       item.TotalSpent,
+		},
+		OwnerStatus: OwnerStatusResponse{
+			AgeStatus:             item.AgeStatus,
+			SubscriptionStatus:    item.SubscriptionStatus,
+			SubscribedOutletCount: item.SubscribedOutletCount,
+			OutletCount:           item.OutletCount,
+		},
+		CreatedAt: item.CreatedAt,
+		UpdatedAt: item.UpdatedAt,
 	}
 }
 

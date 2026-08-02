@@ -15,6 +15,13 @@ type WalletTopup struct {
 	IdempotencyKey    string
 	PaidAt            time.Time
 	Note              string
+	// Sprint 15a — Status lets demo data showcase the full Top Up lifecycle
+	// (PENDING/REJECTED/EXPIRED/ACCEPTED), not just the terminal ACCEPTED state.
+	// Empty defaults to ACCEPTED for backward compatibility with existing callers.
+	Status         string
+	RejectNote     string
+	UniqueCode     string
+	TransferDateAt time.Time
 }
 
 type WalletLedgerTransaction struct {
@@ -32,7 +39,7 @@ type WalletLedgerTransaction struct {
 func (f *Factory) BuildWalletTopup(index int, amount string) WalletTopup {
 	return WalletTopup{
 		Amount:            amount,
-		PaymentChannel:    "MANUAL_TRANSFER",
+		PaymentChannel:    "TF/BRI",
 		ExternalReference: fmt.Sprintf("DEMO-TOPUP-%02d-%s", index, f.asOf.Format("20060102")),
 		IdempotencyKey:    fmt.Sprintf("demo:topup:%02d:%s", index, f.asOf.Format("20060102")),
 		PaidAt:            f.asOf.AddDate(0, 0, index).Add(9 * time.Hour),
@@ -82,26 +89,80 @@ func (f *Factory) CreateWalletTopup(ctx context.Context, tx *sql.Tx, ownerID int
 	if err != nil {
 		return 0, err
 	}
+
+	status := strings.ToUpper(strings.TrimSpace(topup.Status))
+	if status == "" {
+		status = "ACCEPTED"
+	}
+	paymentCode := fmt.Sprintf("DEMO-PAY-%06d-%s", ownerID, compactSeedKey(idempotencyKey))
+
+	// Sprint 15a — only ACCEPTED credits the wallet; PENDING/REJECTED/EXPIRED leave balance
+	// untouched, matching the production AcceptTopup/RejectTopup/ExpireStaleTopups semantics.
+	if status != "ACCEPTED" {
+		var sessionExpiresAt sql.NullTime
+		if status == "PENDING" || status == "EXPIRED" {
+			expiry := topup.PaidAt.Add(24 * time.Hour)
+			if status == "EXPIRED" {
+				// backdate the session window so it reads as already lapsed, consistent with
+				// what ExpireStaleTopups would have produced for a real stale PENDING top-up.
+				expiry = topup.PaidAt.Add(-1 * time.Hour)
+			}
+			sessionExpiresAt = sql.NullTime{Time: expiry, Valid: true}
+		}
+		note := topup.Note
+		if status == "REJECTED" && strings.TrimSpace(topup.RejectNote) != "" {
+			note = topup.RejectNote
+		}
+		result, err := tx.ExecContext(ctx, `
+			INSERT INTO wallet_payments
+				(code, owner_id, wallet_account_id, payment_type, payment_channel, external_reference,
+				 idempotency_key, amount, currency, status, paid_at, session_expires_at, note, created_by_user_id)
+			VALUES (?, ?, ?, 'TOPUP', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			paymentCode,
+			ownerID,
+			wallet.id,
+			normalizeSeedCode(topup.PaymentChannel, "TF/BRI"),
+			nullableSeedString(topup.ExternalReference),
+			idempotencyKey,
+			formatSeedCents(amountCents),
+			wallet.currency,
+			status,
+			topup.PaidAt,
+			sessionExpiresAt,
+			nullableSeedString(note),
+			adminID,
+		)
+		if err != nil {
+			return 0, fmt.Errorf("seed wallet top-up owner=%d: %w", ownerID, err)
+		}
+		return result.LastInsertId()
+	}
+
 	beforeCents, err := parseSeedMoneyToCents(wallet.balance)
 	if err != nil {
 		return 0, err
 	}
 	afterCents := beforeCents + amountCents
-	paymentCode := fmt.Sprintf("DEMO-PAY-%06d-%s", ownerID, compactSeedKey(idempotencyKey))
+	var transferDateOverride sql.NullTime
+	if !topup.TransferDateAt.IsZero() {
+		transferDateOverride = sql.NullTime{Time: topup.TransferDateAt, Valid: true}
+	}
 	result, err := tx.ExecContext(ctx, `
 		INSERT INTO wallet_payments
 			(code, owner_id, wallet_account_id, payment_type, payment_channel, external_reference,
-			 idempotency_key, amount, currency, status, paid_at, note, created_by_user_id)
-		VALUES (?, ?, ?, 'TOPUP', ?, ?, ?, ?, ?, 'PAID', ?, ?, ?)`,
+			 idempotency_key, amount, currency, status, paid_at, transfer_date_override, unique_code, note, created_by_user_id)
+		VALUES (?, ?, ?, 'TOPUP', ?, ?, ?, ?, ?, 'ACCEPTED', ?, ?, ?, ?, ?)`,
 		paymentCode,
 		ownerID,
 		wallet.id,
-		normalizeSeedCode(topup.PaymentChannel, "MANUAL"),
+		normalizeSeedCode(topup.PaymentChannel, "TF/BRI"),
 		nullableSeedString(topup.ExternalReference),
 		idempotencyKey,
 		formatSeedCents(amountCents),
 		wallet.currency,
 		topup.PaidAt,
+		transferDateOverride,
+		nullableSeedString(topup.UniqueCode),
 		nullableSeedString(topup.Note),
 		adminID,
 	)
