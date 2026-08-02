@@ -67,7 +67,7 @@ func activityVisibilityWhere(actor identity.User, activityAlias string) (string,
 	case "ADMIN":
 		return "1 = 1", nil
 	case "SUPERVISOR":
-		return fmt.Sprintf("(%s.supervisor_id = ? OR %s.sales_id IN (SELECT id FROM users WHERE deleted_at IS NULL))", activityAlias, activityAlias), []any{actor.ID}
+		return fmt.Sprintf("%s.supervisor_id = ?", activityAlias), []any{actor.ID}
 	case "SALES":
 		return fmt.Sprintf("%s.sales_id = ?", activityAlias), []any{actor.ID}
 	default:

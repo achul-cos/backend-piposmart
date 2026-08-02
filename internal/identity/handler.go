@@ -2,6 +2,7 @@ package identity
 
 import (
 	"errors"
+	"io"
 	"net/http"
 	"strconv"
 
@@ -83,7 +84,9 @@ func (h *Handler) refresh(c *gin.Context) {
 func (h *Handler) logout(c *gin.Context) {
 	user, _ := CurrentUser(c)
 	var req LogoutRequest
-	_ = c.ShouldBindJSON(&req)
+	if !bindOptionalJSON(c, &req) {
+		return
+	}
 	if err := h.service.Logout(c.Request.Context(), req.RefreshToken, user, requestMeta(c, &user)); err != nil {
 		writeServiceError(c, err)
 		return
@@ -256,7 +259,9 @@ func (h *Handler) resetSalesPassword(c *gin.Context) {
 		return
 	}
 	var req ResetPasswordRequest
-	_ = c.ShouldBindJSON(&req)
+	if !bindOptionalJSON(c, &req) {
+		return
+	}
 	response, err := h.service.ResetSalesPassword(c.Request.Context(), user, id, req, requestMeta(c, &user))
 	if err != nil {
 		writeServiceError(c, err)
@@ -272,7 +277,9 @@ func (h *Handler) resetSupervisorPassword(c *gin.Context) {
 		return
 	}
 	var req ResetPasswordRequest
-	_ = c.ShouldBindJSON(&req)
+	if !bindOptionalJSON(c, &req) {
+		return
+	}
 	response, err := h.service.ResetSupervisorPassword(c.Request.Context(), user, id, req, requestMeta(c, &user))
 	if err != nil {
 		writeServiceError(c, err)
@@ -288,7 +295,9 @@ func (h *Handler) resetAdminPassword(c *gin.Context) {
 		return
 	}
 	var req ResetPasswordRequest
-	_ = c.ShouldBindJSON(&req)
+	if !bindOptionalJSON(c, &req) {
+		return
+	}
 	response, err := h.service.ResetAdminPassword(c.Request.Context(), user, id, req, requestMeta(c, &user))
 	if err != nil {
 		writeServiceError(c, err)
@@ -299,6 +308,17 @@ func (h *Handler) resetAdminPassword(c *gin.Context) {
 
 func bindJSON(c *gin.Context, target any) bool {
 	if err := c.ShouldBindJSON(target); err != nil {
+		httpx.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", "Payload request tidak valid", gin.H{"error": err.Error()})
+		return false
+	}
+	return true
+}
+
+func bindOptionalJSON(c *gin.Context, target any) bool {
+	if err := c.ShouldBindJSON(target); err != nil {
+		if errors.Is(err, io.EOF) {
+			return true
+		}
 		httpx.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", "Payload request tidak valid", gin.H{"error": err.Error()})
 		return false
 	}

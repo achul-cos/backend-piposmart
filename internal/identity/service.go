@@ -223,7 +223,7 @@ func (s *Service) ListSupervisors(ctx context.Context, actor User, status string
 
 // ListAdmins returns all active admins. Accessible by ADMIN role or users with users.manage_all permission.
 func (s *Service) ListAdmins(ctx context.Context, actor User, status string) (SalesListResponse, error) {
-	if actor.RoleCode != RoleAdmin && !hasPermission(actor, "users.manage_all") && !hasPermission(actor, "users.read") {
+	if actor.RoleCode != RoleAdmin && !hasPermission(actor, "users.manage_all") {
 		return SalesListResponse{}, ErrForbidden
 	}
 	users, total, err := s.repo.ListAdmins(ctx, status)

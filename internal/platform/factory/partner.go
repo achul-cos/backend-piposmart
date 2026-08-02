@@ -52,10 +52,9 @@ func (f *Factory) BuildPartnerType(code, name, description string) PartnerType {
 
 func (f *Factory) BuildPartner(partnerTypeCode string, index int) Partner {
 	codePrefix := map[string]string{
-		"SUPPLIER":         "SUP",
-		"DISTRIBUTOR":      "DIS",
-		"AGENT":            "AGT",
-		"REFERRAL_PARTNER": "REF",
+		"REFERRAL":    "REF",
+		"PARTNERSHIP": "PAR",
+		"STRATEGIC":   "STG",
 	}[partnerTypeCode]
 	if codePrefix == "" {
 		codePrefix = "PTR"

@@ -121,7 +121,7 @@ func (s *Service) CancelTraining(ctx context.Context, actor identity.User, train
 }
 
 func validateInteractionRequest(req CreateInteractionRequest) error {
-	if _, err := normalizeInteractionType(req.Type); err != nil {
+	if _, _, _, err := resolveInteractionChannels(req.Type, req.CallStatus, req.ChatStatus); err != nil {
 		return err
 	}
 	if req.RemarkScore != nil && (*req.RemarkScore < 0 || *req.RemarkScore > 3) {

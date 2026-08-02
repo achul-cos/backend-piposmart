@@ -18,8 +18,9 @@ const (
 	StageClosing = "CLOSING"
 	StatusOpen   = "OPEN"
 
-	InteractionCall = "CALL"
-	InteractionChat = "CHAT"
+	InteractionCall     = "CALL"
+	InteractionChat     = "CHAT"
+	InteractionCallChat = "CALL_CHAT"
 
 	ScopeActive  = "ACTIVE"
 	ScopeDeleted = "DELETED"
@@ -150,15 +151,15 @@ type EntityRef struct {
 }
 
 type ClosingResponse struct {
-	ID                 int64              `json:"id"`
-	Code               string             `json:"code"`
-	Lead               *EntityRef         `json:"lead,omitempty"`
-	Owner              *EntityRef         `json:"owner,omitempty"`
-	OutletID           *int64             `json:"outlet_id,omitempty"`
-	Sales              *UserBrief         `json:"sales,omitempty"`
-	Supervisor         *UserBrief         `json:"supervisor,omitempty"`
-	Package            *EntityRef         `json:"package,omitempty"`
-	Plan               *EntityRef         `json:"plan,omitempty"`
+	ID         int64      `json:"id"`
+	Code       string     `json:"code"`
+	Lead       *EntityRef `json:"lead,omitempty"`
+	Owner      *EntityRef `json:"owner,omitempty"`
+	OutletID   *int64     `json:"outlet_id,omitempty"`
+	Sales      *UserBrief `json:"sales,omitempty"`
+	Supervisor *UserBrief `json:"supervisor,omitempty"`
+	Package    *EntityRef `json:"package,omitempty"`
+	Plan       *EntityRef `json:"plan,omitempty"`
 	// Promotion/PromotionSnapshot are the FIRST applied promotion, kept for any old consumer of
 	// this single field. Promotions is the full stacked list (Sprint 15a §4b) — always use this
 	// one for anything beyond simple display, since a closing can now carry more than one.
@@ -209,6 +210,8 @@ type CreateClosingRequest struct {
 	UniqueTransferCode *int       `json:"unique_transfer_code"`
 	ClosedAt           *time.Time `json:"closed_at"`
 	InteractionType    string     `json:"interaction_type"`
+	CallStatus         string     `json:"call_status"`
+	ChatStatus         string     `json:"chat_status"`
 	ContactName        string     `json:"contact_name"`
 	ContactPhone       string     `json:"contact_phone"`
 	CustomerResponse   string     `json:"customer_response"`

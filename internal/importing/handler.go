@@ -179,6 +179,10 @@ func (h *Handler) ViewOriginalFile(c *gin.Context) {
 		return
 	}
 	c.Header("Content-Disposition", `inline; filename="`+file.OriginalFilename+`"`)
+	if len(file.Content) > 0 {
+		c.Data(http.StatusOK, file.ContentType, file.Content)
+		return
+	}
 	c.File(file.Path)
 }
 
@@ -200,6 +204,11 @@ func (h *Handler) DownloadOriginalFile(c *gin.Context) {
 	file, err := h.service.GetOriginalFile(c.Request.Context(), actor, id)
 	if err != nil {
 		writeImportError(c, err)
+		return
+	}
+	if len(file.Content) > 0 {
+		c.Header("Content-Disposition", `attachment; filename="`+file.OriginalFilename+`"`)
+		c.Data(http.StatusOK, file.ContentType, file.Content)
 		return
 	}
 	c.FileAttachment(file.Path, file.OriginalFilename)

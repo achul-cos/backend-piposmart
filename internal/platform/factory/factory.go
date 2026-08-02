@@ -68,6 +68,8 @@ type Lead struct {
 
 type Interaction struct {
 	Type             string
+	CallStatus       string
+	ChatStatus       string
 	InteractionAt    time.Time
 	RemarkScore      int
 	Note             string
@@ -77,14 +79,14 @@ type Interaction struct {
 }
 
 type TrainingReport struct {
-	TrainingType    string
-	Status          string
-	ScheduledAt     time.Time
-	CompletedAt     sql.NullTime
-	Location        string
-	MeetingURL      string
-	Note            string
-	ResultNote      string
+	TrainingType string
+	Status       string
+	ScheduledAt  time.Time
+	CompletedAt  sql.NullTime
+	Location     string
+	MeetingURL   string
+	Note         string
+	ResultNote   string
 }
 
 func (f *Factory) BuildUser(roleCode string, index int) User {
@@ -159,12 +161,17 @@ func (f *Factory) BuildLead(ownerCode string, index int, activeSalesEmail string
 }
 
 func (f *Factory) BuildInteraction(index int, score int) Interaction {
+	callStatus := "TERHUBUNG"
+	chatStatus := ""
 	interactionType := "CALL"
 	if index%2 == 0 {
-		interactionType = "CHAT"
+		interactionType = "CALL_CHAT"
+		chatStatus = "TERBALAS"
 	}
 	return Interaction{
 		Type:             interactionType,
+		CallStatus:       callStatus,
+		ChatStatus:       chatStatus,
 		InteractionAt:    f.asOf.Add(time.Duration(index) * time.Hour),
 		RemarkScore:      score,
 		Note:             fmt.Sprintf("Demo Sprint 06 remark %d-%d", score, index),
@@ -180,12 +187,12 @@ func (f *Factory) BuildTrainingReport(index int, completed bool) TrainingReport 
 		trainingType = "OFFLINE"
 	}
 	item := TrainingReport{
-		TrainingType:    trainingType,
-		Status:          "SCHEDULED",
-		ScheduledAt:     f.asOf.AddDate(0, 0, 2+index).Add(10 * time.Hour),
-		Location:        fmt.Sprintf("Kantor customer demo %02d", index),
-		MeetingURL:      fmt.Sprintf("https://meet.example.test/demo-%02d", index),
-		Note:            "Training/demo aplikasi dari factory",
+		TrainingType: trainingType,
+		Status:       "SCHEDULED",
+		ScheduledAt:  f.asOf.AddDate(0, 0, 2+index).Add(10 * time.Hour),
+		Location:     fmt.Sprintf("Kantor customer demo %02d", index),
+		MeetingURL:   fmt.Sprintf("https://meet.example.test/demo-%02d", index),
+		Note:         "Training/demo aplikasi dari factory",
 	}
 	if completed {
 		item.Status = "COMPLETED"
@@ -193,6 +200,14 @@ func (f *Factory) BuildTrainingReport(index int, completed bool) TrainingReport 
 		item.ResultNote = "Customer memahami flow kasir dan outlet."
 	}
 	return item
+}
+
+func nullableSeedStringCompat(value string) sql.NullString {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return sql.NullString{}
+	}
+	return sql.NullString{String: value, Valid: true}
 }
 
 func (f *Factory) CreateUser(ctx context.Context, tx *sql.Tx, user User) (int64, error) {
@@ -342,17 +357,19 @@ func (f *Factory) CreateInteraction(ctx context.Context, tx *sql.Tx, leadID int6
 
 	result, err := tx.ExecContext(ctx, `
 		INSERT INTO customer_interactions
-			(lead_id, owner_id, outlet_id, sales_id, supervisor_id, interaction_type, interaction_at,
+			(lead_id, owner_id, outlet_id, sales_id, supervisor_id, interaction_type, call_status, chat_status, interaction_at,
 			 remark_reason_id, remark_score, remark_code, remark_label, note, customer_response,
 			 follow_up_at, follow_up_note, stage_before, stage_after, status_before, status_after,
 			 score_before, score_after, created_by_user_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		leadID,
 		state.ownerID,
 		state.outletID,
 		state.salesID,
 		state.supervisorID,
 		interaction.Type,
+		nullableSeedStringCompat(interaction.CallStatus),
+		nullableSeedStringCompat(interaction.ChatStatus),
 		interaction.InteractionAt,
 		reasonID,
 		interaction.RemarkScore,

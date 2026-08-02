@@ -547,23 +547,25 @@ func (r *Repository) resolveClosingRemark(ctx context.Context, tx *sql.Tx) (Rema
 }
 
 func (r *Repository) insertClosingInteraction(ctx context.Context, tx *sql.Tx, actor identity.User, current LeadState, req CreateClosingRequest, closedAt time.Time, closingID int64, remark RemarkReason) error {
-	interactionType, err := normalizeInteractionType(req.InteractionType)
+	interactionType, err := resolveInteractionChannels(req.InteractionType, req.CallStatus, req.ChatStatus)
 	if err != nil {
 		return err
 	}
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO customer_interactions
-			(lead_id, owner_id, outlet_id, sales_id, supervisor_id, interaction_type, interaction_at,
+			(lead_id, owner_id, outlet_id, sales_id, supervisor_id, interaction_type, call_status, chat_status, interaction_at,
 			 contact_name, contact_phone, remark_reason_id, remark_score, remark_code, remark_label,
 			 note, customer_response, stage_before, stage_after, status_before, status_after,
 			 score_before, score_after, created_by_user_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		current.ID,
 		current.OwnerID,
 		current.OutletID,
 		current.ActiveSalesID,
 		current.SupervisorID,
 		interactionType,
+		nullableString(req.CallStatus),
+		nullableString(req.ChatStatus),
 		closedAt,
 		nullableString(req.ContactName),
 		nullableString(req.ContactPhone),

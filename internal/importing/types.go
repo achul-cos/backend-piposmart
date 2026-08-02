@@ -64,6 +64,7 @@ type ImportBatch struct {
 	OriginalFilename   string
 	FileSHA256         string
 	FilePath           string
+	FileBlob           []byte
 	Status             string
 	TotalRows          int
 	ValidRows          int

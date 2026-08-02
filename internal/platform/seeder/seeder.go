@@ -1002,104 +1002,656 @@ func seedPartialConfirmDemo(ctx context.Context, tx *sql.Tx, orderID int64) erro
 }
 
 func seedPartnersDemo(ctx context.Context, tx *sql.Tx, fake *factory.Factory) error {
-	supTypeID, err := lookupID(ctx, tx, "partner_types", "code", "REFERRAL")
+	type partnerSeedInfo struct {
+		PartnerID     int64
+		PartnerTypeID int64
+		PartnerCode   string
+	}
+	type referralSeedInfo struct {
+		PartnerID     int64
+		PartnerTypeID int64
+		PartnerCode   string
+		ReferralID    int64
+		LeadID        int64
+	}
+
+	partnerTypeIDs := map[string]int64{}
+	for _, code := range []string{"REFERRAL", "PARTNERSHIP", "STRATEGIC"} {
+		typeID, err := lookupID(ctx, tx, "partner_types", "code", code)
+		if err != nil {
+			return err
+		}
+		partnerTypeIDs[code] = typeID
+	}
+
+	adminID, err := lookupID(ctx, tx, "users", "code", "ADM-001")
+	if err != nil || adminID == 0 {
+		adminID = 1
+	}
+	supervisorIDs, err := lookupUserIDsByRole(ctx, tx, "SUPERVISOR")
 	if err != nil {
 		return err
 	}
-	disTypeID, err := lookupID(ctx, tx, "partner_types", "code", "PARTNERSHIP")
+	salesIDs, err := lookupUserIDsByRole(ctx, tx, "SALES")
 	if err != nil {
 		return err
 	}
-	refTypeID, err := lookupID(ctx, tx, "partner_types", "code", "STRATEGIC")
+	if len(supervisorIDs) == 0 {
+		supervisorIDs = []int64{adminID}
+	}
+	if len(salesIDs) == 0 {
+		salesIDs = []int64{adminID}
+	}
+
+	leadCount, err := countTableRows(ctx, tx, "SELECT COUNT(*) FROM customer_leads WHERE deleted_at IS NULL")
+	if err != nil {
+		return err
+	}
+	targetPartners := 18
+	if leadCount > 18 {
+		targetPartners = minInt(160, maxInt(18, leadCount/40))
+	}
+
+	confirmedClosings, err := ensurePartnerDemoConfirmedClosings(ctx, tx, fake, 5)
 	if err != nil {
 		return err
 	}
 
-	spvID, err := lookupID(ctx, tx, "users", "code", "SPV-001")
+	leadIDs, err := lookupLeadIDs(ctx, tx, maxInt(targetPartners*2, len(confirmedClosings)+5))
 	if err != nil {
-		spvID = 2
+		return err
 	}
-	slsID, err := lookupID(ctx, tx, "users", "code", "SLS-001")
-	if err != nil {
-		slsID = 3
-	}
-	admID, _ := lookupID(ctx, tx, "users", "code", "ADM-001")
-	if admID == 0 {
-		admID = 1
+	if len(leadIDs) == 0 {
+		return nil
 	}
 
-	partnersData := []struct {
-		typeID                                                int64
-		code, name, phone, email, address, bankLast4, encBank string
-	}{
-		{supTypeID, "SUP-001", "PT Hardware Maju POS", "08123456001", "contact@posmaju.demo.id", "Jl. Industri Hardware No. 12, Jakarta", "5678", "enc_bank_account_001"},
-		{disTypeID, "DIS-001", "CV Digital Software Solution", "08123456002", "sales@digitalsft.demo.id", "Jl. Teknologi No. 45, Bandung", "1234", "enc_bank_account_002"},
-		{refTypeID, "REF-001", "Komunitas UMKM Kopi Indonesia", "08123456003", "info@umkmkopi.demo.id", "Jl. Pemuda No. 8, Surabaya", "9876", "enc_bank_account_003"},
+	baseAt := time.Date(2026, 7, 1, 9, 0, 0, 0, time.UTC)
+	typeCycle := []string{"REFERRAL", "PARTNERSHIP", "STRATEGIC"}
+	typeLabel := map[string]string{
+		"REFERRAL":    "Referral",
+		"PARTNERSHIP": "Partnership",
+		"STRATEGIC":   "Strategic",
 	}
 
-	partnerIDs := make(map[string]int64)
-	for _, p := range partnersData {
-		res, err := tx.ExecContext(ctx, `
-			INSERT INTO partners (partner_type_id, code, name, phone, email, address, bank_account_encrypted, bank_account_last4, status, created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', NOW(), NOW())
-			ON DUPLICATE KEY UPDATE partner_type_id = VALUES(partner_type_id), name = VALUES(name), phone = VALUES(phone)`,
-			p.typeID, p.code, p.name, p.phone, p.email, p.address, []byte(p.encBank), p.bankLast4,
+	partners := make([]partnerSeedInfo, 0, targetPartners)
+	referralsByLead := make(map[int64]referralSeedInfo)
+	referralCursor := 0
+
+	for i := 1; i <= targetPartners; i++ {
+		typeCode := typeCycle[(i-1)%len(typeCycle)]
+		partner := fake.BuildPartner(typeCode, i)
+		partner.Name = fmt.Sprintf("Mitra %s Demo %03d", typeLabel[typeCode], i)
+		partner.Address = fmt.Sprintf("Jl. Mitra Demo No. %d, Indonesia", i)
+		partner.BankAccount = fmt.Sprintf("52701234%04d", 1000+i)
+		if i%7 == 0 {
+			partner.Status = "INACTIVE"
+		} else {
+			partner.Status = "ACTIVE"
+		}
+
+		result, err := tx.ExecContext(ctx, `
+			INSERT INTO partners
+				(partner_type_id, code, name, phone, email, address, bank_account_encrypted, bank_account_last4, status, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
+			ON DUPLICATE KEY UPDATE
+				partner_type_id = VALUES(partner_type_id),
+				name = VALUES(name),
+				phone = VALUES(phone),
+				email = VALUES(email),
+				address = VALUES(address),
+				bank_account_encrypted = VALUES(bank_account_encrypted),
+				bank_account_last4 = VALUES(bank_account_last4),
+				status = VALUES(status),
+				updated_at = NOW()`,
+			partnerTypeIDs[typeCode],
+			partner.Code,
+			partner.Name,
+			partner.Phone,
+			partner.Email,
+			partner.Address,
+			[]byte("enc_"+partner.BankAccount),
+			partner.BankAccount[len(partner.BankAccount)-4:],
+			partner.Status,
 		)
 		if err != nil {
-			return fmt.Errorf("seed partner %s: %w", p.code, err)
+			return fmt.Errorf("seed partner %s: %w", partner.Code, err)
 		}
-		id, _ := res.LastInsertId()
-		if id == 0 {
-			id, _ = lookupID(ctx, tx, "partners", "code", p.code)
+		partnerID, _ := result.LastInsertId()
+		if partnerID == 0 {
+			partnerID, err = lookupID(ctx, tx, "partners", "code", partner.Code)
+			if err != nil {
+				return err
+			}
 		}
-		partnerIDs[p.code] = id
-	}
 
-	if pid, ok := partnerIDs["SUP-001"]; ok && pid > 0 {
-		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO partner_assignments (partner_id, user_id, assigned_by_id, assigned_at, active, created_at, updated_at)
-			VALUES (?, ?, ?, NOW(), TRUE, NOW(), NOW())
-			ON DUPLICATE KEY UPDATE active = TRUE`,
-			pid, spvID, admID,
-		); err != nil {
-			return fmt.Errorf("seed assignment SUP-001: %w", err)
+		if err := resetPartnerDemoChildren(ctx, tx, partnerID); err != nil {
+			return err
 		}
-	}
-	if pid, ok := partnerIDs["DIS-001"]; ok && pid > 0 {
-		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO partner_assignments (partner_id, user_id, assigned_by_id, assigned_at, active, created_at, updated_at)
-			VALUES (?, ?, ?, NOW(), TRUE, NOW(), NOW())
-			ON DUPLICATE KEY UPDATE active = TRUE`,
-			pid, slsID, spvID,
-		); err != nil {
-			return fmt.Errorf("seed assignment DIS-001: %w", err)
-		}
-	}
 
-	if pid, ok := partnerIDs["SUP-001"]; ok && pid > 0 {
+		partners = append(partners, partnerSeedInfo{
+			PartnerID:     partnerID,
+			PartnerTypeID: partnerTypeIDs[typeCode],
+			PartnerCode:   partner.Code,
+		})
+
+		assignedAt := baseAt.AddDate(0, 0, i)
+		if i%4 == 0 {
+			historicalUserID := salesIDs[i%len(salesIDs)]
+			if _, err := tx.ExecContext(ctx, `
+				INSERT INTO partner_assignments
+					(partner_id, user_id, assigned_by_id, assigned_at, unassigned_at, active, created_at, updated_at)
+				VALUES (?, ?, ?, ?, ?, FALSE, NOW(), NOW())`,
+				partnerID, historicalUserID, adminID, assignedAt.AddDate(0, 0, -10), assignedAt.AddDate(0, 0, -2),
+			); err != nil {
+				return fmt.Errorf("seed historical partner assignment %s: %w", partner.Code, err)
+			}
+		}
+		switch {
+		case i%6 == 0:
+			// intentionally leave without active PIC to show unassigned state
+		case i%5 == 0:
+			if _, err := tx.ExecContext(ctx, `
+				INSERT INTO partner_assignments
+					(partner_id, user_id, assigned_by_id, assigned_at, active, created_at, updated_at)
+				VALUES (?, ?, ?, ?, TRUE, NOW(), NOW())`,
+				partnerID, supervisorIDs[(i-1)%len(supervisorIDs)], adminID, assignedAt,
+			); err != nil {
+				return fmt.Errorf("seed supervisor partner assignment %s: %w", partner.Code, err)
+			}
+		default:
+			if _, err := tx.ExecContext(ctx, `
+				INSERT INTO partner_assignments
+					(partner_id, user_id, assigned_by_id, assigned_at, active, created_at, updated_at)
+				VALUES (?, ?, ?, ?, TRUE, NOW(), NOW())`,
+				partnerID, salesIDs[(i-1)%len(salesIDs)], supervisorIDs[(i-1)%len(supervisorIDs)], assignedAt,
+			); err != nil {
+				return fmt.Errorf("seed sales partner assignment %s: %w", partner.Code, err)
+			}
+		}
+
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO partner_interactions (partner_id, interaction_type, interaction_at, note, created_at)
-			VALUES (?, 'CALL', NOW(), 'Diskusi penawaran paket bundle POS Kasir edisi Juli 2026', NOW())`,
-			pid,
+			VALUES (?, 'CALL', ?, ?, NOW())`,
+			partnerID,
+			assignedAt.Add(2*time.Hour),
+			fmt.Sprintf("Call mitra demo %s untuk penawaran dan silaturahmi", partner.Code),
 		); err != nil {
-			return fmt.Errorf("seed interaction SUP-001: %w", err)
+			return fmt.Errorf("seed partner interaction CALL %s: %w", partner.Code, err)
 		}
-	}
-
-	leadID, err := lookupFirstLeadID(ctx, tx)
-	if err == nil && leadID > 0 {
-		if pid, ok := partnerIDs["REF-001"]; ok && pid > 0 {
+		if i%2 == 0 {
 			if _, err := tx.ExecContext(ctx, `
-				INSERT INTO partner_referrals (partner_id, lead_id, referral_date, notes, created_at)
-				VALUES (?, ?, NOW(), 'Komunitas UMKM merujuk lead Owner Kopi Kenangan', NOW())
-				ON DUPLICATE KEY UPDATE notes = VALUES(notes)`,
-				pid, leadID,
+				INSERT INTO partner_interactions (partner_id, interaction_type, interaction_at, note, created_at)
+				VALUES (?, 'CHAT', ?, ?, NOW())`,
+				partnerID,
+				assignedAt.Add(5*time.Hour),
+				fmt.Sprintf("Chat follow up mitra demo %s terkait prospek owner laundry", partner.Code),
 			); err != nil {
-				return fmt.Errorf("seed referral REF-001: %w", err)
+				return fmt.Errorf("seed partner interaction CHAT %s: %w", partner.Code, err)
+			}
+		}
+
+		referralPerPartner := 1
+		if i%3 == 0 {
+			referralPerPartner = 2
+		}
+		for r := 0; r < referralPerPartner && referralCursor < len(leadIDs); r++ {
+			leadID := leadIDs[referralCursor]
+			referralCursor++
+			result, err := tx.ExecContext(ctx, `
+				INSERT INTO partner_referrals (partner_id, lead_id, referral_date, notes, created_at)
+				VALUES (?, ?, ?, ?, NOW())`,
+				partnerID,
+				leadID,
+				assignedAt.AddDate(0, 0, r+1),
+				fmt.Sprintf("Referral demo %s untuk lead %d", partner.Code, leadID),
+			)
+			if err != nil {
+				return fmt.Errorf("seed partner referral %s lead=%d: %w", partner.Code, leadID, err)
+			}
+			referralID, err := result.LastInsertId()
+			if err != nil {
+				return fmt.Errorf("seed partner referral id %s: %w", partner.Code, err)
+			}
+			if _, exists := referralsByLead[leadID]; !exists {
+				referralsByLead[leadID] = referralSeedInfo{
+					PartnerID:     partnerID,
+					PartnerTypeID: partnerTypeIDs[typeCode],
+					PartnerCode:   partner.Code,
+					ReferralID:    referralID,
+					LeadID:        leadID,
+				}
 			}
 		}
 	}
+
+	commissionScenarios := []struct {
+		Status          string
+		BuildPending    bool
+		BuildPaid       bool
+		BuildCancelledP bool
+	}{
+		{Status: "PENDING"},
+		{Status: "APPROVED", BuildPending: true},
+		{Status: "PAID", BuildPaid: true},
+		{Status: "CANCELLED"},
+		{Status: "APPROVED", BuildCancelledP: true},
+	}
+
+	for idx, scenario := range commissionScenarios {
+		if idx >= len(confirmedClosings) {
+			break
+		}
+		closingInfo := confirmedClosings[idx]
+		referral, ok := referralsByLead[closingInfo.LeadID]
+		if !ok {
+			continue
+		}
+		ruleID, commissionMode, commissionValue, err := lookupPartnerCommissionSnapshot(ctx, tx, referral.PartnerTypeID, closingInfo.PlanID)
+		if err != nil {
+			return err
+		}
+		commissionAmount, err := calculatePartnerCommissionAmount(closingInfo.FinalAmount, commissionMode, commissionValue)
+		if err != nil {
+			return err
+		}
+		approvedAt := sql.NullTime{}
+		paidAt := sql.NullTime{}
+		approvedBy := sql.NullInt64{}
+		paidBy := sql.NullInt64{}
+		if scenario.Status == "APPROVED" || scenario.Status == "PAID" {
+			approvedAt = sql.NullTime{Time: closingInfo.ConfirmedAt.Add(24 * time.Hour), Valid: true}
+			approvedBy = sql.NullInt64{Int64: adminID, Valid: true}
+		}
+		if scenario.Status == "PAID" {
+			paidAt = sql.NullTime{Time: closingInfo.ConfirmedAt.Add(72 * time.Hour), Valid: true}
+			paidBy = sql.NullInt64{Int64: adminID, Valid: true}
+		}
+		code := fmt.Sprintf("DEMO-COM-%03d", idx+1)
+		result, err := tx.ExecContext(ctx, `
+			INSERT INTO partner_commissions
+				(code, partner_id, referral_id, closing_id, commission_mode, commission_value, commission_rule_id,
+				 base_amount, commission_amount, currency, status, note, approved_by_user_id, approved_at, paid_by_user_id, paid_at, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+			code,
+			referral.PartnerID,
+			referral.ReferralID,
+			closingInfo.ClosingID,
+			commissionMode,
+			commissionValue,
+			ruleID,
+			closingInfo.FinalAmount,
+			commissionAmount,
+			closingInfo.Currency,
+			scenario.Status,
+			fmt.Sprintf("Demo komisi %s untuk mitra %s", scenario.Status, referral.PartnerCode),
+			approvedBy,
+			approvedAt,
+			paidBy,
+			paidAt,
+		)
+		if err != nil {
+			return fmt.Errorf("seed partner commission %s: %w", code, err)
+		}
+		commissionID, err := result.LastInsertId()
+		if err != nil {
+			return err
+		}
+		switch {
+		case scenario.BuildPending:
+			if err := seedPartnerPayoutDemo(ctx, tx, partnerPayoutSeedInput{
+				Code:             fmt.Sprintf("DEMO-PAYOUT-PENDING-%03d", idx+1),
+				PartnerID:        referral.PartnerID,
+				CommissionID:     commissionID,
+				Amount:           commissionAmount,
+				Status:           "PENDING",
+				PreparedByUserID: adminID,
+			}); err != nil {
+				return err
+			}
+		case scenario.BuildPaid:
+			if err := seedPartnerPayoutDemo(ctx, tx, partnerPayoutSeedInput{
+				Code:             fmt.Sprintf("DEMO-PAYOUT-PAID-%03d", idx+1),
+				PartnerID:        referral.PartnerID,
+				CommissionID:     commissionID,
+				Amount:           commissionAmount,
+				Status:           "PAID",
+				PreparedByUserID: adminID,
+				PaidByUserID:     adminID,
+				PaidAt:           sql.NullTime{Time: closingInfo.ConfirmedAt.Add(96 * time.Hour), Valid: true},
+			}); err != nil {
+				return err
+			}
+		case scenario.BuildCancelledP:
+			if err := seedPartnerPayoutDemo(ctx, tx, partnerPayoutSeedInput{
+				Code:             fmt.Sprintf("DEMO-PAYOUT-CANCELLED-%03d", idx+1),
+				PartnerID:        referral.PartnerID,
+				CommissionID:     commissionID,
+				Amount:           commissionAmount,
+				Status:           "CANCELLED",
+				PreparedByUserID: adminID,
+			}); err != nil {
+				return err
+			}
+		}
+	}
+
 	return nil
+}
+
+type partnerClosingSeedInfo struct {
+	LeadID      int64
+	ClosingID   int64
+	PlanID      int64
+	FinalAmount string
+	Currency    string
+	ConfirmedAt time.Time
+}
+
+type partnerPayoutSeedInput struct {
+	Code             string
+	PartnerID        int64
+	CommissionID     int64
+	Amount           string
+	Status           string
+	PreparedByUserID int64
+	PaidByUserID     int64
+	PaidAt           sql.NullTime
+}
+
+func resetPartnerDemoChildren(ctx context.Context, tx *sql.Tx, partnerID int64) error {
+	if _, err := tx.ExecContext(ctx, `
+		DELETE ppi FROM partner_payout_items ppi
+		INNER JOIN partner_payouts pp ON pp.id = ppi.payout_id
+		WHERE pp.partner_id = ?`, partnerID); err != nil {
+		return fmt.Errorf("reset partner payout items partner=%d: %w", partnerID, err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM partner_payouts WHERE partner_id = ?`, partnerID); err != nil {
+		return fmt.Errorf("reset partner payouts partner=%d: %w", partnerID, err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM partner_commissions WHERE partner_id = ?`, partnerID); err != nil {
+		return fmt.Errorf("reset partner commissions partner=%d: %w", partnerID, err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM partner_referrals WHERE partner_id = ?`, partnerID); err != nil {
+		return fmt.Errorf("reset partner referrals partner=%d: %w", partnerID, err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM partner_interactions WHERE partner_id = ?`, partnerID); err != nil {
+		return fmt.Errorf("reset partner interactions partner=%d: %w", partnerID, err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM partner_assignments WHERE partner_id = ?`, partnerID); err != nil {
+		return fmt.Errorf("reset partner assignments partner=%d: %w", partnerID, err)
+	}
+	return nil
+}
+
+func seedPartnerPayoutDemo(ctx context.Context, tx *sql.Tx, input partnerPayoutSeedInput) error {
+	result, err := tx.ExecContext(ctx, `
+		INSERT INTO partner_payouts
+			(code, partner_id, total_amount, currency, status, note, prepared_by_user_id, paid_by_user_id, paid_at, created_at, updated_at)
+		VALUES (?, ?, ?, 'IDR', ?, ?, ?, ?, ?, NOW(), NOW())`,
+		input.Code,
+		input.PartnerID,
+		input.Amount,
+		input.Status,
+		fmt.Sprintf("Demo payout %s", input.Status),
+		input.PreparedByUserID,
+		nullableInt64(input.PaidByUserID),
+		input.PaidAt,
+	)
+	if err != nil {
+		return fmt.Errorf("seed partner payout %s: %w", input.Code, err)
+	}
+	payoutID, err := result.LastInsertId()
+	if err != nil {
+		return err
+	}
+	releasedAt := sql.NullTime{}
+	if input.Status == "CANCELLED" {
+		releasedAt = sql.NullTime{Time: time.Date(2026, 7, 28, 10, 0, 0, 0, time.UTC), Valid: true}
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO partner_payout_items (payout_id, commission_id, amount, released_at, created_at, updated_at)
+		VALUES (?, ?, ?, ?, NOW(), NOW())`,
+		payoutID,
+		input.CommissionID,
+		input.Amount,
+		releasedAt,
+	); err != nil {
+		return fmt.Errorf("seed partner payout item %s: %w", input.Code, err)
+	}
+	return nil
+}
+
+func ensurePartnerDemoConfirmedClosings(ctx context.Context, tx *sql.Tx, fake *factory.Factory, minimum int) ([]partnerClosingSeedInfo, error) {
+	items, err := lookupConfirmedClosingsForPartnerSeed(ctx, tx, minimum)
+	if err != nil {
+		return nil, err
+	}
+	if len(items) >= minimum {
+		return items, nil
+	}
+
+	salesEmails, err := lookupUserEmailsByRole(ctx, tx, "SALES")
+	if err != nil {
+		return nil, err
+	}
+	if len(salesEmails) == 0 {
+		return items, nil
+	}
+
+	startIndex := 90000 + len(items) + 1
+	for len(items) < minimum {
+		index := startIndex + len(items)
+		owner := fake.BuildOwner(index)
+		owner.Name = fmt.Sprintf("Owner Mitra Demo %03d", index)
+		owner.BrandName = fmt.Sprintf("Laundry Mitra Demo %03d", index)
+		owner.Email = fmt.Sprintf("owner.mitra.demo.%03d@example.test", index)
+		ownerID, err := fake.CreateOwner(ctx, tx, owner)
+		if err != nil {
+			return nil, err
+		}
+		outlet := fake.BuildOutlet(owner.Code, 1, owner)
+		outletID, err := fake.CreateOutlet(ctx, tx, ownerID, outlet)
+		if err != nil {
+			return nil, err
+		}
+		lead := fake.BuildLead(owner.Code, 1, salesEmails[len(items)%len(salesEmails)])
+		lead.Stage = "POTENTIAL"
+		lead.SourceType = "PARTNER_DEMO"
+		lead.SourceReference = fmt.Sprintf("partner-seed-%06d", index)
+		leadID, err := fake.CreateLead(ctx, tx, ownerID, outletID, lead)
+		if err != nil {
+			return nil, err
+		}
+		interaction := fake.BuildInteraction(index, 2)
+		interaction.Note = fmt.Sprintf("Interaksi mitra demo %06d", index)
+		if _, err := fake.CreateInteraction(ctx, tx, leadID, interaction); err != nil {
+			return nil, err
+		}
+		closing := fake.BuildClosing(index, "BUSINESS_12_MONTHS", "FREE_1_MONTH_BUSINESS_12", "CONFIRMED")
+		closing.Note = fmt.Sprintf("Closing mitra demo %06d", index)
+		closingID, err := fake.CreateClosing(ctx, tx, leadID, closing)
+		if err != nil {
+			return nil, err
+		}
+		order := fake.BuildSubscriptionOrder(index, closing.PlanCode, closing.PromotionCode, sql.NullInt64{Int64: closingID, Valid: true})
+		order.ExternalReference = fmt.Sprintf("DEMO-MITRA-SUB-%06d", index)
+		order.IdempotencyKey = fmt.Sprintf("demo:mitra:subscription:%06d", index)
+		topupAmount, err := fake.ResolveSubscriptionOrderTopupAmount(ctx, tx, ownerID, order, "2500000.00")
+		if err != nil {
+			return nil, err
+		}
+		topup := fake.BuildWalletTopup(index, topupAmount)
+		topup.ExternalReference = fmt.Sprintf("DEMO-MITRA-TOPUP-%06d", index)
+		topup.IdempotencyKey = fmt.Sprintf("demo:mitra:topup:%06d", index)
+		if _, err := fake.CreateWalletTopup(ctx, tx, ownerID, topup); err != nil {
+			return nil, err
+		}
+		if _, err := fake.CreateSubscriptionOrder(ctx, tx, ownerID, order); err != nil {
+			return nil, err
+		}
+		items, err = lookupConfirmedClosingsForPartnerSeed(ctx, tx, minimum)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return items, nil
+}
+
+func lookupConfirmedClosingsForPartnerSeed(ctx context.Context, tx *sql.Tx, limit int) ([]partnerClosingSeedInfo, error) {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT sc.lead_id, sc.id, sc.plan_id, CAST(sc.final_amount AS CHAR), sc.currency, COALESCE(sc.confirmed_at, sc.closed_at)
+		FROM sales_closings sc
+		WHERE sc.deleted_at IS NULL
+		  AND sc.status = 'CONFIRMED'
+		ORDER BY COALESCE(sc.confirmed_at, sc.closed_at) ASC, sc.id ASC
+		LIMIT ?`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("lookup confirmed closings for partner seed: %w", err)
+	}
+	defer rows.Close()
+
+	var items []partnerClosingSeedInfo
+	for rows.Next() {
+		var item partnerClosingSeedInfo
+		if err := rows.Scan(&item.LeadID, &item.ClosingID, &item.PlanID, &item.FinalAmount, &item.Currency, &item.ConfirmedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func lookupLeadIDs(ctx context.Context, tx *sql.Tx, limit int) ([]int64, error) {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT id
+		FROM customer_leads
+		WHERE deleted_at IS NULL
+		ORDER BY id
+		LIMIT ?`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("lookup lead ids: %w", err)
+	}
+	defer rows.Close()
+
+	items := make([]int64, 0, limit)
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	return items, rows.Err()
+}
+
+func lookupUserIDsByRole(ctx context.Context, tx *sql.Tx, roleCode string) ([]int64, error) {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT u.id
+		FROM users u
+		INNER JOIN roles r ON r.id = u.role_id
+		WHERE r.code = ? AND u.deleted_at IS NULL
+		ORDER BY u.id`, roleCode)
+	if err != nil {
+		return nil, fmt.Errorf("lookup user ids role=%s: %w", roleCode, err)
+	}
+	defer rows.Close()
+
+	var items []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	return items, rows.Err()
+}
+
+func lookupUserEmailsByRole(ctx context.Context, tx *sql.Tx, roleCode string) ([]string, error) {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT u.email
+		FROM users u
+		INNER JOIN roles r ON r.id = u.role_id
+		WHERE r.code = ? AND u.deleted_at IS NULL
+		ORDER BY u.id`, roleCode)
+	if err != nil {
+		return nil, fmt.Errorf("lookup user emails role=%s: %w", roleCode, err)
+	}
+	defer rows.Close()
+
+	var items []string
+	for rows.Next() {
+		var email string
+		if err := rows.Scan(&email); err != nil {
+			return nil, err
+		}
+		items = append(items, email)
+	}
+	return items, rows.Err()
+}
+
+func countTableRows(ctx context.Context, tx *sql.Tx, query string, args ...any) (int, error) {
+	var total int
+	if err := tx.QueryRowContext(ctx, query, args...).Scan(&total); err != nil {
+		return 0, err
+	}
+	return total, nil
+}
+
+func lookupPartnerCommissionSnapshot(ctx context.Context, tx *sql.Tx, partnerTypeID, planID int64) (sql.NullInt64, string, string, error) {
+	var ruleID int64
+	var mode string
+	var value sql.NullString
+	err := tx.QueryRowContext(ctx, `
+		SELECT id, mode, CAST(value AS CHAR)
+		FROM commission_rules
+		WHERE partner_type_id = ?
+		  AND active = TRUE
+		  AND (plan_id = ? OR plan_id IS NULL)
+		ORDER BY CASE WHEN plan_id = ? THEN 0 ELSE 1 END, effective_from DESC, id DESC
+		LIMIT 1`, partnerTypeID, planID, planID).Scan(&ruleID, &mode, &value)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		err = tx.QueryRowContext(ctx, `
+			SELECT commission_mode, CAST(commission_value AS CHAR)
+			FROM partner_types
+			WHERE id = ?`, partnerTypeID).Scan(&mode, &value)
+		if err != nil {
+			return sql.NullInt64{}, "", "", fmt.Errorf("lookup fallback partner type commission id=%d: %w", partnerTypeID, err)
+		}
+		return sql.NullInt64{}, mode, value.String, nil
+	case err != nil:
+		return sql.NullInt64{}, "", "", fmt.Errorf("lookup commission rule partner_type=%d plan=%d: %w", partnerTypeID, planID, err)
+	default:
+		return sql.NullInt64{Int64: ruleID, Valid: true}, mode, value.String, nil
+	}
+}
+
+func calculatePartnerCommissionAmount(baseAmount, mode, value string) (string, error) {
+	baseCents, err := parseDecimalToCents(baseAmount)
+	if err != nil {
+		return "", err
+	}
+	valueCents, err := parseDecimalToCents(value)
+	if err != nil {
+		return "", err
+	}
+	switch strings.ToUpper(strings.TrimSpace(mode)) {
+	case "FIXED":
+		return value, nil
+	case "PERCENTAGE":
+		amountCents := (baseCents * valueCents) / 10000
+		return formatCentsToDecimal(amountCents), nil
+	default:
+		return "", fmt.Errorf("mode komisi seed tidak didukung: %s", mode)
+	}
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 func lookupFirstLeadID(ctx context.Context, tx *sql.Tx) (int64, error) {

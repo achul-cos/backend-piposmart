@@ -2,6 +2,7 @@ package activity
 
 import (
 	"errors"
+	"io"
 	"net/http"
 	"strconv"
 
@@ -297,7 +298,9 @@ func (h *Handler) completeTraining(c *gin.Context) {
 		return
 	}
 	var req CompleteTrainingRequest
-	_ = c.ShouldBindJSON(&req)
+	if !bindOptionalJSON(c, &req) {
+		return
+	}
 	response, err := h.service.CompleteTraining(c.Request.Context(), user, trainingID, req)
 	if err != nil {
 		writeError(c, err)
@@ -313,7 +316,9 @@ func (h *Handler) cancelTraining(c *gin.Context) {
 		return
 	}
 	var req CancelTrainingRequest
-	_ = c.ShouldBindJSON(&req)
+	if !bindOptionalJSON(c, &req) {
+		return
+	}
 	response, err := h.service.CancelTraining(c.Request.Context(), user, trainingID, req)
 	if err != nil {
 		writeError(c, err)
@@ -425,6 +430,17 @@ func bindJSON(c *gin.Context, target any) bool {
 	return true
 }
 
+func bindOptionalJSON(c *gin.Context, target any) bool {
+	if err := c.ShouldBindJSON(target); err != nil {
+		if errors.Is(err, io.EOF) {
+			return true
+		}
+		httpx.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", "Payload request tidak valid", gin.H{"error": err.Error()})
+		return false
+	}
+	return true
+}
+
 func writeError(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, ErrNotFound):
@@ -435,6 +451,12 @@ func writeError(c *gin.Context, err error) {
 		httpx.Error(c, http.StatusBadRequest, "INVALID_SORT", err.Error(), nil)
 	case errors.Is(err, ErrInvalidScore):
 		httpx.Error(c, http.StatusBadRequest, "INVALID_SCORE", err.Error(), nil)
+	case errors.Is(err, ErrInteractionEmpty):
+		httpx.Error(c, http.StatusBadRequest, "INTERACTION_CHANNEL_REQUIRED", err.Error(), gin.H{
+			"root_cause":       "request interaction tidak mengirim status call/chat dan tidak mengirim fallback type lama",
+			"solution":         "kirim minimal salah satu field call_status atau chat_status. Field type lama masih didukung untuk kompatibilitas, tetapi bukan format utama.",
+			"frontend_prevent": "pastikan form mengharuskan minimal satu status channel sebelum submit",
+		})
 	case errors.Is(err, ErrInvalidType):
 		httpx.Error(c, http.StatusBadRequest, "INVALID_TYPE", err.Error(), nil)
 	case errors.Is(err, ErrRemarkNotFound):

@@ -1,8 +1,8 @@
 ﻿openapi: 3.0.3
 info:
   title: Backend CRM Piposmart
-  version: 0.16.0-sprint-14g-analytics
-  description: API CRM Piposmart dengan Partner Type, Partner (Encrypted & Masked Bank Account), PIC Assignment, Call Interactions, Lead Referrals, Subscription Order, Reconciliation Sprint 11, Partner Commission Sprint 12, penambahan route trash/unscoped owner-outlet dan rekap status langganan outlet Sprint 14b/14c, histori import persisten dengan viewer/download file asli Sprint 14 history, route /all dan /all-deleted lintas modul untuk kebutuhan frontend mengambil full dataset tanpa pagination, penambahan manajemen akun Admin dan Supervisor beserta reset password lintas role pada Sprint 14f, serta dokumentasi Analytics Sprint 14g1 sampai 14g5 untuk catalog diagram dan query analytics lintas modul.
+  version: 0.17.0-sprint-16
+  description: API CRM Piposmart dengan Partner Type, Partner (Encrypted & Masked Bank Account), PIC Assignment, Lead Referrals, Subscription Order, Reconciliation Sprint 11, Partner Commission Sprint 12, penambahan route trash/unscoped owner-outlet dan rekap status langganan outlet Sprint 14b/14c, histori import persisten dengan viewer/download file asli Sprint 14 history, route /all dan /all-deleted lintas modul untuk kebutuhan frontend mengambil full dataset tanpa pagination, penambahan manajemen akun Admin dan Supervisor beserta reset password lintas role pada Sprint 14f, dokumentasi Analytics Sprint 14g1 sampai 14g5, revisi Sprint 15b agar satu interaction dapat menyimpan status CALL dan CHAT sekaligus dalam satu record, serta penambahan Dashboard Reporting dan Async Report Export Sprint 16.
 servers:
   - url: http://localhost:8080
 paths:
@@ -333,6 +333,25 @@ paths:
               schema:
                 $ref: "#/components/schemas/SuccessEnvelope"
   /api/v1/admins:
+    get:
+      summary: List akun Admin
+      operationId: listAdmins
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [ACTIVE, INACTIVE]
+      responses:
+        "200":
+          description: List Admin
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
     post:
       summary: Membuat akun Admin
       description: Hanya Admin yang dapat membuat akun Admin baru.
@@ -4264,6 +4283,297 @@ paths:
                 $ref: "#/components/schemas/SuccessEnvelope"
         "403":
           description: Akses ditolak (bukan ADMIN/SUPERVISOR)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+  /api/v1/reports/dashboard:
+    get:
+      tags: [Reports]
+      summary: Dashboard reporting lintas modul
+      operationId: getReportsDashboard
+      description: Ringkasan kartu dashboard untuk owner, outlet, subscription aktif, jumlah topup diterima, revenue topup, jumlah closing confirmed, dan omset closing confirmed. Sales hanya melihat data sesuai visibility miliknya.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: date_from
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+          description: Tanggal awal filter. Jika kosong, backend menggunakan default periode internal.
+        - name: date_to
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+          description: Tanggal akhir filter. Jika kosong, backend menggunakan default periode internal.
+      responses:
+        "200":
+          description: Dashboard reporting berhasil diambil
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReportDashboardSuccessEnvelope"
+        "403":
+          description: Actor tidak memiliki akses report
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "500":
+          description: Terjadi error tak terduga saat menghitung dashboard
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+  /api/v1/reports/{report_key}:
+    get:
+      tags: [Reports]
+      summary: List report generik untuk tabel reporting
+      operationId: listReportByKey
+      description: Mengembalikan report generik berbentuk `columns` + `items` agar frontend mudah membangun tabel lintas modul. Report key yang didukung yaitu `owners_outlets`, `activities`, `topups`, `closings`, `subscriptions`, `partners`, dan `targets_kpi`.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: report_key
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [owners_outlets, activities, topups, closings, subscriptions, partners, targets_kpi]
+        - name: date_from
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: date_to
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: status
+          in: query
+          schema:
+            type: string
+          description: Filter status sesuai modul report yang dipilih.
+        - name: q
+          in: query
+          schema:
+            type: string
+          description: Pencarian umum.
+        - name: province
+          in: query
+          schema:
+            type: string
+        - name: city
+          in: query
+          schema:
+            type: string
+        - name: sales_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+          description: Opsional. Umumnya dipakai Admin/Supervisor untuk narrowing data sales tertentu.
+        - name: supervisor_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+          description: Opsional. Dipakai untuk narrowing data per supervisor bila report mendukung.
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+            minimum: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+            minimum: 1
+            maximum: 100
+        - name: all
+          in: query
+          schema:
+            type: boolean
+            default: false
+          description: Jika `true`, backend mengembalikan seluruh item tanpa pagination praktis untuk keperluan export atau tabel penuh.
+      responses:
+        "200":
+          description: Report berhasil diambil
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReportListSuccessEnvelope"
+        "400":
+          description: "report_key tidak dikenali atau parameter query tidak valid"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "403":
+          description: Actor tidak memiliki akses terhadap report yang diminta
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "500":
+          description: Error internal saat membangun report
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+  /api/v1/reports/exports:
+    post:
+      tags: [Reports]
+      summary: Buat export report async
+      operationId: createReportExport
+      description: Membuat request export report ke antrean worker. File dihasilkan secara asynchronous dengan status `PENDING`, `PROCESSING`, `COMPLETED`, atau `FAILED`.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateReportExportRequest"
+      responses:
+        "202":
+          description: Export berhasil dibuat dan job dimasukkan ke antrean
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReportExportDetailSuccessEnvelope"
+        "400":
+          description: Format export atau report key tidak valid
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "403":
+          description: Actor tidak memiliki akses ke report yang diminta
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "500":
+          description: Gagal membuat export atau enqueue job
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+    get:
+      tags: [Reports]
+      summary: List histori report export
+      operationId: listReportExports
+      description: Admin dan Supervisor dapat melihat histori export yang lebih luas. Sales hanya dapat melihat export miliknya sendiri.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+            minimum: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+            minimum: 1
+            maximum: 100
+      responses:
+        "200":
+          description: Histori export berhasil diambil
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReportExportListSuccessEnvelope"
+        "403":
+          description: Actor tidak memiliki akses export
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+  /api/v1/reports/exports/{id}:
+    get:
+      tags: [Reports]
+      summary: Detail satu export report
+      operationId: getReportExport
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: Detail export berhasil diambil
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReportExportDetailSuccessEnvelope"
+        "403":
+          description: Actor tidak berhak melihat export ini
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "404":
+          description: Export tidak ditemukan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+  /api/v1/reports/exports/{id}/download:
+    get:
+      tags: [Reports]
+      summary: Unduh file hasil export report
+      operationId: downloadReportExport
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: File export berhasil diunduh
+          content:
+            text/csv:
+              schema:
+                type: string
+                format: binary
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+              schema:
+                type: string
+                format: binary
+        "403":
+          description: Actor tidak berhak mengunduh export ini
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "404":
+          description: Export tidak ditemukan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "409":
+          description: Export belum selesai diproses atau file belum tersedia
           content:
             application/json:
               schema:
@@ -8756,12 +9066,25 @@ components:
           example: Customer tidak potensial dari call terakhir
     CreateInteractionRequest:
       type: object
-      required: [type]
+      description: |
+        Sprint 15b: satu interaction dapat menyimpan channel CALL, CHAT, atau keduanya sekaligus.
+        Field `call_status` dan `chat_status` menjadi format utama. Field `type` tetap diterima sementara untuk backward compatibility.
       properties:
         type:
           type: string
-          enum: [CALL, CHAT]
+          enum: [CALL, CHAT, CALL_CHAT]
+          description: Deprecated compatibility field. Gunakan `call_status` dan/atau `chat_status` sebagai format utama request baru.
           example: CALL
+        call_status:
+          type: string
+          nullable: true
+          description: Status hasil channel call pada interaction ini. Jika diisi bersama `chat_status`, backend akan menyimpan satu interaction bertipe `CALL_CHAT`.
+          example: TERHUBUNG
+        chat_status:
+          type: string
+          nullable: true
+          description: Status hasil channel chat pada interaction ini. Jika diisi bersama `call_status`, backend akan menyimpan satu interaction bertipe `CALL_CHAT`.
+          example: TERBALAS
         interaction_at:
           type: string
           format: date-time
@@ -9199,6 +9522,9 @@ components:
     CreateClosingRequest:
       type: object
       required: [plan_id]
+      description: |
+        Sprint 15b: closing juga mengikuti model interaction multichannel.
+        Gunakan `call_status` dan/atau `chat_status` untuk mencatat channel follow-up yang menghasilkan closing.
       properties:
         plan_id:
           type: integer
@@ -9219,7 +9545,16 @@ components:
           format: date-time
         interaction_type:
           type: string
-          enum: [CALL, CHAT]
+          enum: [CALL, CHAT, CALL_CHAT]
+          description: Deprecated compatibility field. Gunakan `call_status` dan/atau `chat_status` sebagai format utama request baru.
+        call_status:
+          type: string
+          nullable: true
+          example: TERHUBUNG
+        chat_status:
+          type: string
+          nullable: true
+          example: TERBALAS
         contact_name:
           type: string
         contact_phone:
@@ -9235,6 +9570,219 @@ components:
           type: string
         reason:
           type: string
+    ReportDashboardCard:
+      type: object
+      properties:
+        key:
+          type: string
+          example: owners_total
+        label:
+          type: string
+          example: Total Owner
+        value:
+          type: string
+          example: "125"
+        description:
+          type: string
+          nullable: true
+          example: Total owner sesuai filter dan visibility actor
+    ReportDashboardResponse:
+      type: object
+      properties:
+        role:
+          type: string
+          example: ADMIN
+        date_from:
+          type: string
+          format: date
+        date_to:
+          type: string
+          format: date
+        cards:
+          type: array
+          items:
+            $ref: "#/components/schemas/ReportDashboardCard"
+    ReportColumn:
+      type: object
+      properties:
+        key:
+          type: string
+          example: owner_name
+        label:
+          type: string
+          example: Nama Owner
+        type:
+          type: string
+          example: string
+          description: Tipe kolom untuk membantu frontend merender value. Contoh umum string, integer, decimal, date, datetime, status.
+    ReportPagination:
+      type: object
+      properties:
+        page:
+          type: integer
+          example: 1
+        limit:
+          type: integer
+          example: 20
+        total:
+          type: integer
+          format: int64
+          example: 154
+    ReportListResponse:
+      type: object
+      properties:
+        report_key:
+          type: string
+          enum: [owners_outlets, activities, topups, closings, subscriptions, partners, targets_kpi]
+        columns:
+          type: array
+          items:
+            $ref: "#/components/schemas/ReportColumn"
+        items:
+          type: array
+          description: Baris data report. Setiap item mengikuti konfigurasi `columns` dan dapat berbeda antar report_key.
+          items:
+            type: object
+            additionalProperties: true
+            example:
+              owner_id: 10
+              owner_code: OWN-00010
+              owner_name: Owner Laundry 010
+              province: Jawa Timur
+              city: Surabaya
+        pagination:
+          $ref: "#/components/schemas/ReportPagination"
+        insight:
+          type: object
+          additionalProperties: true
+          nullable: true
+          description: Insight ringan / metadata tambahan yang diringkas backend untuk membantu frontend menampilkan highlight report.
+    CreateReportExportRequest:
+      type: object
+      required: [report_key, format]
+      properties:
+        report_key:
+          type: string
+          enum: [owners_outlets, activities, topups, closings, subscriptions, partners, targets_kpi]
+        format:
+          type: string
+          enum: [CSV, XLSX]
+        filters:
+          type: object
+          additionalProperties:
+            type: string
+          nullable: true
+          description: Filter report yang akan dibekukan pada export ini, misalnya date_from, date_to, status, q, province, atau city.
+          example:
+            date_from: "2026-07-01"
+            date_to: "2026-07-31"
+            status: CONFIRMED
+    ReportExportUserBrief:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+          example: Admin Demo 001
+    ReportExportResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        code:
+          type: string
+          example: RPT-20260802123045-1
+        report_key:
+          type: string
+          enum: [owners_outlets, activities, topups, closings, subscriptions, partners, targets_kpi]
+        format:
+          type: string
+          enum: [CSV, XLSX]
+        status:
+          type: string
+          enum: [PENDING, PROCESSING, COMPLETED, FAILED]
+        filters:
+          type: object
+          additionalProperties:
+            type: string
+          nullable: true
+        requested_by:
+          allOf:
+            - $ref: "#/components/schemas/ReportExportUserBrief"
+          nullable: true
+        job_id:
+          type: integer
+          format: int64
+          nullable: true
+        file_name:
+          type: string
+          nullable: true
+          example: closings_15.xlsx
+        mime_type:
+          type: string
+          nullable: true
+          example: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
+        row_count:
+          type: integer
+          format: int64
+          example: 356
+        last_error:
+          type: string
+          nullable: true
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        download_url:
+          type: string
+          nullable: true
+          example: /api/v1/reports/exports/15/download
+    ReportExportListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ReportExportResponse"
+        pagination:
+          $ref: "#/components/schemas/ReportPagination"
+    ReportDashboardSuccessEnvelope:
+      allOf:
+        - $ref: "#/components/schemas/SuccessEnvelope"
+        - type: object
+          properties:
+            data:
+              $ref: "#/components/schemas/ReportDashboardResponse"
+    ReportListSuccessEnvelope:
+      allOf:
+        - $ref: "#/components/schemas/SuccessEnvelope"
+        - type: object
+          properties:
+            data:
+              $ref: "#/components/schemas/ReportListResponse"
+    ReportExportDetailSuccessEnvelope:
+      allOf:
+        - $ref: "#/components/schemas/SuccessEnvelope"
+        - type: object
+          properties:
+            data:
+              $ref: "#/components/schemas/ReportExportResponse"
+    ReportExportListSuccessEnvelope:
+      allOf:
+        - $ref: "#/components/schemas/SuccessEnvelope"
+        - type: object
+          properties:
+            data:
+              $ref: "#/components/schemas/ReportExportListResponse"
     SuccessEnvelope:
       type: object
       required: [data, meta]

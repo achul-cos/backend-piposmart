@@ -712,11 +712,6 @@ func commitSalesCallChatRow(
 	}
 
 	salesActor := identity.User{ID: targetSalesUserID.Int64, RoleCode: activity.RoleSales}
-	interactionType := activity.InteractionCall
-	if (r.CallStatus == "" || strings.EqualFold(r.CallStatus, "NO CALL")) && r.ChatStatus != "" {
-		interactionType = activity.InteractionChat
-	}
-
 	if r.IsClosing {
 		existing, err := closingService.ListClosings(ctx, salesActor, closing.ListParams{LeadID: &leadID, All: true})
 		if err != nil && !errors.Is(err, closing.ErrForbidden) {
@@ -748,7 +743,8 @@ func commitSalesCallChatRow(
 		if _, err := closingService.CreateClosing(ctx, salesActor, leadID, closing.CreateClosingRequest{
 			PlanID:           planID,
 			ClosedAt:         closedAt,
-			InteractionType:  interactionType,
+			CallStatus:       r.CallStatus,
+			ChatStatus:       r.ChatStatus,
 			ContactName:      r.OwnerName,
 			ContactPhone:     r.OwnerPhone,
 			CustomerResponse: r.Validitas,
@@ -768,7 +764,8 @@ func commitSalesCallChatRow(
 		remarkScore = &score
 	}
 	if _, err := activityService.CreateInteraction(ctx, salesActor, leadID, activity.CreateInteractionRequest{
-		Type:             interactionType,
+		CallStatus:       r.CallStatus,
+		ChatStatus:       r.ChatStatus,
 		ContactName:      r.OwnerName,
 		ContactPhone:     r.OwnerPhone,
 		RemarkScore:      remarkScore,

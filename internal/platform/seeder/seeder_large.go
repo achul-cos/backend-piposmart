@@ -47,6 +47,7 @@ var largeClosingScenarios = []largeClosingScenario{
 	{PlanCode: "PRO_12_MONTHS", PromotionCode: "", Status: "CONFIRMED", TopupAmount: "3500000.00"},
 	{PlanCode: "PRO_12_MONTHS", PromotionCode: "PRO_12_ANDROID_POS_BUNDLE", Status: "PENDING_RECONCILIATION", TopupAmount: "5000000.00"},
 	{PlanCode: "PRO_24_MONTHS", PromotionCode: "FREE_2_MONTHS_PRO_24", Status: "CONFIRMED", TopupAmount: "7000000.00"},
+	{PlanCode: "BUSINESS_18_MONTHS", PromotionCode: "", Status: "REJECTED", TopupAmount: "3000000.00"},
 }
 
 func seedDemoLarge(ctx context.Context, tx *sql.Tx, options Options) error {
@@ -142,10 +143,21 @@ func seedDemoLarge(ctx context.Context, tx *sql.Tx, options Options) error {
 			topup.ExternalReference = fmt.Sprintf("LARGE-TOPUP-OWNER-%06d", ownerIndex)
 			topup.IdempotencyKey = fmt.Sprintf("large:topup:owner:%06d", ownerIndex)
 			topup.Note = fmt.Sprintf("Large seed wallet top-up owner=%06d", ownerIndex)
+			switch roll := rng.Intn(100); {
+			case roll < 60:
+				topup.Status = "ACCEPTED"
+			case roll < 80:
+				topup.Status = "PENDING"
+			case roll < 92:
+				topup.Status = "REJECTED"
+				topup.RejectNote = "Large seed: transfer tidak sesuai nominal topup"
+			default:
+				topup.Status = "EXPIRED"
+			}
 			if _, err := fake.CreateWalletTopup(ctx, tx, ownerID, topup); err != nil {
 				return fmt.Errorf("create standalone topup owner=%d: %w", ownerIndex, err)
 			}
-			if rng.Intn(100) < 20 {
+			if topup.Status == "ACCEPTED" && rng.Intn(100) < 20 {
 				debit := fake.BuildWalletDebit(ownerIndex, largeSeedStandaloneDebitAmount(rng))
 				debit.OccurredAt = clampToAsOf(topup.PaidAt.AddDate(0, 0, 2+rng.Intn(12)), options.AsOf)
 				debit.ExternalReference = fmt.Sprintf("LARGE-DEBIT-OWNER-%06d", ownerIndex)
@@ -175,7 +187,7 @@ func seedDemoLarge(ctx context.Context, tx *sql.Tx, options Options) error {
 				return fmt.Errorf("create closing owner=%d lead=%d: %w", ownerIndex, leadID, err)
 			}
 
-			if rng.Intn(100) < 72 {
+			if scenario.Status != "REJECTED" && rng.Intn(100) < 72 {
 				order := fake.BuildSubscriptionOrder(ownerIndex, scenario.PlanCode, scenario.PromotionCode, sql.NullInt64{Int64: closingID, Valid: true})
 				order.PurchasedAt = clampToAsOf(closingTime.Add(2*time.Hour), options.AsOf)
 				order.SubscriptionStartDate = dateOnlyUTC(order.PurchasedAt)
