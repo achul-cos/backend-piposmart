@@ -397,6 +397,292 @@ WHERE id = ?`, transactionID, actor.ID, orderID); err != nil {
 	return r.orderResultByIDs(ctx, r.db, orderID, subscriptionID, periodID, reconciliationID, issueID, false)
 }
 
+func (r *Repository) CreateUpgrade(ctx context.Context, actor identity.User, subscriptionID int64, req CreateUpgradeRequest) (OrderResult, error) {
+	key, err := upgradeIdempotencyKey(req)
+	if err != nil {
+		return OrderResult{}, err
+	}
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return OrderResult{}, err
+	}
+	defer tx.Rollback()
+
+	if existing, found, err := r.findOrderByIdempotency(ctx, tx, key); err != nil {
+		return OrderResult{}, err
+	} else if found {
+		result, err := r.orderResultFromOrder(ctx, tx, existing, true)
+		if err != nil {
+			return OrderResult{}, err
+		}
+		if err := tx.Commit(); err != nil {
+			return OrderResult{}, err
+		}
+		return result, nil
+	}
+
+	sourceSubscription, err := r.lockSubscriptionByID(ctx, tx, subscriptionID)
+	if err != nil {
+		return OrderResult{}, err
+	}
+	if sourceSubscription.Status != SubscriptionStatusActive {
+		return OrderResult{}, ErrSubscriptionNotActive
+	}
+	if !sourceSubscription.OwnerID.Valid || !sourceSubscription.OrderID.Valid {
+		return OrderResult{}, ErrUpgradeNotAllowed
+	}
+
+	sourceOrder, err := r.findOrderByIDRaw(ctx, tx, sourceSubscription.OrderID.Int64)
+	if err != nil {
+		return OrderResult{}, err
+	}
+	sourcePeriod, err := r.findPeriodByOrderID(ctx, tx, sourceOrder.ID)
+	if err != nil {
+		return OrderResult{}, err
+	}
+
+	purchasedAt := time.Now().UTC()
+	if req.PurchasedAt != nil {
+		purchasedAt = req.PurchasedAt.UTC()
+	}
+	effectiveStart, err := effectiveUpgradeStartDate(req.EffectiveStartDate, purchasedAt)
+	if err != nil {
+		return OrderResult{}, err
+	}
+	if effectiveStart.Before(sourceSubscription.ActiveFrom) {
+		return OrderResult{}, fmt.Errorf("%w: tanggal efektif upgrade (%s) tidak boleh sebelum tanggal mulai berlangganan (%s)", ErrUpgradeNotAllowed, effectiveStart.Format("2006-01-02"), sourceSubscription.ActiveFrom.Format("2006-01-02"))
+	}
+	if !effectiveStart.Before(sourceSubscription.ActiveUntil) {
+		return OrderResult{}, fmt.Errorf("%w: tanggal efektif upgrade (%s) harus sebelum tanggal berakhir berlangganan (%s)", ErrUpgradeNotAllowed, effectiveStart.Format("2006-01-02"), sourceSubscription.ActiveUntil.Format("2006-01-02"))
+	}
+
+	remainingDays := businessDateDiff(effectiveStart, sourceSubscription.ActiveUntil)
+	if remainingDays < 1 {
+		return OrderResult{}, fmt.Errorf("%w: sisa hari berlangganan kurang dari 1 hari (%d hari)", ErrUpgradeNotAllowed, remainingDays)
+	}
+	usedDays := businessDateDiff(sourceSubscription.ActiveFrom, effectiveStart)
+	if usedDays < 0 {
+		return OrderResult{}, fmt.Errorf("%w: tanggal efektif upgrade sebelum tanggal mulai berlangganan", ErrUpgradeNotAllowed)
+	}
+
+	previousPackage, previousPlan, err := snapshotsFromOrder(sourceOrder)
+	if err != nil {
+		return OrderResult{}, err
+	}
+	targetPackage, targetPlan, err := r.findPlanSnapshot(ctx, tx, req.PlanID, purchasedAt)
+	if err != nil {
+		return OrderResult{}, err
+	}
+	if targetPackage.LevelOrder <= previousPackage.LevelOrder {
+		return OrderResult{}, fmt.Errorf("%w: level paket tujuan (%s: level %d) harus lebih tinggi dari paket saat ini (%s: level %d)", ErrUpgradeNotAllowed, targetPackage.Name, targetPackage.LevelOrder, previousPackage.Name, previousPackage.LevelOrder)
+	}
+
+	var closing *closingSnapshot
+	if req.ClosingID != nil {
+		item, err := r.lockClosing(ctx, tx, *req.ClosingID)
+		if err != nil {
+			return OrderResult{}, err
+		}
+		if !item.OwnerID.Valid || item.OwnerID.Int64 != sourceSubscription.OwnerID.Int64 || item.Status == closingStatusRejected {
+			return OrderResult{}, ErrClosingMismatch
+		}
+		if sourceSubscription.OutletID.Valid && item.OutletID.Valid && sourceSubscription.OutletID.Int64 != item.OutletID.Int64 {
+			return OrderResult{}, ErrClosingMismatch
+		}
+		if !item.PlanID.Valid || item.PlanID.Int64 != req.PlanID {
+			return OrderResult{}, ErrClosingMismatch
+		}
+		closing = &item
+	}
+
+	proratedFinalCents, dailyCents, err := proratedPlanAmount(targetPlan.Price, targetPlan.DurationDays, remainingDays)
+	if err != nil {
+		return OrderResult{}, err
+	}
+	targetPackageJSON, err := json.Marshal(targetPackage)
+	if err != nil {
+		return OrderResult{}, err
+	}
+	targetPlanJSON, err := json.Marshal(targetPlan)
+	if err != nil {
+		return OrderResult{}, err
+	}
+	previousPackageJSON, err := json.Marshal(previousPackage)
+	if err != nil {
+		return OrderResult{}, err
+	}
+	previousPlanJSON, err := json.Marshal(previousPlan)
+	if err != nil {
+		return OrderResult{}, err
+	}
+
+	input := orderInput{
+		OutletID:                    sourceSubscription.OutletID,
+		SalesID:                     sourceOrder.SalesID,
+		SupervisorID:                sourceOrder.SupervisorID,
+		PackageID:                   sql.NullInt64{Int64: targetPackage.ID, Valid: true},
+		PlanID:                      sql.NullInt64{Int64: targetPlan.ID, Valid: true},
+		PackageSnapshotJSON:         string(targetPackageJSON),
+		PlanSnapshotJSON:            string(targetPlanJSON),
+		OrderType:                   OrderTypeUpgrade,
+		SourceSubscriptionID:        sql.NullInt64{Int64: sourceSubscription.ID, Valid: true},
+		UpgradeEffectiveStartDate:   sql.NullTime{Time: effectiveStart, Valid: true},
+		UpgradeOriginalEndDate:      sql.NullTime{Time: sourceSubscription.ActiveUntil, Valid: true},
+		UpgradeRemainingDays:        sql.NullInt64{Int64: int64(remainingDays), Valid: true},
+		UpgradeDailyPrice:           sql.NullString{String: formatCents(dailyCents), Valid: true},
+		PreviousPackageSnapshotJSON: sql.NullString{String: string(previousPackageJSON), Valid: true},
+		PreviousPlanSnapshotJSON:    sql.NullString{String: string(previousPlanJSON), Valid: true},
+		TenureMonths:                targetPlan.TenureMonths,
+		DurationDays:                remainingDays,
+		BasePrice:                   formatCents(proratedFinalCents),
+		DiscountAmount:              "0.00",
+		AdditionalCharge:            "0.00",
+		FinalAmount:                 formatCents(proratedFinalCents),
+		Currency:                    targetPlan.Currency,
+	}
+	if closing != nil {
+		input.ClosingID = sql.NullInt64{Int64: closing.ID, Valid: true}
+		input.SalesID = closing.SalesID
+		input.SupervisorID = closing.SupervisorID
+	}
+
+	wallet, err := r.lockOrCreateWallet(ctx, tx, sourceSubscription.OwnerID.Int64)
+	if err != nil {
+		return OrderResult{}, err
+	}
+	balanceBeforeCents, err := parseMoneyToCents(wallet.Balance)
+	if err != nil {
+		return OrderResult{}, err
+	}
+	balanceAfterCents := balanceBeforeCents - proratedFinalCents
+	var shortfallCents int64
+	if balanceAfterCents < 0 {
+		if actor.RoleCode != RoleAdmin {
+			return OrderResult{}, ErrInsufficientBalance
+		}
+		shortfallCents = -balanceAfterCents
+		balanceAfterCents = 0
+	}
+
+	orderCode := nextCode("ORD", time.Now().UTC(), sourceSubscription.OwnerID.Int64)
+	var balanceShortfallAmount sql.NullString
+	if shortfallCents > 0 {
+		balanceShortfallAmount = sql.NullString{String: formatCents(shortfallCents), Valid: true}
+	}
+	orderReq := CreateOrderRequest{
+		ExternalReference: req.ExternalReference,
+		Note:              req.Note,
+	}
+	orderID, err := r.insertOrder(ctx, tx, actor, orderCode, key, sourceSubscription.OwnerID.Int64, wallet.ID, input, orderReq, purchasedAt, effectiveStart, balanceShortfallAmount)
+	if err != nil {
+		return OrderResult{}, err
+	}
+
+	transactionID, err := r.insertLedgerTransaction(ctx, tx, ledgerInput{
+		Wallet:            wallet,
+		OrderCode:         orderCode,
+		AmountCents:       proratedFinalCents,
+		BalanceBefore:     balanceBeforeCents,
+		BalanceAfter:      balanceAfterCents,
+		ExternalReference: req.ExternalReference,
+		IdempotencyKey:    key,
+		OccurredAt:        purchasedAt,
+		Note:              req.Note,
+		SourceType:        WalletSourceSubscriptionUpgrade,
+		ActorID:           actor.ID,
+	})
+	if err != nil {
+		return OrderResult{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `
+UPDATE subscription_orders
+SET wallet_transaction_id = ?, updated_by_user_id = ?
+WHERE id = ?`, transactionID, actor.ID, orderID); err != nil {
+		return OrderResult{}, err
+	}
+	if err := r.updateWalletBalance(ctx, tx, wallet.ID, balanceAfterCents); err != nil {
+		return OrderResult{}, err
+	}
+	if err := r.trimSubscriptionForUpgrade(ctx, tx, sourceSubscription, sourcePeriod, effectiveStart, usedDays); err != nil {
+		return OrderResult{}, err
+	}
+	subscriptionIDNew, periodID, err := r.activateSubscriptionForRange(ctx, tx, orderID, sourceSubscription.OwnerID.Int64, input, effectiveStart, sourceSubscription.ActiveUntil, WalletSourceSubscriptionUpgrade)
+	if err != nil {
+		return OrderResult{}, err
+	}
+	var reconciliationID int64
+	var issueID int64
+	if closing != nil {
+		if err := r.ensureClosingNotReconciledByOtherOrder(ctx, tx, closing.ID, orderID); err != nil {
+			return OrderResult{}, err
+		}
+		amountDifference, err := moneyDifference(input.FinalAmount, closing.FinalAmount)
+		if err != nil {
+			return OrderResult{}, err
+		}
+		now := time.Now().UTC()
+		if amountDifference == "0.00" || amountDifference == "-0.00" {
+			reconciliationID, err = r.insertReconciliation(ctx, tx, reconciliationInput{
+				OrderID:          sql.NullInt64{Int64: orderID, Valid: true},
+				ClosingID:        sql.NullInt64{Int64: closing.ID, Valid: true},
+				OwnerID:          sql.NullInt64{Int64: sourceSubscription.OwnerID.Int64, Valid: true},
+				Status:           ReconciliationStatusConfirmed,
+				MatchType:        ReconciliationMatchAuto,
+				AmountDifference: "0.00",
+				Note:             nullableString("Auto reconciliation dari subscription upgrade dan closing sales."),
+				ConfirmedAt:      sql.NullTime{Time: now, Valid: true},
+				ActorID:          actor.ID,
+			})
+			if err != nil {
+				return OrderResult{}, err
+			}
+			if err := r.confirmOrderAndClosing(ctx, tx, actor.ID, orderID, closing.ID); err != nil {
+				return OrderResult{}, err
+			}
+		} else {
+			reconciliationID, err = r.insertReconciliation(ctx, tx, reconciliationInput{
+				OrderID:          sql.NullInt64{Int64: orderID, Valid: true},
+				ClosingID:        sql.NullInt64{Int64: closing.ID, Valid: true},
+				OwnerID:          sql.NullInt64{Int64: sourceSubscription.OwnerID.Int64, Valid: true},
+				Status:           ReconciliationStatusPartialConfirm,
+				MatchType:        ReconciliationMatchAuto,
+				AmountDifference: amountDifference,
+				AdminFinalAmount: sql.NullString{String: input.FinalAmount, Valid: true},
+				Note:             nullableString("Auto partial reconciliation dari subscription upgrade; closing dipin ke nominal prorata upgrade."),
+				ConfirmedAt:      sql.NullTime{Time: now, Valid: true},
+				ActorID:          actor.ID,
+			})
+			if err != nil {
+				return OrderResult{}, err
+			}
+			if err := r.confirmOrderAndClosingWithAmount(ctx, tx, actor.ID, orderID, closing.ID, input.FinalAmount); err != nil {
+				return OrderResult{}, err
+			}
+		}
+		if err := r.resolveIssues(ctx, tx, actor.ID, orderID, closing.ID, now); err != nil {
+			return OrderResult{}, err
+		}
+	} else {
+		issueID, err = r.insertIssue(ctx, tx, issueInput{
+			OrderID:     sql.NullInt64{Int64: orderID, Valid: true},
+			OwnerID:     sql.NullInt64{Int64: sourceSubscription.OwnerID.Int64, Valid: true},
+			IssueType:   IssueHangingOrder,
+			Description: nullableString("Subscription upgrade belum terhubung dengan laporan closing sales."),
+			DetectedAt:  purchasedAt,
+			ActorID:     actor.ID,
+		})
+		if err != nil {
+			return OrderResult{}, err
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return OrderResult{}, err
+	}
+	return r.orderResultByIDs(ctx, r.db, orderID, subscriptionIDNew, periodID, reconciliationID, issueID, false)
+}
+
 func (r *Repository) ReconcileOrder(ctx context.Context, actor identity.User, orderID int64, req ManualReconcileRequest) (ReconciliationResult, error) {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -1731,6 +2017,16 @@ func subscriptionStartDate(value string, purchasedAt time.Time) (time.Time, erro
 	return parsed, nil
 }
 
+func effectiveUpgradeStartDate(value string, purchasedAt time.Time) (time.Time, error) {
+	startDate, err := subscriptionStartDate(value, purchasedAt)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if startDate.After(dateOnly(purchasedAt)) {
+		return time.Time{}, fmt.Errorf("%w: tanggal efektif upgrade (%s) tidak boleh lebih dari tanggal pembelian (%s)", ErrUpgradeNotAllowed, startDate.Format("2006-01-02"), purchasedAt.Format("2006-01-02"))
+	}
+	return startDate, nil
+}
 // totalDurationDaysMulti sums baseDays plus every stacked promotion's FREE_DURATION benefit (Sprint
 // 15a §4b) — a single-promotion-JSON lookup would only ever see the FIRST promotion applied and
 // silently miss a FREE_DURATION benefit carried by a second or third one.
