@@ -690,6 +690,14 @@ func closingWhere(actor identity.User, params ListParams) (string, []any) {
 		where = append(where, "sc.plan_id = ?")
 		args = append(args, *params.PlanID)
 	}
+	if params.CreatedFrom != nil {
+		where = append(where, "sc.created_at >= ?")
+		args = append(args, *params.CreatedFrom)
+	}
+	if params.CreatedTo != nil {
+		where = append(where, "sc.created_at < ?")
+		args = append(args, params.CreatedTo.AddDate(0, 0, 1))
+	}
 	if params.ClosedFrom != nil {
 		where = append(where, "sc.closed_at >= ?")
 		args = append(args, *params.ClosedFrom)

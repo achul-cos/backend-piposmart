@@ -241,6 +241,8 @@ type ListParams struct {
 	SupervisorID *int64
 	PlanID       *int64
 	Scope        string
+	CreatedFrom  *time.Time
+	CreatedTo    *time.Time
 	ClosedFrom   *time.Time
 	ClosedTo     *time.Time
 	All          bool

@@ -43,21 +43,43 @@ func normalizeDateRange(dateFrom, dateTo string) (time.Time, time.Time, error) {
 		return defaultFrom, defaultTo, nil
 	}
 	if strings.TrimSpace(dateFrom) == "" || strings.TrimSpace(dateTo) == "" {
-		return time.Time{}, time.Time{}, fmt.Errorf("date_from dan date_to harus diisi berpasangan")
+		return time.Time{}, time.Time{}, fmt.Errorf("%w: date_from dan date_to harus diisi berpasangan", ErrInvalidFilter)
 	}
 	from, err := time.ParseInLocation("2006-01-02", dateFrom, time.UTC)
 	if err != nil {
-		return time.Time{}, time.Time{}, fmt.Errorf("date_from tidak valid")
+		return time.Time{}, time.Time{}, fmt.Errorf("%w: date_from tidak valid", ErrInvalidFilter)
 	}
 	to, err := time.ParseInLocation("2006-01-02", dateTo, time.UTC)
 	if err != nil {
-		return time.Time{}, time.Time{}, fmt.Errorf("date_to tidak valid")
+		return time.Time{}, time.Time{}, fmt.Errorf("%w: date_to tidak valid", ErrInvalidFilter)
 	}
 	to = to.Add(23*time.Hour + 59*time.Minute + 59*time.Second)
 	if to.Before(from) {
-		return time.Time{}, time.Time{}, fmt.Errorf("date_to tidak boleh lebih kecil dari date_from")
+		return time.Time{}, time.Time{}, fmt.Errorf("%w: date_to tidak boleh lebih kecil dari date_from", ErrInvalidFilter)
 	}
 	return from, to, nil
+}
+
+func normalizeOptionalDateRange(dateFrom, dateTo string) (*time.Time, *time.Time, error) {
+	if strings.TrimSpace(dateFrom) == "" && strings.TrimSpace(dateTo) == "" {
+		return nil, nil, nil
+	}
+	if strings.TrimSpace(dateFrom) == "" || strings.TrimSpace(dateTo) == "" {
+		return nil, nil, fmt.Errorf("%w: created_from dan created_to harus diisi berpasangan", ErrInvalidFilter)
+	}
+	from, err := time.ParseInLocation("2006-01-02", dateFrom, time.UTC)
+	if err != nil {
+		return nil, nil, fmt.Errorf("%w: created_from tidak valid", ErrInvalidFilter)
+	}
+	to, err := time.ParseInLocation("2006-01-02", dateTo, time.UTC)
+	if err != nil {
+		return nil, nil, fmt.Errorf("%w: created_to tidak valid", ErrInvalidFilter)
+	}
+	nextDay := to.AddDate(0, 0, 1)
+	if nextDay.Before(from) {
+		return nil, nil, fmt.Errorf("%w: created_to tidak boleh lebih kecil dari created_from", ErrInvalidFilter)
+	}
+	return &from, &nextDay, nil
 }
 
 func buildScopedSalesCondition(actor Actor, salesColumn, supervisorColumn string) (string, []any) {
@@ -348,6 +370,53 @@ func reportColumns(reportKey string) ([]ReportColumn, error) {
 			{Key: "classification", Label: "Klasifikasi", Type: "string"},
 			{Key: "rank_position", Label: "Peringkat", Type: "number"},
 		}, nil
+	case ReportAdminOwnerOutlet:
+		return []ReportColumn{
+			{Key: "date_of_work", Label: "Date of Work", Type: "date"},
+			{Key: "input_name", Label: "Nama Penginput", Type: "string"},
+			{Key: "account_category", Label: "Kategori Akun", Type: "string"},
+			{Key: "owner_code", Label: "Kode Owner", Type: "string"},
+			{Key: "owner_name", Label: "Nama Owner", Type: "string"},
+			{Key: "owner_email", Label: "Email Owner", Type: "string"},
+			{Key: "owner_phone", Label: "No Hp Owner", Type: "string"},
+			{Key: "outlet_phone", Label: "No Hp Outlet", Type: "string"},
+			{Key: "project_created_date", Label: "Create Date Project", Type: "date"},
+			{Key: "brand_name", Label: "Nama Project/BRAND", Type: "string"},
+			{Key: "outlet_name", Label: "Nama Outlet", Type: "string"},
+			{Key: "city", Label: "Kota", Type: "string"},
+			{Key: "province", Label: "Provinsi", Type: "string"},
+			{Key: "address", Label: "Alamat Lengkap", Type: "string"},
+		}, nil
+	case ReportAdminNewSubscribe:
+		return []ReportColumn{
+			{Key: "date_of_work", Label: "Date Of Work", Type: "date"},
+			{Key: "owner_code", Label: "Kode Owner", Type: "string"},
+			{Key: "owner_name", Label: "Nama Owner", Type: "string"},
+			{Key: "owner_phone", Label: "No. Hp Owner", Type: "string"},
+			{Key: "outlet_phone", Label: "No. Hp Outlet", Type: "string"},
+			{Key: "project_name", Label: "Project/Outlet", Type: "string"},
+			{Key: "city", Label: "Kota", Type: "string"},
+			{Key: "province", Label: "Provinsi", Type: "string"},
+			{Key: "created_date", Label: "Created Date", Type: "date"},
+			{Key: "topup_date", Label: "Date Top UP System", Type: "datetime"},
+			{Key: "activation_amount", Label: "Nominal Aktivasi", Type: "currency"},
+			{Key: "activation_date", Label: "Tanggal Aktivasi", Type: "datetime"},
+			{Key: "package_name", Label: "Paket Membership", Type: "string"},
+			{Key: "status", Label: "Status", Type: "string"},
+		}, nil
+	case ReportAdminNasabahProvinsi:
+		return []ReportColumn{
+			{Key: "year_member", Label: "Tahun Member", Type: "number"},
+			{Key: "month_member", Label: "Bulan", Type: "string"},
+			{Key: "owner_code", Label: "Kode Owner", Type: "string"},
+			{Key: "owner_name", Label: "Nama Owner", Type: "string"},
+			{Key: "owner_phone", Label: "No. Hp Owner", Type: "string"},
+			{Key: "owner_email", Label: "Email", Type: "string"},
+			{Key: "project_outlet", Label: "Project/Outlet", Type: "string"},
+			{Key: "city", Label: "Kota", Type: "string"},
+			{Key: "address", Label: "Alamat", Type: "string"},
+			{Key: "province", Label: "Provinsi", Type: "string"},
+		}, nil
 	default:
 		return nil, ErrInvalidReportKey
 	}
@@ -366,7 +435,11 @@ func (r *Repository) ListReport(ctx context.Context, actor Actor, reportKey stri
 	if err != nil {
 		return nil, err
 	}
-	baseQuery, args, err := r.buildReportQuery(actor, reportKey, params, from, to)
+	createdFrom, createdTo, err := normalizeOptionalDateRange(params.CreatedFrom, params.CreatedTo)
+	if err != nil {
+		return nil, err
+	}
+	baseQuery, args, err := r.buildReportQuery(actor, reportKey, params, from, to, createdFrom, createdTo)
 	if err != nil {
 		return nil, err
 	}
@@ -392,6 +465,10 @@ func (r *Repository) ListReport(ctx context.Context, actor Actor, reportKey stri
 		"date_to":   to.Format("2006-01-02"),
 		"count":     total,
 	}
+	if createdFrom != nil && createdTo != nil {
+		insight["created_from"] = createdFrom.Format("2006-01-02")
+		insight["created_to"] = createdTo.AddDate(0, 0, -1).Format("2006-01-02")
+	}
 	return &ReportListResponse{
 		ReportKey: reportKey,
 		Columns:   columns,
@@ -405,7 +482,7 @@ func (r *Repository) ListReport(ctx context.Context, actor Actor, reportKey stri
 	}, nil
 }
 
-func (r *Repository) buildReportQuery(actor Actor, reportKey string, params ListReportsParams, from, to time.Time) (string, []any, error) {
+func (r *Repository) buildReportQuery(actor Actor, reportKey string, params ListReportsParams, from, to time.Time, createdFrom, createdTo *time.Time) (string, []any, error) {
 	switch reportKey {
 	case ReportOwnersOutlets:
 		query := `SELECT
@@ -438,6 +515,10 @@ func (r *Repository) buildReportQuery(actor Actor, reportKey string, params List
 		if params.City != "" {
 			query += ` AND o.city = ?`
 			args = append(args, params.City)
+		}
+		if createdFrom != nil && createdTo != nil {
+			query += ` AND o.created_at >= ? AND o.created_at < ?`
+			args = append(args, *createdFrom, *createdTo)
 		}
 		query += ` GROUP BY o.id, o.code, o.name, o.brand_name, o.province, o.city ORDER BY o.created_at DESC`
 		return query, args, nil
@@ -481,6 +562,10 @@ func (r *Repository) buildReportQuery(actor Actor, reportKey string, params List
 			query += ` AND ci.supervisor_id = ?`
 			args = append(args, *params.SupervisorID)
 		}
+		if createdFrom != nil && createdTo != nil {
+			query += ` AND ci.created_at >= ? AND ci.created_at < ?`
+			args = append(args, *createdFrom, *createdTo)
+		}
 		query += ` ORDER BY ci.interaction_at DESC`
 		return query, args, nil
 	case ReportTopups:
@@ -518,6 +603,10 @@ func (r *Repository) buildReportQuery(actor Actor, reportKey string, params List
 		if params.City != "" {
 			query += ` AND o.city = ?`
 			args = append(args, params.City)
+		}
+		if createdFrom != nil && createdTo != nil {
+			query += ` AND wp.created_at >= ? AND wp.created_at < ?`
+			args = append(args, *createdFrom, *createdTo)
 		}
 		query += ` ORDER BY effective_transfer_at DESC, wp.created_at DESC`
 		return query, args, nil
@@ -562,6 +651,10 @@ func (r *Repository) buildReportQuery(actor Actor, reportKey string, params List
 			query += ` AND sc.supervisor_id = ?`
 			args = append(args, *params.SupervisorID)
 		}
+		if createdFrom != nil && createdTo != nil {
+			query += ` AND sc.created_at >= ? AND sc.created_at < ?`
+			args = append(args, *createdFrom, *createdTo)
+		}
 		query += ` ORDER BY sc.closed_at DESC`
 		return query, args, nil
 	case ReportSubscriptions:
@@ -603,6 +696,10 @@ func (r *Repository) buildReportQuery(actor Actor, reportKey string, params List
 			query += ` AND so.supervisor_id = ?`
 			args = append(args, *params.SupervisorID)
 		}
+		if createdFrom != nil && createdTo != nil {
+			query += ` AND s.created_at >= ? AND s.created_at < ?`
+			args = append(args, *createdFrom, *createdTo)
+		}
 		query += ` ORDER BY s.active_until ASC`
 		return query, args, nil
 	case ReportPartners:
@@ -638,6 +735,10 @@ func (r *Repository) buildReportQuery(actor Actor, reportKey string, params List
 			like := "%" + params.Query + "%"
 			query += ` AND (p.code LIKE ? OR p.name LIKE ? OR pc.code LIKE ? OR pp.code LIKE ?)`
 			args = append(args, like, like, like, like)
+		}
+		if createdFrom != nil && createdTo != nil {
+			query += ` AND c.created_at >= ? AND c.created_at < ?`
+			args = append(args, *createdFrom, *createdTo)
 		}
 		query += ` ORDER BY c.created_at DESC`
 		return query, args, nil
@@ -675,7 +776,154 @@ func (r *Repository) buildReportQuery(actor Actor, reportKey string, params List
 			query += ` AND skr.sales_id = ?`
 			args = append(args, *params.SalesID)
 		}
+		if createdFrom != nil && createdTo != nil {
+			query += ` AND skr.created_at >= ? AND skr.created_at < ?`
+			args = append(args, *createdFrom, *createdTo)
+		}
 		query += ` ORDER BY skr.period_year DESC, skr.period_month DESC, skr.rank_position ASC`
+		return query, args, nil
+	case ReportAdminOwnerOutlet:
+		query := `SELECT
+			DATE(o.created_at) AS date_of_work,
+			'System CRM' AS input_name,
+			CASE WHEN ot.id IS NULL THEN 'OWNER_ONLY' ELSE 'OWNER_OUTLET' END AS account_category,
+			o.code AS owner_code,
+			o.name AS owner_name,
+			COALESCE(o.email, '') AS owner_email,
+			COALESCE(o.phone, '') AS owner_phone,
+			COALESCE(ot.phone, '') AS outlet_phone,
+			DATE(o.created_at) AS project_created_date,
+			COALESCE(o.brand_name, '') AS brand_name,
+			COALESCE(ot.name, '') AS outlet_name,
+			COALESCE(ot.city, o.city, '') AS city,
+			COALESCE(ot.province, o.province, '') AS province,
+			COALESCE(ot.address, o.address, '') AS address
+		FROM owners o
+		LEFT JOIN outlets ot ON ot.owner_id = o.id AND ot.deleted_at IS NULL
+		WHERE o.deleted_at IS NULL AND o.created_at >= ? AND o.created_at <= ?`
+		args := []any{from, to}
+		if scope, scopeArgs := buildOwnerVisibilityCondition(actor, "o.id"); scope != "" {
+			query += scope
+			args = append(args, scopeArgs...)
+		}
+		if params.Query != "" {
+			like := "%" + params.Query + "%"
+			query += ` AND (o.code LIKE ? OR o.name LIKE ? OR COALESCE(ot.name, '') LIKE ? OR COALESCE(o.brand_name, '') LIKE ?)`
+			args = append(args, like, like, like, like)
+		}
+		if params.Province != "" {
+			query += ` AND COALESCE(ot.province, o.province, '') = ?`
+			args = append(args, params.Province)
+		}
+		if params.City != "" {
+			query += ` AND COALESCE(ot.city, o.city, '') = ?`
+			args = append(args, params.City)
+		}
+		if createdFrom != nil && createdTo != nil {
+			query += ` AND o.created_at >= ? AND o.created_at < ?`
+			args = append(args, *createdFrom, *createdTo)
+		}
+		query += ` ORDER BY o.created_at DESC, ot.created_at DESC`
+		return query, args, nil
+	case ReportAdminNewSubscribe:
+		query := `SELECT
+			DATE(COALESCE(sc.confirmed_at, sc.closed_at, so.purchased_at)) AS date_of_work,
+			COALESCE(o.code, '') AS owner_code,
+			COALESCE(o.name, '') AS owner_name,
+			COALESCE(o.phone, '') AS owner_phone,
+			COALESCE(ot.phone, '') AS outlet_phone,
+			COALESCE(ot.name, JSON_UNQUOTE(JSON_EXTRACT(sc.package_snapshot_json, '$.name')), '') AS project_name,
+			COALESCE(ot.city, o.city, '') AS city,
+			COALESCE(ot.province, o.province, '') AS province,
+			DATE(o.created_at) AS created_date,
+			wp.paid_at AS topup_date,
+			COALESCE(sc.final_amount, so.final_amount, 0) AS activation_amount,
+			COALESCE(sc.confirmed_at, sc.closed_at, so.purchased_at) AS activation_date,
+			JSON_UNQUOTE(JSON_EXTRACT(sc.package_snapshot_json, '$.name')) AS package_name,
+			COALESCE(sc.status, so.status, '') AS status
+		FROM subscription_orders so
+		LEFT JOIN owners o ON o.id = so.owner_id
+		LEFT JOIN outlets ot ON ot.id = so.outlet_id
+		LEFT JOIN sales_closings sc ON sc.id = so.closing_id
+		LEFT JOIN wallet_payments wp ON wp.owner_id = so.owner_id AND wp.status = 'ACCEPTED'
+		WHERE so.deleted_at IS NULL
+		  AND COALESCE(sc.confirmed_at, sc.closed_at, so.purchased_at) >= ?
+		  AND COALESCE(sc.confirmed_at, sc.closed_at, so.purchased_at) <= ?`
+		args := []any{from, to}
+		if scope, scopeArgs := buildOwnerVisibilityCondition(actor, "so.owner_id"); scope != "" {
+			query += scope
+			args = append(args, scopeArgs...)
+		}
+		if params.Status != "" {
+			query += ` AND COALESCE(sc.status, so.status, '') = ?`
+			args = append(args, params.Status)
+		}
+		if params.Query != "" {
+			like := "%" + params.Query + "%"
+			query += ` AND (so.code LIKE ? OR COALESCE(o.code, '') LIKE ? OR COALESCE(o.name, '') LIKE ? OR COALESCE(ot.name, '') LIKE ?)`
+			args = append(args, like, like, like, like)
+		}
+		if params.Province != "" {
+			query += ` AND COALESCE(ot.province, o.province, '') = ?`
+			args = append(args, params.Province)
+		}
+		if params.City != "" {
+			query += ` AND COALESCE(ot.city, o.city, '') = ?`
+			args = append(args, params.City)
+		}
+		if params.SalesID != nil {
+			query += ` AND so.sales_id = ?`
+			args = append(args, *params.SalesID)
+		}
+		if params.SupervisorID != nil {
+			query += ` AND so.supervisor_id = ?`
+			args = append(args, *params.SupervisorID)
+		}
+		if createdFrom != nil && createdTo != nil {
+			query += ` AND so.created_at >= ? AND so.created_at < ?`
+			args = append(args, *createdFrom, *createdTo)
+		}
+		query += ` GROUP BY so.id ORDER BY activation_date DESC`
+		return query, args, nil
+	case ReportAdminNasabahProvinsi:
+		query := `SELECT
+			YEAR(o.created_at) AS year_member,
+			DATE_FORMAT(o.created_at, '%M') AS month_member,
+			o.code AS owner_code,
+			o.name AS owner_name,
+			COALESCE(o.phone, '') AS owner_phone,
+			COALESCE(o.email, '') AS owner_email,
+			COALESCE(ot.name, o.brand_name, '') AS project_outlet,
+			COALESCE(ot.city, o.city, '') AS city,
+			COALESCE(ot.address, o.address, '') AS address,
+			COALESCE(ot.province, o.province, '') AS province
+		FROM owners o
+		LEFT JOIN outlets ot ON ot.owner_id = o.id AND ot.deleted_at IS NULL
+		WHERE o.deleted_at IS NULL
+		  AND o.created_at >= ? AND o.created_at <= ?`
+		args := []any{from, to}
+		if scope, scopeArgs := buildOwnerVisibilityCondition(actor, "o.id"); scope != "" {
+			query += scope
+			args = append(args, scopeArgs...)
+		}
+		if params.Query != "" {
+			like := "%" + params.Query + "%"
+			query += ` AND (o.code LIKE ? OR o.name LIKE ? OR COALESCE(ot.name, '') LIKE ? OR COALESCE(o.email, '') LIKE ?)`
+			args = append(args, like, like, like, like)
+		}
+		if params.Province != "" {
+			query += ` AND COALESCE(ot.province, o.province, '') = ?`
+			args = append(args, params.Province)
+		}
+		if params.City != "" {
+			query += ` AND COALESCE(ot.city, o.city, '') = ?`
+			args = append(args, params.City)
+		}
+		if createdFrom != nil && createdTo != nil {
+			query += ` AND o.created_at >= ? AND o.created_at < ?`
+			args = append(args, *createdFrom, *createdTo)
+		}
+		query += ` ORDER BY province ASC, city ASC, o.created_at DESC`
 		return query, args, nil
 	default:
 		return "", nil, ErrInvalidReportKey

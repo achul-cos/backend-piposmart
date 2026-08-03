@@ -285,6 +285,8 @@ type ListParams struct {
 	SupervisorID  *int64
 	PlanID        *int64
 	IssueType     string
+	CreatedFrom   *time.Time
+	CreatedTo     *time.Time
 	PurchasedFrom *time.Time
 	PurchasedTo   *time.Time
 	ActiveFrom    *time.Time

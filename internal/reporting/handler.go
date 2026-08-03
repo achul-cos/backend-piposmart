@@ -47,13 +47,15 @@ func (h *Handler) dashboard(c *gin.Context) {
 func (h *Handler) listReport(c *gin.Context) {
 	actor, _ := identity.CurrentUser(c)
 	params := ListReportsParams{
-		DateFrom: c.Query("date_from"),
-		DateTo:   c.Query("date_to"),
-		Status:   c.Query("status"),
-		Query:    c.Query("q"),
-		Province: c.Query("province"),
-		City:     c.Query("city"),
-		All:      c.Query("all") == "true",
+		DateFrom:    c.Query("date_from"),
+		DateTo:      c.Query("date_to"),
+		CreatedFrom: c.Query("created_from"),
+		CreatedTo:   c.Query("created_to"),
+		Status:      c.Query("status"),
+		Query:       c.Query("q"),
+		Province:    c.Query("province"),
+		City:        c.Query("city"),
+		All:         c.Query("all") == "true",
 	}
 	params.Page, _ = strconv.Atoi(c.DefaultQuery("page", "1"))
 	params.Limit, _ = strconv.Atoi(c.DefaultQuery("limit", "20"))
@@ -144,7 +146,7 @@ func writeReportingError(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, ErrForbidden):
 		httpx.Error(c, http.StatusForbidden, "FORBIDDEN", "akses ditolak", nil)
-	case errors.Is(err, ErrInvalidReportKey), errors.Is(err, ErrInvalidFormat):
+	case errors.Is(err, ErrInvalidReportKey), errors.Is(err, ErrInvalidFormat), errors.Is(err, ErrInvalidFilter):
 		httpx.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
 	case errors.Is(err, ErrExportNotFound):
 		httpx.Error(c, http.StatusNotFound, "NOT_FOUND", err.Error(), nil)

@@ -713,6 +713,14 @@ func interactionWhere(actor identity.User, params InteractionListParams) (string
 		where = append(where, "ci.sales_id = ?")
 		args = append(args, *params.SalesID)
 	}
+	if params.CreatedFrom != nil {
+		where = append(where, "ci.created_at >= ?")
+		args = append(args, *params.CreatedFrom)
+	}
+	if params.CreatedTo != nil {
+		where = append(where, "ci.created_at < ?")
+		args = append(args, params.CreatedTo.AddDate(0, 0, 1))
+	}
 	if params.InteractionFrom != nil {
 		where = append(where, "ci.interaction_at >= ?")
 		args = append(args, *params.InteractionFrom)
@@ -756,6 +764,14 @@ func trainingWhere(actor identity.User, params TrainingListParams) (string, []an
 	if params.SalesID != nil {
 		where = append(where, "tr.sales_id = ?")
 		args = append(args, *params.SalesID)
+	}
+	if params.CreatedFrom != nil {
+		where = append(where, "tr.created_at >= ?")
+		args = append(args, *params.CreatedFrom)
+	}
+	if params.CreatedTo != nil {
+		where = append(where, "tr.created_at < ?")
+		args = append(args, params.CreatedTo.AddDate(0, 0, 1))
 	}
 	if params.ScheduledFrom != nil {
 		where = append(where, "tr.scheduled_at >= ?")

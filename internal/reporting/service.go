@@ -42,7 +42,7 @@ func (s *Service) ListReport(ctx context.Context, actor identity.User, reportKey
 
 func (s *Service) CreateExport(ctx context.Context, actor identity.User, req CreateExportRequest) (*ReportExportResponse, error) {
 	format := strings.ToUpper(strings.TrimSpace(req.Format))
-	if format != ExportFormatCSV && format != ExportFormatXLSX {
+	if format != ExportFormatCSV && format != ExportFormatXLSX && format != ExportFormatPDF {
 		return nil, ErrInvalidFormat
 	}
 	if _, err := reportColumns(req.ReportKey); err != nil {
@@ -142,13 +142,15 @@ func (s *Service) GenerateExport(ctx context.Context, exportID int64) error {
 		}
 	}
 	params := ListReportsParams{
-		DateFrom: filters["date_from"],
-		DateTo:   filters["date_to"],
-		Status:   filters["status"],
-		Query:    filters["q"],
-		Province: filters["province"],
-		City:     filters["city"],
-		All:      true,
+		DateFrom:    filters["date_from"],
+		DateTo:      filters["date_to"],
+		CreatedFrom: filters["created_from"],
+		CreatedTo:   filters["created_to"],
+		Status:      filters["status"],
+		Query:       filters["q"],
+		Province:    filters["province"],
+		City:        filters["city"],
+		All:         true,
 	}
 	actor := Actor{RoleCode: strings.ToUpper(item.RequestedByRole.String)}
 	if item.RequestedByUserID.Valid {
@@ -177,6 +179,10 @@ func (s *Service) GenerateExport(ctx context.Context, exportID int64) error {
 		content, err = buildXLSX("Report", report.Columns, report.Items)
 		mimeType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 		extension = ".xlsx"
+	case ExportFormatPDF:
+		content, err = buildPDF(report.ReportKey, report.Columns, report.Items, report.Insight)
+		mimeType = "application/pdf"
+		extension = ".pdf"
 	default:
 		return ErrInvalidFormat
 	}

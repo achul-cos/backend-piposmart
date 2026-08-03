@@ -271,6 +271,18 @@ func listParams(c *gin.Context) (ListParams, bool) {
 	}
 	params.FollowUpFrom = followUpFrom
 	params.FollowUpTo = followUpTo
+	createdFrom, err := parseDate(c.Query("created_from"))
+	if err != nil {
+		httpx.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", "created_from harus format YYYY-MM-DD", nil)
+		return ListParams{}, false
+	}
+	createdTo, err := parseDate(c.Query("created_to"))
+	if err != nil {
+		httpx.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", "created_to harus format YYYY-MM-DD", nil)
+		return ListParams{}, false
+	}
+	params.CreatedFrom = createdFrom
+	params.CreatedTo = createdTo
 	return params, true
 }
 

@@ -20,9 +20,13 @@ const (
 	ReportSubscriptions = "subscriptions"
 	ReportPartners      = "partners"
 	ReportTargetsKPI    = "targets_kpi"
+	ReportAdminOwnerOutlet = "admin_owner_outlet"
+	ReportAdminNewSubscribe = "admin_new_subscribe"
+	ReportAdminNasabahProvinsi = "admin_nasabah_baru_provinsi"
 
 	ExportFormatCSV  = "CSV"
 	ExportFormatXLSX = "XLSX"
+	ExportFormatPDF  = "PDF"
 
 	ExportStatusPending    = "PENDING"
 	ExportStatusProcessing = "PROCESSING"
@@ -66,6 +70,8 @@ type ReportColumn struct {
 type ListReportsParams struct {
 	DateFrom     string
 	DateTo       string
+	CreatedFrom  string
+	CreatedTo    string
 	Status       string
 	Query        string
 	SalesID      *int64

@@ -3,6 +3,7 @@ package partner
 import (
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"backend_crm_piposmart/internal/identity"
@@ -191,7 +192,11 @@ func (h *Handler) ListPartnerTypeHistories(c *gin.Context) {
 // @Success 200 {object} PartnerTypeListResponse
 // @Router /partner-types [get]
 func (h *Handler) ListPartnerTypes(c *gin.Context) {
-	resp, err := h.service.ListPartnerTypes(c.Request.Context())
+	params, ok := partnerTypeListParams(c)
+	if !ok {
+		return
+	}
+	resp, err := h.service.ListPartnerTypes(c.Request.Context(), params)
 	if err != nil {
 		httpx.Error(c, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to list partner types", nil)
 		return
@@ -347,7 +352,17 @@ func (h *Handler) ListPartners(c *gin.Context) {
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
 	search := c.DefaultQuery("search", "")
-	resp, total, err := h.service.ListPartners(c.Request.Context(), limit, offset, search)
+	createdFrom, createdTo, ok := parseCreatedRange(c)
+	if !ok {
+		return
+	}
+	resp, total, err := h.service.ListPartners(c.Request.Context(), PartnerListParams{
+		Search:      search,
+		CreatedFrom: createdFrom,
+		CreatedTo:   createdTo,
+		Limit:       limit,
+		Offset:      offset,
+	})
 	if err != nil {
 		httpx.Error(c, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to list partners", nil)
 		return
@@ -364,7 +379,17 @@ func (h *Handler) ListPartners(c *gin.Context) {
 
 func (h *Handler) ListAllPartners(c *gin.Context) {
 	search := c.DefaultQuery("search", "")
-	resp, total, err := h.service.ListPartners(c.Request.Context(), 0, 0, search)
+	createdFrom, createdTo, ok := parseCreatedRange(c)
+	if !ok {
+		return
+	}
+	resp, total, err := h.service.ListPartners(c.Request.Context(), PartnerListParams{
+		Search:      search,
+		CreatedFrom: createdFrom,
+		CreatedTo:   createdTo,
+		Limit:       0,
+		Offset:      0,
+	})
 	if err != nil {
 		httpx.Error(c, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to list partners", nil)
 		return
@@ -473,7 +498,7 @@ func (h *Handler) AssignPIC(c *gin.Context) {
 			assignedByID = &user.ID
 		}
 	}
-	resp, err := h.service.AssignPIC(c.Request.Context(), partnerID, req.UserID, assignedByID)
+	resp, err := h.service.AssignPIC(c.Request.Context(), partnerID, req.UserID, assignedByID, req.CreatedAt)
 	if err != nil {
 		switch err {
 		case ErrNotFound:
@@ -531,7 +556,14 @@ func (h *Handler) ListPartnerAssignments(c *gin.Context) {
 		httpx.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", "invalid partner ID", nil)
 		return
 	}
-	list, err := h.service.ListPartnerAssignments(c.Request.Context(), partnerID)
+	createdFrom, createdTo, ok := parseCreatedRange(c)
+	if !ok {
+		return
+	}
+	list, err := h.service.ListPartnerAssignments(c.Request.Context(), partnerID, PartnerHistoryListParams{
+		CreatedFrom: createdFrom,
+		CreatedTo:   createdTo,
+	})
 	if err != nil {
 		httpx.Error(c, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to list partner assignments", nil)
 		return
@@ -599,7 +631,7 @@ func (h *Handler) RecordInteraction(c *gin.Context) {
 		t := *req.InteractionAt
 		interactionAt = &t
 	}
-	resp, err := h.service.RecordInteraction(c.Request.Context(), partnerID, req.InteractionType, interactionAt, req.Note)
+	resp, err := h.service.RecordInteraction(c.Request.Context(), partnerID, req.InteractionType, interactionAt, req.Note, req.CreatedAt)
 	if err != nil {
 		if err == ErrNotFound {
 			httpx.Error(c, http.StatusNotFound, "NOT_FOUND", "partner not found", nil)
@@ -630,7 +662,16 @@ func (h *Handler) ListInteractions(c *gin.Context) {
 	}
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
-	list, total, err := h.service.ListInteractions(c.Request.Context(), partnerID, limit, offset)
+	createdFrom, createdTo, ok := parseCreatedRange(c)
+	if !ok {
+		return
+	}
+	list, total, err := h.service.ListInteractions(c.Request.Context(), partnerID, PartnerHistoryListParams{
+		CreatedFrom: createdFrom,
+		CreatedTo:   createdTo,
+		Limit:       limit,
+		Offset:      offset,
+	})
 	if err != nil {
 		httpx.Error(c, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to list interactions", nil)
 		return
@@ -651,7 +692,16 @@ func (h *Handler) ListAllInteractions(c *gin.Context) {
 		httpx.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", "invalid partner ID", nil)
 		return
 	}
-	list, total, err := h.service.ListInteractions(c.Request.Context(), partnerID, 0, 0)
+	createdFrom, createdTo, ok := parseCreatedRange(c)
+	if !ok {
+		return
+	}
+	list, total, err := h.service.ListInteractions(c.Request.Context(), partnerID, PartnerHistoryListParams{
+		CreatedFrom: createdFrom,
+		CreatedTo:   createdTo,
+		Limit:       0,
+		Offset:      0,
+	})
 	if err != nil {
 		httpx.Error(c, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to list interactions", nil)
 		return
@@ -697,7 +747,7 @@ func (h *Handler) CreateReferral(c *gin.Context) {
 		t := *req.ReferralDate
 		referralDate = &t
 	}
-	resp, err := h.service.CreateReferral(c.Request.Context(), partnerID, req.LeadID, referralDate, req.Notes)
+	resp, err := h.service.CreateReferral(c.Request.Context(), partnerID, req.LeadID, referralDate, req.Notes, req.CreatedAt)
 	if err != nil {
 		switch err {
 		case ErrNotFound:
@@ -760,7 +810,14 @@ func (h *Handler) ListReferrals(c *gin.Context) {
 		httpx.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", "invalid partner ID", nil)
 		return
 	}
-	list, err := h.service.ListReferrals(c.Request.Context(), partnerID)
+	createdFrom, createdTo, ok := parseCreatedRange(c)
+	if !ok {
+		return
+	}
+	list, err := h.service.ListReferrals(c.Request.Context(), partnerID, PartnerHistoryListParams{
+		CreatedFrom: createdFrom,
+		CreatedTo:   createdTo,
+	})
 	if err != nil {
 		httpx.Error(c, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to list referrals", nil)
 		return
@@ -1353,4 +1410,41 @@ func requestMeta(c *gin.Context) RequestMeta {
 		UserAgent: c.Request.UserAgent(),
 		RequestID: httpx.RequestID(c),
 	}
+}
+
+func partnerTypeListParams(c *gin.Context) (PartnerTypeListParams, bool) {
+	createdFrom, createdTo, ok := parseCreatedRange(c)
+	if !ok {
+		return PartnerTypeListParams{}, false
+	}
+	return PartnerTypeListParams{
+		Search:      c.DefaultQuery("search", c.DefaultQuery("q", "")),
+		CreatedFrom: createdFrom,
+		CreatedTo:   createdTo,
+	}, true
+}
+
+func parseCreatedRange(c *gin.Context) (*time.Time, *time.Time, bool) {
+	createdFrom, err := parseOptionalDate(c.Query("created_from"))
+	if err != nil {
+		httpx.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", "created_from harus format YYYY-MM-DD", nil)
+		return nil, nil, false
+	}
+	createdTo, err := parseOptionalDate(c.Query("created_to"))
+	if err != nil {
+		httpx.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", "created_to harus format YYYY-MM-DD", nil)
+		return nil, nil, false
+	}
+	return createdFrom, createdTo, true
+}
+
+func parseOptionalDate(value string) (*time.Time, error) {
+	if strings.TrimSpace(value) == "" {
+		return nil, nil
+	}
+	parsed, err := time.Parse("2006-01-02", strings.TrimSpace(value))
+	if err != nil {
+		return nil, err
+	}
+	return &parsed, nil
 }

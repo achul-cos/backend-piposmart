@@ -261,18 +261,24 @@ type ImportRowListResponse struct {
 }
 
 type ListRowsParams struct {
-	Status string
-	All    bool
-	Page   int
-	Limit  int
+	Status      string
+	CreatedFrom *time.Time
+	CreatedTo   *time.Time
+	All         bool
+	Page        int
+	Limit       int
 }
 
 type ListBatchesParams struct {
-	Status  string
-	Profile string
-	All     bool
-	Page    int
-	Limit   int
+	Status       string
+	Profile      string
+	CreatedFrom  *time.Time
+	CreatedTo    *time.Time
+	UploadedFrom *time.Time
+	UploadedTo   *time.Time
+	All          bool
+	Page         int
+	Limit        int
 }
 
 // ValidateJobPayload / CommitJobPayload are the job_queue payloads for the two job types this

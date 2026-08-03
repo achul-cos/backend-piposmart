@@ -723,6 +723,14 @@ func walletWhere(actor identity.User, params ListParams) (string, []any) {
 		where = append(where, "COALESCE(wa.status, 'ACTIVE') = ?")
 		args = append(args, params.Status)
 	}
+	if params.CreatedFrom != nil {
+		where = append(where, "COALESCE(wa.created_at, o.created_at) >= ?")
+		args = append(args, *params.CreatedFrom)
+	}
+	if params.CreatedTo != nil {
+		where = append(where, "COALESCE(wa.created_at, o.created_at) < ?")
+		args = append(args, params.CreatedTo.AddDate(0, 0, 1))
+	}
 	return strings.Join(where, " AND "), args
 }
 
@@ -752,6 +760,14 @@ func paymentWhere(actor identity.User, params ListParams) (string, []any) {
 	if params.Status != "" {
 		where = append(where, "wp.status = ?")
 		args = append(args, params.Status)
+	}
+	if params.CreatedFrom != nil {
+		where = append(where, "wp.created_at >= ?")
+		args = append(args, *params.CreatedFrom)
+	}
+	if params.CreatedTo != nil {
+		where = append(where, "wp.created_at < ?")
+		args = append(args, params.CreatedTo.AddDate(0, 0, 1))
 	}
 	if params.PaidFrom != nil {
 		where = append(where, "wp.paid_at >= ?")
@@ -786,6 +802,14 @@ func transactionWhere(actor identity.User, params ListParams) (string, []any) {
 	if params.Type != "" {
 		where = append(where, "wt.transaction_type = ?")
 		args = append(args, params.Type)
+	}
+	if params.CreatedFrom != nil {
+		where = append(where, "wt.created_at >= ?")
+		args = append(args, *params.CreatedFrom)
+	}
+	if params.CreatedTo != nil {
+		where = append(where, "wt.created_at < ?")
+		args = append(args, params.CreatedTo.AddDate(0, 0, 1))
 	}
 	if params.OccurredFrom != nil {
 		where = append(where, "wt.occurred_at >= ?")

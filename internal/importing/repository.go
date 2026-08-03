@@ -119,6 +119,22 @@ func (r *Repository) ListBatches(ctx context.Context, params ListBatchesParams) 
 		where = append(where, "ib.profile = ?")
 		args = append(args, params.Profile)
 	}
+	if params.CreatedFrom != nil {
+		where = append(where, "ib.created_at >= ?")
+		args = append(args, *params.CreatedFrom)
+	}
+	if params.CreatedTo != nil {
+		where = append(where, "ib.created_at < ?")
+		args = append(args, params.CreatedTo.AddDate(0, 0, 1))
+	}
+	if params.UploadedFrom != nil {
+		where = append(where, "ib.uploaded_at >= ?")
+		args = append(args, *params.UploadedFrom)
+	}
+	if params.UploadedTo != nil {
+		where = append(where, "ib.uploaded_at < ?")
+		args = append(args, params.UploadedTo.AddDate(0, 0, 1))
+	}
 	whereClause := "WHERE " + strings.Join(where, " AND ")
 
 	var total int64
@@ -343,6 +359,14 @@ func (r *Repository) ListRows(ctx context.Context, batchID int64, params ListRow
 	if params.Status != "" {
 		where = append(where, "status = ?")
 		args = append(args, params.Status)
+	}
+	if params.CreatedFrom != nil {
+		where = append(where, "created_at >= ?")
+		args = append(args, *params.CreatedFrom)
+	}
+	if params.CreatedTo != nil {
+		where = append(where, "created_at < ?")
+		args = append(args, params.CreatedTo.AddDate(0, 0, 1))
 	}
 	whereClause := "WHERE " + strings.Join(where, " AND ")
 

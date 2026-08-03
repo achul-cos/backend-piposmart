@@ -46,11 +46,17 @@ func (r *Repository) CreatePackage(ctx context.Context, req CreatePackageRequest
 	if req.Active != nil {
 		active = *req.Active
 	}
-	result, err := r.db.ExecContext(ctx, `
-		INSERT INTO subscription_packages (code, name, level_order, description, active)
-		VALUES (?, ?, ?, ?, ?)`,
-		normalizeCode(req.Code), strings.TrimSpace(req.Name), req.LevelOrder, nullableString(req.Description), active,
-	)
+	query := `
+		INSERT INTO subscription_packages (code, name, level_order, description, active`
+	args := []any{normalizeCode(req.Code), strings.TrimSpace(req.Name), req.LevelOrder, nullableString(req.Description), active}
+	values := `) VALUES (?, ?, ?, ?, ?`
+	if req.CreatedAt != nil {
+		query += `, created_at`
+		values += `, ?`
+		args = append(args, req.CreatedAt.UTC())
+	}
+	query += values + `)`
+	result, err := r.db.ExecContext(ctx, query, args...)
 	if err != nil {
 		return Package{}, mapDuplicate(err)
 	}
@@ -156,21 +162,29 @@ func (r *Repository) CreatePlan(ctx context.Context, req CreatePlanRequest) (Pla
 	if err != nil {
 		return Plan{}, err
 	}
-	result, err := r.db.ExecContext(ctx, `
+	query := `
 		INSERT INTO subscription_plans
-			(package_id, code, name, tenure_months, duration_days, price, currency, effective_from, effective_to, active)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			(package_id, code, name, tenure_months, duration_days, price, currency, effective_from, effective_to, active`
+	args := []any{
 		req.PackageID,
 		normalizeCode(req.Code),
 		strings.TrimSpace(req.Name),
 		req.TenureMonths,
-		req.TenureMonths*30,
+		req.TenureMonths * 30,
 		req.Price,
 		currency,
 		effectiveFrom,
 		effectiveTo,
 		activeOrDefault(req.Active),
-	)
+	}
+	values := `) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?`
+	if req.CreatedAt != nil {
+		query += `, created_at`
+		values += `, ?`
+		args = append(args, req.CreatedAt.UTC())
+	}
+	query += values + `)`
+	result, err := r.db.ExecContext(ctx, query, args...)
 	if err != nil {
 		return Plan{}, mapDuplicate(err)
 	}
@@ -305,10 +319,10 @@ func (r *Repository) CreatePromotion(ctx context.Context, req CreatePromotionReq
 	if additionalCharge == "" {
 		additionalCharge = "0.00"
 	}
-	result, err := r.db.ExecContext(ctx, `
+	query := `
 		INSERT INTO promotions
-			(code, name, promotion_type, charge_type, additional_charge, priority, description, effective_from, effective_to, active)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			(code, name, promotion_type, charge_type, additional_charge, priority, description, effective_from, effective_to, active`
+	args := []any{
 		normalizeCode(req.Code),
 		strings.TrimSpace(req.Name),
 		normalizeCode(req.PromotionType),
@@ -319,7 +333,15 @@ func (r *Repository) CreatePromotion(ctx context.Context, req CreatePromotionReq
 		effectiveFrom,
 		effectiveTo,
 		activeOrDefault(req.Active),
-	)
+	}
+	values := `) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?`
+	if req.CreatedAt != nil {
+		query += `, created_at`
+		values += `, ?`
+		args = append(args, req.CreatedAt.UTC())
+	}
+	query += values + `)`
+	result, err := r.db.ExecContext(ctx, query, args...)
 	if err != nil {
 		return Promotion{}, mapDuplicate(err)
 	}
@@ -630,6 +652,14 @@ func packageWhere(params ListParams) (string, []any) {
 		where = append(where, "sp.active = ?")
 		args = append(args, *params.Active)
 	}
+	if params.CreatedFrom != nil {
+		where = append(where, "sp.created_at >= ?")
+		args = append(args, *params.CreatedFrom)
+	}
+	if params.CreatedTo != nil {
+		where = append(where, "sp.created_at < ?")
+		args = append(args, params.CreatedTo.AddDate(0, 0, 1))
+	}
 	return strings.Join(where, " AND "), args
 }
 
@@ -653,6 +683,14 @@ func planWhere(params ListParams) (string, []any) {
 		where = append(where, "spl.effective_from <= ? AND (spl.effective_to IS NULL OR spl.effective_to >= ?)")
 		args = append(args, *params.AsOf, *params.AsOf)
 	}
+	if params.CreatedFrom != nil {
+		where = append(where, "spl.created_at >= ?")
+		args = append(args, *params.CreatedFrom)
+	}
+	if params.CreatedTo != nil {
+		where = append(where, "spl.created_at < ?")
+		args = append(args, params.CreatedTo.AddDate(0, 0, 1))
+	}
 	return strings.Join(where, " AND "), args
 }
 
@@ -675,6 +713,14 @@ func promotionWhere(params ListParams) (string, []any) {
 	if params.AsOf != nil {
 		where = append(where, "p.effective_from <= ? AND (p.effective_to IS NULL OR p.effective_to >= ?)")
 		args = append(args, *params.AsOf, *params.AsOf)
+	}
+	if params.CreatedFrom != nil {
+		where = append(where, "p.created_at >= ?")
+		args = append(args, *params.CreatedFrom)
+	}
+	if params.CreatedTo != nil {
+		where = append(where, "p.created_at < ?")
+		args = append(args, params.CreatedTo.AddDate(0, 0, 1))
 	}
 	return strings.Join(where, " AND "), args
 }

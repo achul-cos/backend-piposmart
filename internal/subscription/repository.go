@@ -1487,6 +1487,14 @@ func orderWhere(actor identity.User, params ListParams) (string, []any) {
 		where = append(where, "so.plan_id = ?")
 		args = append(args, *params.PlanID)
 	}
+	if params.CreatedFrom != nil {
+		where = append(where, "so.created_at >= ?")
+		args = append(args, *params.CreatedFrom)
+	}
+	if params.CreatedTo != nil {
+		where = append(where, "so.created_at < ?")
+		args = append(args, params.CreatedTo.AddDate(0, 0, 1))
+	}
 	if params.PurchasedFrom != nil {
 		where = append(where, "so.purchased_at >= ?")
 		args = append(args, *params.PurchasedFrom)
@@ -1529,6 +1537,14 @@ func subscriptionWhere(actor identity.User, params ListParams) (string, []any) {
 		where = append(where, "s.plan_id = ?")
 		args = append(args, *params.PlanID)
 	}
+	if params.CreatedFrom != nil {
+		where = append(where, "s.created_at >= ?")
+		args = append(args, *params.CreatedFrom)
+	}
+	if params.CreatedTo != nil {
+		where = append(where, "s.created_at < ?")
+		args = append(args, params.CreatedTo.AddDate(0, 0, 1))
+	}
 	if params.ActiveFrom != nil {
 		where = append(where, "s.active_from >= ?")
 		args = append(args, *params.ActiveFrom)
@@ -1567,6 +1583,14 @@ func reconciliationWhere(actor identity.User, params ListParams) (string, []any)
 		where = append(where, "sr.closing_id = ?")
 		args = append(args, *params.ClosingID)
 	}
+	if params.CreatedFrom != nil {
+		where = append(where, "sr.created_at >= ?")
+		args = append(args, *params.CreatedFrom)
+	}
+	if params.CreatedTo != nil {
+		where = append(where, "sr.created_at < ?")
+		args = append(args, params.CreatedTo.AddDate(0, 0, 1))
+	}
 	return strings.Join(where, " AND "), args
 }
 
@@ -1600,6 +1624,14 @@ func issueWhere(actor identity.User, params ListParams) (string, []any) {
 	if params.ClosingID != nil {
 		where = append(where, "ri.closing_id = ?")
 		args = append(args, *params.ClosingID)
+	}
+	if params.CreatedFrom != nil {
+		where = append(where, "ri.created_at >= ?")
+		args = append(args, *params.CreatedFrom)
+	}
+	if params.CreatedTo != nil {
+		where = append(where, "ri.created_at < ?")
+		args = append(args, params.CreatedTo.AddDate(0, 0, 1))
 	}
 	return strings.Join(where, " AND "), args
 }

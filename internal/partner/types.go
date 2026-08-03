@@ -214,6 +214,7 @@ type CreatePartnerTypeRequest struct {
 	CommissionMode  string `json:"commission_mode" binding:"required,oneof=PERCENTAGE FIXED"`
 	CommissionValue string `json:"commission_value" binding:"required"`
 	Description     string `json:"description,omitempty"`
+	CreatedAt       *time.Time `json:"created_at,omitempty"`
 }
 
 type UpdatePartnerTypeRequest struct {
@@ -232,6 +233,7 @@ type CreatePartnerRequest struct {
 	Address       *string `json:"address,omitempty"`
 	BankAccount   *string `json:"bank_account,omitempty"` // plain account number, will be encrypted
 	Status        string  `json:"status,omitempty"`       // default ACTIVE
+	CreatedAt     *time.Time `json:"created_at,omitempty"`
 	// SelfAssignPIC lets the creating user (typically a Sales rep) become the partner's PIC in
 	// the same request — the day-to-day referral/activity TUPOKSI for a partner is Sales' job,
 	// even though assigning ANOTHER user as PIC remains a Supervisor action via AssignPIC.
@@ -261,6 +263,7 @@ type UpdatePartnerRequest struct {
 type CreatePartnerAssignmentRequest struct {
 	UserID       int64  `json:"user_id" binding:"required,min=1"` // PIC user
 	AssignedByID *int64 `json:"assigned_by_id,omitempty"`         // who made assignment (optional, can be from auth)
+	CreatedAt    *time.Time `json:"created_at,omitempty"`
 	// Assumed active by default
 }
 
@@ -268,12 +271,35 @@ type CreatePartnerInteractionRequest struct {
 	InteractionType string     `json:"interaction_type" binding:"required,oneof=CALL CHAT"`
 	InteractionAt   *time.Time `json:"interaction_at,omitempty"` // default now
 	Note            *string    `json:"note,omitempty"`
+	CreatedAt       *time.Time `json:"created_at,omitempty"`
 }
 
 type CreatePartnerReferralRequest struct {
 	LeadID       int64      `json:"lead_id" binding:"required,min=1"`
 	ReferralDate *time.Time `json:"referral_date,omitempty"` // default now
 	Notes        *string    `json:"notes,omitempty"`
+	CreatedAt    *time.Time `json:"created_at,omitempty"`
+}
+
+type PartnerListParams struct {
+	Search      string
+	CreatedFrom *time.Time
+	CreatedTo   *time.Time
+	Limit       int
+	Offset      int
+}
+
+type PartnerTypeListParams struct {
+	Search      string
+	CreatedFrom *time.Time
+	CreatedTo   *time.Time
+}
+
+type PartnerHistoryListParams struct {
+	CreatedFrom *time.Time
+	CreatedTo   *time.Time
+	Limit       int
+	Offset      int
 }
 
 // Helper functions to build responses

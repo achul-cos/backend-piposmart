@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"backend_crm_piposmart/internal/identity"
 	"backend_crm_piposmart/internal/platform/httpx"
@@ -106,6 +107,15 @@ func (h *Handler) ListBatches(c *gin.Context) {
 		Profile: c.Query("profile"),
 		All:     false,
 	}
+	var ok bool
+	params.CreatedFrom, params.CreatedTo, ok = parseDateRangeQuery(c, "created_from", "created_to")
+	if !ok {
+		return
+	}
+	params.UploadedFrom, params.UploadedTo, ok = parseDateRangeQuery(c, "uploaded_from", "uploaded_to")
+	if !ok {
+		return
+	}
 	params.Page, _ = strconv.Atoi(c.DefaultQuery("page", "1"))
 	params.Limit, _ = strconv.Atoi(c.DefaultQuery("limit", "20"))
 
@@ -123,6 +133,15 @@ func (h *Handler) ListAllBatches(c *gin.Context) {
 		Status:  c.Query("status"),
 		Profile: c.Query("profile"),
 		All:     true,
+	}
+	var ok bool
+	params.CreatedFrom, params.CreatedTo, ok = parseDateRangeQuery(c, "created_from", "created_to")
+	if !ok {
+		return
+	}
+	params.UploadedFrom, params.UploadedTo, ok = parseDateRangeQuery(c, "uploaded_from", "uploaded_to")
+	if !ok {
+		return
 	}
 	params.Page, _ = strconv.Atoi(c.DefaultQuery("page", "1"))
 	params.Limit, _ = strconv.Atoi(c.DefaultQuery("limit", "20"))
@@ -230,6 +249,11 @@ func (h *Handler) ListRows(c *gin.Context) {
 		return
 	}
 	params := ListRowsParams{Status: c.Query("status"), All: false}
+	var rangeOK bool
+	params.CreatedFrom, params.CreatedTo, rangeOK = parseDateRangeQuery(c, "created_from", "created_to")
+	if !rangeOK {
+		return
+	}
 	params.Page, _ = strconv.Atoi(c.DefaultQuery("page", "1"))
 	params.Limit, _ = strconv.Atoi(c.DefaultQuery("limit", "50"))
 
@@ -248,6 +272,11 @@ func (h *Handler) ListAllRows(c *gin.Context) {
 		return
 	}
 	params := ListRowsParams{Status: c.Query("status"), All: true}
+	var rangeOK bool
+	params.CreatedFrom, params.CreatedTo, rangeOK = parseDateRangeQuery(c, "created_from", "created_to")
+	if !rangeOK {
+		return
+	}
 	params.Page, _ = strconv.Atoi(c.DefaultQuery("page", "1"))
 	params.Limit, _ = strconv.Atoi(c.DefaultQuery("limit", "50"))
 	actor, _ := identity.CurrentUser(c)
@@ -423,6 +452,31 @@ func writeImportError(c *gin.Context, err error) {
 	default:
 		httpx.Error(c, http.StatusInternalServerError, "INTERNAL_ERROR", "unexpected error", importErrorDetails("INTERNAL_ERROR", err, requestID))
 	}
+}
+
+func parseDateRangeQuery(c *gin.Context, fromKey, toKey string) (*time.Time, *time.Time, bool) {
+	from, err := parseOptionalDate(c.Query(fromKey))
+	if err != nil {
+		httpx.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", fromKey+" harus format YYYY-MM-DD", nil)
+		return nil, nil, false
+	}
+	to, err := parseOptionalDate(c.Query(toKey))
+	if err != nil {
+		httpx.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", toKey+" harus format YYYY-MM-DD", nil)
+		return nil, nil, false
+	}
+	return from, to, true
+}
+
+func parseOptionalDate(value string) (*time.Time, error) {
+	if strings.TrimSpace(value) == "" {
+		return nil, nil
+	}
+	parsed, err := time.Parse("2006-01-02", strings.TrimSpace(value))
+	if err != nil {
+		return nil, err
+	}
+	return &parsed, nil
 }
 
 func logImportError(c *gin.Context, err error) {

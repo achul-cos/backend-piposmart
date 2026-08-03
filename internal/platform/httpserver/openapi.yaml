@@ -2824,6 +2824,24 @@ paths:
       operationId: listPartnerTypes
       security:
         - bearerAuth: []
+      parameters:
+        - name: search
+          in: query
+          schema:
+            type: string
+          description: Pencarian partner type berdasarkan code atau name
+        - name: created_from
+          in: query
+          schema:
+            type: string
+            format: date
+          description: Filter partner type berdasarkan tanggal dibuat mulai (YYYY-MM-DD). Harus dipakai berpasangan dengan `created_to`.
+        - name: created_to
+          in: query
+          schema:
+            type: string
+            format: date
+          description: Filter partner type berdasarkan tanggal dibuat akhir (YYYY-MM-DD, inklusif). Harus dipakai berpasangan dengan `created_from`.
       responses:
         "200":
           description: List partner type
@@ -2950,6 +2968,18 @@ paths:
           schema:
             type: integer
             default: 0
+        - name: created_from
+          in: query
+          schema:
+            type: string
+            format: date
+          description: Filter partner berdasarkan tanggal dibuat mulai (YYYY-MM-DD). Harus dipakai berpasangan dengan `created_to`.
+        - name: created_to
+          in: query
+          schema:
+            type: string
+            format: date
+          description: Filter partner berdasarkan tanggal dibuat akhir (YYYY-MM-DD, inklusif). Harus dipakai berpasangan dengan `created_from`.
       responses:
         "200":
           description: List partner
@@ -3124,6 +3154,18 @@ paths:
           schema:
             type: integer
             format: int64
+        - name: created_from
+          in: query
+          schema:
+            type: string
+            format: date
+          description: Filter history assignment berdasarkan tanggal dibuat mulai (YYYY-MM-DD). Harus dipakai berpasangan dengan `created_to`.
+        - name: created_to
+          in: query
+          schema:
+            type: string
+            format: date
+          description: Filter history assignment berdasarkan tanggal dibuat akhir (YYYY-MM-DD, inklusif). Harus dipakai berpasangan dengan `created_from`.
       responses:
         "200":
           description: List assignment history
@@ -3239,6 +3281,18 @@ paths:
           schema:
             type: integer
             default: 0
+        - name: created_from
+          in: query
+          schema:
+            type: string
+            format: date
+          description: Filter interaksi partner berdasarkan tanggal dibuat mulai (YYYY-MM-DD). Harus dipakai berpasangan dengan `created_to`.
+        - name: created_to
+          in: query
+          schema:
+            type: string
+            format: date
+          description: Filter interaksi partner berdasarkan tanggal dibuat akhir (YYYY-MM-DD, inklusif). Harus dipakai berpasangan dengan `created_from`.
       responses:
         "200":
           description: List interaksi partner
@@ -3305,6 +3359,18 @@ paths:
           schema:
             type: integer
             format: int64
+        - name: created_from
+          in: query
+          schema:
+            type: string
+            format: date
+          description: Filter referral partner berdasarkan tanggal dibuat mulai (YYYY-MM-DD). Harus dipakai berpasangan dengan `created_to`.
+        - name: created_to
+          in: query
+          schema:
+            type: string
+            format: date
+          description: Filter referral partner berdasarkan tanggal dibuat akhir (YYYY-MM-DD, inklusif). Harus dipakai berpasangan dengan `created_from`.
       responses:
         "200":
           description: List referral partner
@@ -4334,7 +4400,7 @@ paths:
       tags: [Reports]
       summary: List report generik untuk tabel reporting
       operationId: listReportByKey
-      description: Mengembalikan report generik berbentuk `columns` + `items` agar frontend mudah membangun tabel lintas modul. Report key yang didukung yaitu `owners_outlets`, `activities`, `topups`, `closings`, `subscriptions`, `partners`, dan `targets_kpi`.
+      description: Mengembalikan report generik berbentuk `columns` + `items` agar frontend mudah membangun tabel lintas modul. Report key yang didukung yaitu `owners_outlets`, `activities`, `topups`, `closings`, `subscriptions`, `partners`, `targets_kpi`, `admin_owner_outlet`, `admin_new_subscribe`, dan `admin_nasabah_baru_provinsi`.
       security:
         - bearerAuth: []
       parameters:
@@ -4343,7 +4409,7 @@ paths:
           required: true
           schema:
             type: string
-            enum: [owners_outlets, activities, topups, closings, subscriptions, partners, targets_kpi]
+            enum: [owners_outlets, activities, topups, closings, subscriptions, partners, targets_kpi, admin_owner_outlet, admin_new_subscribe, admin_nasabah_baru_provinsi]
         - name: date_from
           in: query
           schema:
@@ -4354,6 +4420,18 @@ paths:
           schema:
             type: string
             format: date
+        - name: created_from
+          in: query
+          schema:
+            type: string
+            format: date
+          description: Filter rentang tanggal dibuat aktual data (`created_at`). Harus dipakai berpasangan dengan `created_to`.
+        - name: created_to
+          in: query
+          schema:
+            type: string
+            format: date
+          description: Filter rentang tanggal dibuat aktual data (`created_at`). Harus dipakai berpasangan dengan `created_from`.
         - name: status
           in: query
           schema:
@@ -4433,7 +4511,7 @@ paths:
       tags: [Reports]
       summary: Buat export report async
       operationId: createReportExport
-      description: Membuat request export report ke antrean worker. File dihasilkan secara asynchronous dengan status `PENDING`, `PROCESSING`, `COMPLETED`, atau `FAILED`.
+      description: Membuat request export report ke antrean worker. File dihasilkan secara asynchronous dengan status `PENDING`, `PROCESSING`, `COMPLETED`, atau `FAILED`. Sprint 16a menambahkan dukungan export `PDF` serta filter `created_from` dan `created_to`.
       security:
         - bearerAuth: []
       requestBody:
@@ -4560,6 +4638,10 @@ paths:
               schema:
                 type: string
                 format: binary
+            application/pdf:
+              schema:
+                type: string
+                format: binary
         "403":
           description: Actor tidak berhak mengunduh export ini
           content:
@@ -4638,6 +4720,26 @@ paths:
           in: query
           schema:
             type: integer
+        - name: created_from
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: created_to
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: uploaded_from
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: uploaded_to
+          in: query
+          schema:
+            type: string
+            format: date
         - name: limit
           in: query
           schema:
@@ -4758,6 +4860,16 @@ paths:
           in: query
           schema:
             type: integer
+        - name: created_from
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: created_to
+          in: query
+          schema:
+            type: string
+            format: date
         - name: limit
           in: query
           schema:
@@ -7208,6 +7320,30 @@ paths:
           in: query
           schema:
             type: string
+        - name: created_from
+          in: query
+          schema:
+            type: string
+            format: date
+          description: Filter batch import berdasarkan tanggal dibuat mulai (YYYY-MM-DD). Harus dipakai berpasangan dengan `created_to`.
+        - name: created_to
+          in: query
+          schema:
+            type: string
+            format: date
+          description: Filter batch import berdasarkan tanggal dibuat akhir (YYYY-MM-DD, inklusif). Harus dipakai berpasangan dengan `created_from`.
+        - name: uploaded_from
+          in: query
+          schema:
+            type: string
+            format: date
+          description: Filter batch import berdasarkan tanggal file di-upload mulai (YYYY-MM-DD). Harus dipakai berpasangan dengan `uploaded_to`.
+        - name: uploaded_to
+          in: query
+          schema:
+            type: string
+            format: date
+          description: Filter batch import berdasarkan tanggal file di-upload akhir (YYYY-MM-DD, inklusif). Harus dipakai berpasangan dengan `uploaded_from`.
       responses:
         "200":
           description: List semua batch import
@@ -7232,6 +7368,30 @@ paths:
           in: query
           schema:
             type: string
+        - name: created_from
+          in: query
+          schema:
+            type: string
+            format: date
+          description: Filter batch import berdasarkan tanggal dibuat mulai (YYYY-MM-DD). Harus dipakai berpasangan dengan `created_to`.
+        - name: created_to
+          in: query
+          schema:
+            type: string
+            format: date
+          description: Filter batch import berdasarkan tanggal dibuat akhir (YYYY-MM-DD, inklusif). Harus dipakai berpasangan dengan `created_from`.
+        - name: uploaded_from
+          in: query
+          schema:
+            type: string
+            format: date
+          description: Filter batch import berdasarkan tanggal file di-upload mulai (YYYY-MM-DD). Harus dipakai berpasangan dengan `uploaded_to`.
+        - name: uploaded_to
+          in: query
+          schema:
+            type: string
+            format: date
+          description: Filter batch import berdasarkan tanggal file di-upload akhir (YYYY-MM-DD, inklusif). Harus dipakai berpasangan dengan `uploaded_from`.
       responses:
         "200":
           description: List semua batch import
@@ -7257,6 +7417,18 @@ paths:
           in: query
           schema:
             type: string
+        - name: created_from
+          in: query
+          schema:
+            type: string
+            format: date
+          description: Filter row import berdasarkan tanggal dibuat mulai (YYYY-MM-DD). Harus dipakai berpasangan dengan `created_to`.
+        - name: created_to
+          in: query
+          schema:
+            type: string
+            format: date
+          description: Filter row import berdasarkan tanggal dibuat akhir (YYYY-MM-DD, inklusif). Harus dipakai berpasangan dengan `created_from`.
       responses:
         "200":
           description: List semua row import
@@ -7283,6 +7455,18 @@ paths:
           in: query
           schema:
             type: string
+        - name: created_from
+          in: query
+          schema:
+            type: string
+            format: date
+          description: Filter row import berdasarkan tanggal dibuat mulai (YYYY-MM-DD). Harus dipakai berpasangan dengan `created_to`.
+        - name: created_to
+          in: query
+          schema:
+            type: string
+            format: date
+          description: Filter row import berdasarkan tanggal dibuat akhir (YYYY-MM-DD, inklusif). Harus dipakai berpasangan dengan `created_from`.
       responses:
         "200":
           description: List semua row import
@@ -7367,6 +7551,18 @@ paths:
           in: query
           schema:
             type: string
+        - name: created_from
+          in: query
+          schema:
+            type: string
+            format: date
+          description: Filter partner berdasarkan tanggal dibuat mulai (YYYY-MM-DD). Harus dipakai berpasangan dengan `created_to`.
+        - name: created_to
+          in: query
+          schema:
+            type: string
+            format: date
+          description: Filter partner berdasarkan tanggal dibuat akhir (YYYY-MM-DD, inklusif). Harus dipakai berpasangan dengan `created_from`.
       responses:
         "200":
           description: List semua partner
@@ -7387,6 +7583,18 @@ paths:
           in: query
           schema:
             type: string
+        - name: created_from
+          in: query
+          schema:
+            type: string
+            format: date
+          description: Filter partner berdasarkan tanggal dibuat mulai (YYYY-MM-DD). Harus dipakai berpasangan dengan `created_to`.
+        - name: created_to
+          in: query
+          schema:
+            type: string
+            format: date
+          description: Filter partner berdasarkan tanggal dibuat akhir (YYYY-MM-DD, inklusif). Harus dipakai berpasangan dengan `created_from`.
       responses:
         "200":
           description: List semua partner
@@ -7408,6 +7616,18 @@ paths:
           schema:
             type: integer
             format: int64
+        - name: created_from
+          in: query
+          schema:
+            type: string
+            format: date
+          description: Filter interaksi partner berdasarkan tanggal dibuat mulai (YYYY-MM-DD). Harus dipakai berpasangan dengan `created_to`.
+        - name: created_to
+          in: query
+          schema:
+            type: string
+            format: date
+          description: Filter interaksi partner berdasarkan tanggal dibuat akhir (YYYY-MM-DD, inklusif). Harus dipakai berpasangan dengan `created_from`.
       responses:
         "200":
           description: List semua interaksi partner
@@ -7430,6 +7650,18 @@ paths:
           schema:
             type: integer
             format: int64
+        - name: created_from
+          in: query
+          schema:
+            type: string
+            format: date
+          description: Filter interaksi partner berdasarkan tanggal dibuat mulai (YYYY-MM-DD). Harus dipakai berpasangan dengan `created_to`.
+        - name: created_to
+          in: query
+          schema:
+            type: string
+            format: date
+          description: Filter interaksi partner berdasarkan tanggal dibuat akhir (YYYY-MM-DD, inklusif). Harus dipakai berpasangan dengan `created_from`.
       responses:
         "200":
           description: List semua interaksi partner
@@ -9633,7 +9865,7 @@ components:
       properties:
         report_key:
           type: string
-          enum: [owners_outlets, activities, topups, closings, subscriptions, partners, targets_kpi]
+          enum: [owners_outlets, activities, topups, closings, subscriptions, partners, targets_kpi, admin_owner_outlet, admin_new_subscribe, admin_nasabah_baru_provinsi]
         columns:
           type: array
           items:
@@ -9663,19 +9895,21 @@ components:
       properties:
         report_key:
           type: string
-          enum: [owners_outlets, activities, topups, closings, subscriptions, partners, targets_kpi]
+          enum: [owners_outlets, activities, topups, closings, subscriptions, partners, targets_kpi, admin_owner_outlet, admin_new_subscribe, admin_nasabah_baru_provinsi]
         format:
           type: string
-          enum: [CSV, XLSX]
+          enum: [CSV, XLSX, PDF]
         filters:
           type: object
           additionalProperties:
             type: string
           nullable: true
-          description: Filter report yang akan dibekukan pada export ini, misalnya date_from, date_to, status, q, province, atau city.
+          description: Filter report yang akan dibekukan pada export ini, misalnya date_from, date_to, created_from, created_to, status, q, province, atau city.
           example:
             date_from: "2026-07-01"
             date_to: "2026-07-31"
+            created_from: "2026-07-01"
+            created_to: "2026-07-31"
             status: CONFIRMED
     ReportExportUserBrief:
       type: object
@@ -9697,10 +9931,10 @@ components:
           example: RPT-20260802123045-1
         report_key:
           type: string
-          enum: [owners_outlets, activities, topups, closings, subscriptions, partners, targets_kpi]
+          enum: [owners_outlets, activities, topups, closings, subscriptions, partners, targets_kpi, admin_owner_outlet, admin_new_subscribe, admin_nasabah_baru_provinsi]
         format:
           type: string
-          enum: [CSV, XLSX]
+          enum: [CSV, XLSX, PDF]
         status:
           type: string
           enum: [PENDING, PROCESSING, COMPLETED, FAILED]
@@ -10320,6 +10554,12 @@ components:
         description:
           type: string
           example: Partner sebagai supplier produk
+        created_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: Tanggal dibuat historis. Jika kosong, backend memakai waktu saat request diproses.
+          example: "2021-03-14T00:00:00Z"
     UpdatePartnerTypeRequest:
       type: object
       properties:
@@ -10373,6 +10613,12 @@ components:
           type: string
           enum: [ACTIVE, INACTIVE]
           default: ACTIVE
+        created_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: Tanggal dibuat historis. Jika kosong, backend memakai waktu saat request diproses.
+          example: "2021-03-14T00:00:00Z"
     UpdatePartnerRequest:
       type: object
       properties:
@@ -10411,6 +10657,12 @@ components:
           nullable: true
           description: ID user yang melakukan assignment. Jika kosong, diambil dari auth context.
           example: 1
+        created_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: Tanggal dibuat historis assignment. Jika kosong, backend memakai waktu saat request diproses.
+          example: "2022-07-01T08:00:00Z"
     CreatePartnerInteractionRequest:
       type: object
       required: [interaction_type]
@@ -10429,6 +10681,12 @@ components:
           type: string
           nullable: true
           example: Diskusi tentang pengiriman barang bulan depan
+        created_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: Tanggal dibuat historis interaksi. Jika kosong, backend memakai waktu saat request diproses.
+          example: "2022-07-01T08:00:00Z"
     CreatePartnerReferralRequest:
       type: object
       required: [lead_id]
@@ -10448,6 +10706,12 @@ components:
           type: string
           nullable: true
           example: Lead direkomendasikan oleh partner karena relasi bisnis
+        created_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: Tanggal dibuat historis referral. Jika kosong, backend memakai waktu saat request diproses.
+          example: "2022-07-01T08:00:00Z"
     PartnerCommissionResponse:
       type: object
       properties:

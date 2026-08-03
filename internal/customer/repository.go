@@ -61,9 +61,9 @@ func (r *Repository) CreateOwners(ctx context.Context, actor Actor, requests []C
 }
 
 func (r *Repository) createOwner(ctx context.Context, q queryExecutor, actor Actor, req CreateOwnerRequest, normalizedPhone string) (Owner, error) {
-	result, err := q.ExecContext(ctx, `
-		INSERT INTO owners (code, name, phone, email, brand_name, province, city, address, status)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE')`,
+	query := `
+		INSERT INTO owners (code, name, phone, email, brand_name, province, city, address, status`
+	args := []any{
 		trim(req.Code),
 		trim(req.Name),
 		nullableString(normalizedPhone),
@@ -72,7 +72,15 @@ func (r *Repository) createOwner(ctx context.Context, q queryExecutor, actor Act
 		nullableString(req.Province),
 		nullableString(req.City),
 		nullableString(req.Address),
-	)
+	}
+	values := `) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE'`
+	if req.CreatedAt != nil {
+		query += `, created_at`
+		values += `, ?`
+		args = append(args, req.CreatedAt.UTC())
+	}
+	query += values + `)`
+	result, err := q.ExecContext(ctx, query, args...)
 	if err != nil {
 		return Owner{}, mapDuplicateError(err)
 	}
@@ -354,9 +362,9 @@ func (r *Repository) CreateOutlets(ctx context.Context, ownerID int64, requests 
 }
 
 func (r *Repository) createOutlet(ctx context.Context, q queryExecutor, ownerID int64, req CreateOutletRequest, normalizedPhone string) (Outlet, error) {
-	result, err := q.ExecContext(ctx, `
-		INSERT INTO outlets (owner_id, code, name, phone, province, city, address, status)
-		VALUES (?, ?, ?, ?, ?, ?, ?, 'ACTIVE')`,
+	query := `
+		INSERT INTO outlets (owner_id, code, name, phone, province, city, address, status`
+	args := []any{
 		ownerID,
 		trim(req.Code),
 		trim(req.Name),
@@ -364,7 +372,15 @@ func (r *Repository) createOutlet(ctx context.Context, q queryExecutor, ownerID 
 		nullableString(req.Province),
 		nullableString(req.City),
 		nullableString(req.Address),
-	)
+	}
+	values := `) VALUES (?, ?, ?, ?, ?, ?, ?, 'ACTIVE'`
+	if req.CreatedAt != nil {
+		query += `, created_at`
+		values += `, ?`
+		args = append(args, req.CreatedAt.UTC())
+	}
+	query += values + `)`
+	result, err := q.ExecContext(ctx, query, args...)
 	if err != nil {
 		return Outlet{}, mapDuplicateError(err)
 	}
@@ -839,6 +855,14 @@ func ownerWhere(actor Actor, params ListParams) (string, []any) {
 		where = append(where, "o.city LIKE ?")
 		args = append(args, like(params.City))
 	}
+	if params.CreatedFrom != nil {
+		where = append(where, "o.created_at >= ?")
+		args = append(args, *params.CreatedFrom)
+	}
+	if params.CreatedTo != nil {
+		where = append(where, "o.created_at < ?")
+		args = append(args, params.CreatedTo.AddDate(0, 0, 1))
+	}
 	return strings.Join(where, " AND "), args
 }
 
@@ -900,6 +924,14 @@ func outletWhere(ownerID int64, params ListParams) (string, []any) {
 		where = append(where, "ot.city LIKE ?")
 		args = append(args, like(params.City))
 	}
+	if params.CreatedFrom != nil {
+		where = append(where, "ot.created_at >= ?")
+		args = append(args, *params.CreatedFrom)
+	}
+	if params.CreatedTo != nil {
+		where = append(where, "ot.created_at < ?")
+		args = append(args, params.CreatedTo.AddDate(0, 0, 1))
+	}
 	return strings.Join(where, " AND "), args
 }
 
@@ -941,6 +973,14 @@ func globalOutletWhere(actor Actor, params ListParams) (string, []any) {
 	if params.City != "" {
 		where = append(where, "ot.city LIKE ?")
 		args = append(args, like(params.City))
+	}
+	if params.CreatedFrom != nil {
+		where = append(where, "ot.created_at >= ?")
+		args = append(args, *params.CreatedFrom)
+	}
+	if params.CreatedTo != nil {
+		where = append(where, "ot.created_at < ?")
+		args = append(args, params.CreatedTo.AddDate(0, 0, 1))
 	}
 	if params.SubscriptionStatus != "" || params.SubscriptionMonth != "" {
 		subQuery := []string{"s.outlet_id = ot.id", "s.deleted_at IS NULL"}

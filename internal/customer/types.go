@@ -248,6 +248,7 @@ type CreateOwnerRequest struct {
 	Province  string `json:"province"`
 	City      string `json:"city"`
 	Address   string `json:"address"`
+	CreatedAt *time.Time `json:"created_at,omitempty"`
 }
 
 type UpdateOwnerRequest struct {
@@ -268,6 +269,7 @@ type CreateOutletRequest struct {
 	Province string `json:"province"`
 	City     string `json:"city"`
 	Address  string `json:"address"`
+	CreatedAt *time.Time `json:"created_at,omitempty"`
 }
 
 type UpdateOutletRequest struct {
@@ -341,6 +343,8 @@ type ListParams struct {
 	BrandName          string
 	Province           string
 	City               string
+	CreatedFrom        *time.Time
+	CreatedTo          *time.Time
 	OwnerID            *int64
 	SubscriptionStatus string
 	SubscriptionMonth  string

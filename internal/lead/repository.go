@@ -50,17 +50,25 @@ func (r *Repository) CreateLead(ctx context.Context, actor identity.User, req Cr
 	if sourceType == "" {
 		sourceType = "MANUAL"
 	}
-	result, err := tx.ExecContext(ctx, `
+	query := `
 		INSERT INTO customer_leads
-			(code, owner_id, outlet_id, source_type, source_reference, stage, status, current_score, current_owner_user_id, current_owner_role)
-		VALUES (?, ?, ?, ?, ?, 'NEW', 'OPEN', 1, ?, 'ADMIN')`,
+			(code, owner_id, outlet_id, source_type, source_reference, stage, status, current_score, current_owner_user_id, current_owner_role`
+	args := []any{
 		fmt.Sprintf("LEAD-%06d", req.OwnerID),
 		req.OwnerID,
 		nullableInt64Ptr(req.OutletID),
 		sourceType,
 		nullableString(req.SourceReference),
 		actor.ID,
-	)
+	}
+	values := `) VALUES (?, ?, ?, ?, ?, 'NEW', 'OPEN', 1, ?, 'ADMIN'`
+	if req.CreatedAt != nil {
+		query += `, created_at`
+		values += `, ?`
+		args = append(args, req.CreatedAt.UTC())
+	}
+	query += values + `)`
+	result, err := tx.ExecContext(ctx, query, args...)
 	if err != nil {
 		return Lead{}, mapCreateLeadError(err)
 	}
@@ -558,6 +566,14 @@ func leadWhere(actor identity.User, params ListParams) (string, []any) {
 	if params.SalesID != nil {
 		where = append(where, "cl.active_sales_id = ?")
 		args = append(args, *params.SalesID)
+	}
+	if params.CreatedFrom != nil {
+		where = append(where, "cl.created_at >= ?")
+		args = append(args, *params.CreatedFrom)
+	}
+	if params.CreatedTo != nil {
+		where = append(where, "cl.created_at < ?")
+		args = append(args, params.CreatedTo.AddDate(0, 0, 1))
 	}
 	if params.FollowUpFrom != nil {
 		where = append(where, "cl.next_follow_up_at >= ?")

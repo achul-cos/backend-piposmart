@@ -564,6 +564,16 @@ func listParams(c *gin.Context) (ListParams, bool) {
 		return ListParams{}, false
 	}
 	params.AsOf = asOf
+	createdFrom, ok := parseOptionalDateQuery(c, "created_from")
+	if !ok {
+		return ListParams{}, false
+	}
+	params.CreatedFrom = createdFrom
+	createdTo, ok := parseOptionalDateQuery(c, "created_to")
+	if !ok {
+		return ListParams{}, false
+	}
+	params.CreatedTo = createdTo
 	return params, true
 }
 

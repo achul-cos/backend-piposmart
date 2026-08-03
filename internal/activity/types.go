@@ -183,6 +183,8 @@ type InteractionListParams struct {
 	Type            string
 	Score           *int64
 	SalesID         *int64
+	CreatedFrom     *time.Time
+	CreatedTo       *time.Time
 	InteractionFrom *time.Time
 	InteractionTo   *time.Time
 	FollowUpFrom    *time.Time
@@ -199,6 +201,8 @@ type TrainingListParams struct {
 	Status        string
 	TrainingType  string
 	SalesID       *int64
+	CreatedFrom   *time.Time
+	CreatedTo     *time.Time
 	ScheduledFrom *time.Time
 	ScheduledTo   *time.Time
 	All           bool

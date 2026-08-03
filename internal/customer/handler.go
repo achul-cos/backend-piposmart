@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"time"
 
 	"backend_crm_piposmart/internal/identity"
 	"backend_crm_piposmart/internal/platform/httpx"
@@ -90,7 +91,11 @@ func (h *Handler) listOwnersWithScope(c *gin.Context, scope string) {
 }
 
 func (h *Handler) listOwnersWithScopeAndAll(c *gin.Context, scope string, all bool) {
-	params := listParams(c)
+	params, err := listParams(c)
+	if err != nil {
+		httpx.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
+		return
+	}
 	params.Scope = scope
 	params.All = all
 	response, err := h.service.ListOwners(c.Request.Context(), currentActor(c), params)
@@ -275,7 +280,11 @@ func (h *Handler) listOwnerOutletsWithScopeAndAll(c *gin.Context, scope string, 
 	if !ok {
 		return
 	}
-	params := listParams(c)
+	params, err := listParams(c)
+	if err != nil {
+		httpx.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
+		return
+	}
 	params.Scope = scope
 	params.All = all
 	response, err := h.service.ListOutlets(c.Request.Context(), currentActor(c), ownerID, params)
@@ -311,7 +320,11 @@ func (h *Handler) listGlobalOutletsWithScope(c *gin.Context, scope string) {
 }
 
 func (h *Handler) listGlobalOutletsWithScopeAndAll(c *gin.Context, scope string, all bool) {
-	params := listParams(c)
+	params, err := listParams(c)
+	if err != nil {
+		httpx.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
+		return
+	}
 	params.Scope = scope
 	params.All = all
 	response, err := h.service.ListGlobalOutlets(c.Request.Context(), currentActor(c), params)
@@ -516,7 +529,7 @@ func parseParamID(c *gin.Context, name string) (int64, bool) {
 	return id, true
 }
 
-func listParams(c *gin.Context) ListParams {
+func listParams(c *gin.Context) (ListParams, error) {
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))
 	params := ListParams{
@@ -537,7 +550,27 @@ func listParams(c *gin.Context) ListParams {
 	if ownerID, err := strconv.ParseInt(c.Query("owner_id"), 10, 64); err == nil && ownerID > 0 {
 		params.OwnerID = &ownerID
 	}
-	return params
+	var err error
+	params.CreatedFrom, err = parseDateOnly(c.Query("created_from"))
+	if err != nil {
+		return ListParams{}, err
+	}
+	params.CreatedTo, err = parseDateOnly(c.Query("created_to"))
+	if err != nil {
+		return ListParams{}, err
+	}
+	return params, nil
+}
+
+func parseDateOnly(value string) (*time.Time, error) {
+	if value == "" {
+		return nil, nil
+	}
+	parsed, err := time.ParseInLocation("2006-01-02", value, time.UTC)
+	if err != nil {
+		return nil, errors.New("format tanggal harus YYYY-MM-DD")
+	}
+	return &parsed, nil
 }
 
 func currentActor(c *gin.Context) Actor {

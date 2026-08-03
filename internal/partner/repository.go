@@ -30,8 +30,8 @@ type queryExecutor interface {
 func (r *Repository) CreatePartnerType(ctx context.Context, pt PartnerType) (int64, error) {
 	query := `
 		INSERT INTO partner_types (code, name, commission_mode, commission_value, description, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, NOW(), NOW())`
-	result, err := r.db.ExecContext(ctx, query, pt.Code, pt.Name, pt.CommissionMode, pt.CommissionValue, pt.Description)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`
+	result, err := r.db.ExecContext(ctx, query, pt.Code, pt.Name, pt.CommissionMode, pt.CommissionValue, pt.Description, pt.CreatedAt, pt.UpdatedAt)
 	if err != nil {
 		return 0, mapDuplicateError(err, "uq_partner_types_code")
 	}
@@ -59,12 +59,28 @@ func (r *Repository) GetPartnerTypeByID(ctx context.Context, id int64) (*Partner
 	return &pt, nil
 }
 
-func (r *Repository) ListPartnerTypes(ctx context.Context) ([]PartnerType, error) {
+func (r *Repository) ListPartnerTypes(ctx context.Context, params PartnerTypeListParams) ([]PartnerType, error) {
+	where := []string{"1 = 1"}
+	args := []any{}
+	if strings.TrimSpace(params.Search) != "" {
+		pattern := "%" + strings.TrimSpace(params.Search) + "%"
+		where = append(where, "(name LIKE ? OR code LIKE ?)")
+		args = append(args, pattern, pattern)
+	}
+	if params.CreatedFrom != nil {
+		where = append(where, "created_at >= ?")
+		args = append(args, *params.CreatedFrom)
+	}
+	if params.CreatedTo != nil {
+		where = append(where, "created_at < ?")
+		args = append(args, params.CreatedTo.AddDate(0, 0, 1))
+	}
 	query := `
 		SELECT id, code, name, commission_mode, commission_value, description, created_at, updated_at
 		FROM partner_types
+		WHERE ` + strings.Join(where, " AND ") + `
 		ORDER BY name`
-	rows, err := r.db.QueryContext(ctx, query)
+	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -107,7 +123,7 @@ func (r *Repository) CreatePartner(ctx context.Context, p Partner) (int64, error
 		INSERT INTO partners (
 			partner_type_id, code, name, phone, email, address,
 			bank_account_encrypted, bank_account_last4, status, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	result, err := r.db.ExecContext(ctx, query,
 		p.PartnerTypeID,
 		p.Code,
@@ -117,7 +133,9 @@ func (r *Repository) CreatePartner(ctx context.Context, p Partner) (int64, error
 		p.Address,
 		p.BankAccountEncrypted,
 		p.BankAccountLast4,
-		p.Status)
+		p.Status,
+		p.CreatedAt,
+		p.UpdatedAt)
 	if err != nil {
 		return 0, mapDuplicateError(err, "uq_partners_code")
 	}
@@ -166,14 +184,23 @@ func (r *Repository) GetPartnerByCode(ctx context.Context, code string) (*Partne
 	return &p, nil
 }
 
-func (r *Repository) ListPartners(ctx context.Context, limit int, offset int, search string) ([]Partner, int64, error) {
+func (r *Repository) ListPartners(ctx context.Context, params PartnerListParams) ([]Partner, int64, error) {
 	var args []any
-	var where string
-	if search != "" {
-		where = "WHERE (name LIKE ? OR code LIKE ?)"
-		pattern := "%" + search + "%"
+	whereParts := []string{"1 = 1"}
+	if strings.TrimSpace(params.Search) != "" {
+		pattern := "%" + strings.TrimSpace(params.Search) + "%"
+		whereParts = append(whereParts, "(name LIKE ? OR code LIKE ?)")
 		args = append(args, pattern, pattern)
 	}
+	if params.CreatedFrom != nil {
+		whereParts = append(whereParts, "created_at >= ?")
+		args = append(args, *params.CreatedFrom)
+	}
+	if params.CreatedTo != nil {
+		whereParts = append(whereParts, "created_at < ?")
+		args = append(args, params.CreatedTo.AddDate(0, 0, 1))
+	}
+	where := "WHERE " + strings.Join(whereParts, " AND ")
 	// Count query
 	countQuery := "SELECT COUNT(*) FROM partners " + where
 	var total int64
@@ -184,9 +211,9 @@ func (r *Repository) ListPartners(ctx context.Context, limit int, offset int, se
 	// Data query
 	query := "SELECT id, partner_type_id, code, name, phone, email, address, bank_account_encrypted, bank_account_last4, status, created_at, updated_at FROM partners " + where + " ORDER BY name"
 	dataArgs := append([]any{}, args...)
-	if limit > 0 {
+	if params.Limit > 0 {
 		query += " LIMIT ? OFFSET ?"
-		dataArgs = append(dataArgs, limit, offset)
+		dataArgs = append(dataArgs, params.Limit, params.Offset)
 	}
 	rows, err := r.db.QueryContext(ctx, query, dataArgs...)
 	if err != nil {
@@ -252,9 +279,9 @@ func (r *Repository) CreatePartnerAssignment(ctx context.Context, a PartnerAssig
 	query := `
 		INSERT INTO partner_assignments (
 			partner_id, user_id, assigned_by_id, assigned_at, active, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, NOW(), NOW())`
+		VALUES (?, ?, ?, ?, ?, ?, ?)`
 	result, err := r.db.ExecContext(ctx, query,
-		a.PartnerID, a.UserID, a.AssignedByID, a.AssignedAt, a.Active)
+		a.PartnerID, a.UserID, a.AssignedByID, a.AssignedAt, a.Active, a.CreatedAt, a.UpdatedAt)
 	if err != nil {
 		return 0, err
 	}
@@ -287,16 +314,16 @@ func (r *Repository) AssignPIC(ctx context.Context, a PartnerAssignment) (int64,
 
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE partner_assignments
-		SET unassigned_at = NOW(), active = FALSE, updated_at = NOW()
-		WHERE partner_id = ? AND active = TRUE`, a.PartnerID); err != nil {
+		SET unassigned_at = ?, active = FALSE, updated_at = ?
+		WHERE partner_id = ? AND active = TRUE`, a.AssignedAt, a.UpdatedAt, a.PartnerID); err != nil {
 		return 0, err
 	}
 
 	result, err := tx.ExecContext(ctx, `
 		INSERT INTO partner_assignments (
 			partner_id, user_id, assigned_by_id, assigned_at, active, created_at, updated_at)
-		VALUES (?, ?, ?, ?, TRUE, NOW(), NOW())`,
-		a.PartnerID, a.UserID, a.AssignedByID, a.AssignedAt)
+		VALUES (?, ?, ?, ?, TRUE, ?, ?)`,
+		a.PartnerID, a.UserID, a.AssignedByID, a.AssignedAt, a.CreatedAt, a.UpdatedAt)
 	if err != nil {
 		return 0, mapDuplicateError(err, "uq_partner_assignments_one_active")
 	}
@@ -331,14 +358,24 @@ func (r *Repository) GetActiveAssignmentForPartner(ctx context.Context, partnerI
 	return &a, nil
 }
 
-func (r *Repository) ListPartnerAssignments(ctx context.Context, partnerID int64) ([]PartnerAssignment, error) {
+func (r *Repository) ListPartnerAssignments(ctx context.Context, partnerID int64, params PartnerHistoryListParams) ([]PartnerAssignment, error) {
+	where := []string{"partner_id = ?"}
+	args := []any{partnerID}
+	if params.CreatedFrom != nil {
+		where = append(where, "created_at >= ?")
+		args = append(args, *params.CreatedFrom)
+	}
+	if params.CreatedTo != nil {
+		where = append(where, "created_at < ?")
+		args = append(args, params.CreatedTo.AddDate(0, 0, 1))
+	}
 	query := `
 		SELECT id, partner_id, user_id, assigned_by_id, assigned_at,
 		       unassigned_at, active, created_at, updated_at
 		FROM partner_assignments
-		WHERE partner_id = ?
+		WHERE ` + strings.Join(where, " AND ") + `
 		ORDER BY assigned_at DESC`
-	rows, err := r.db.QueryContext(ctx, query, partnerID)
+	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -381,9 +418,9 @@ func (r *Repository) CreatePartnerInteraction(ctx context.Context, i PartnerInte
 	query := `
 		INSERT INTO partner_interactions (
 			partner_id, interaction_type, interaction_at, note, created_at)
-		VALUES (?, ?, ?, ?, NOW())`
+		VALUES (?, ?, ?, ?, ?)`
 	result, err := r.db.ExecContext(ctx, query,
-		i.PartnerID, i.InteractionType, i.InteractionAt, i.Note)
+		i.PartnerID, i.InteractionType, i.InteractionAt, i.Note, i.CreatedAt)
 	if err != nil {
 		return 0, err
 	}
@@ -394,12 +431,24 @@ func (r *Repository) CreatePartnerInteraction(ctx context.Context, i PartnerInte
 	return id, nil
 }
 
-func (r *Repository) ListPartnerInteractions(ctx context.Context, partnerID int64, limit int, offset int) ([]PartnerInteraction, int64, error) {
+func (r *Repository) ListPartnerInteractions(ctx context.Context, partnerID int64, params PartnerHistoryListParams) ([]PartnerInteraction, int64, error) {
 	var args []any
-	var where string
+	whereParts := []string{}
 	if partnerID > 0 {
-		where = "WHERE partner_id = ?"
+		whereParts = append(whereParts, "partner_id = ?")
 		args = append(args, partnerID)
+	}
+	if params.CreatedFrom != nil {
+		whereParts = append(whereParts, "created_at >= ?")
+		args = append(args, *params.CreatedFrom)
+	}
+	if params.CreatedTo != nil {
+		whereParts = append(whereParts, "created_at < ?")
+		args = append(args, params.CreatedTo.AddDate(0, 0, 1))
+	}
+	where := ""
+	if len(whereParts) > 0 {
+		where = "WHERE " + strings.Join(whereParts, " AND ")
 	}
 	countQuery := "SELECT COUNT(*) FROM partner_interactions " + where
 	var total int64
@@ -412,10 +461,10 @@ func (r *Repository) ListPartnerInteractions(ctx context.Context, partnerID int6
 		FROM partner_interactions ` + where + `
 		ORDER BY interaction_at DESC`
 	queryArgs := append([]any{}, args...)
-	if limit > 0 {
+	if params.Limit > 0 {
 		query += `
 		LIMIT ? OFFSET ?`
-		queryArgs = append(queryArgs, limit, offset)
+		queryArgs = append(queryArgs, params.Limit, params.Offset)
 	}
 	rows, err := r.db.QueryContext(ctx, query, queryArgs...)
 	if err != nil {
@@ -443,9 +492,9 @@ func (r *Repository) CreatePartnerReferral(ctx context.Context, ref PartnerRefer
 	query := `
 		INSERT INTO partner_referrals (
 			partner_id, lead_id, referral_date, notes, created_at)
-		VALUES (?, ?, ?, ?, NOW())`
+		VALUES (?, ?, ?, ?, ?)`
 	result, err := r.db.ExecContext(ctx, query,
-		ref.PartnerID, ref.LeadID, ref.ReferralDate, ref.Notes)
+		ref.PartnerID, ref.LeadID, ref.ReferralDate, ref.Notes, ref.CreatedAt)
 	if err != nil {
 		return 0, mapDuplicateError(err, "uq_partner_referrals_partner_lead")
 	}
@@ -456,13 +505,23 @@ func (r *Repository) CreatePartnerReferral(ctx context.Context, ref PartnerRefer
 	return id, nil
 }
 
-func (r *Repository) ListPartnerReferrals(ctx context.Context, partnerID int64) ([]PartnerReferral, error) {
+func (r *Repository) ListPartnerReferrals(ctx context.Context, partnerID int64, params PartnerHistoryListParams) ([]PartnerReferral, error) {
+	where := []string{"partner_id = ?"}
+	args := []any{partnerID}
+	if params.CreatedFrom != nil {
+		where = append(where, "created_at >= ?")
+		args = append(args, *params.CreatedFrom)
+	}
+	if params.CreatedTo != nil {
+		where = append(where, "created_at < ?")
+		args = append(args, params.CreatedTo.AddDate(0, 0, 1))
+	}
 	query := `
 		SELECT id, partner_id, lead_id, referral_date, notes, created_at
 		FROM partner_referrals
-		WHERE partner_id = ?
+		WHERE ` + strings.Join(where, " AND ") + `
 		ORDER BY referral_date DESC`
-	rows, err := r.db.QueryContext(ctx, query, partnerID)
+	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}

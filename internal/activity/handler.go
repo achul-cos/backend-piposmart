@@ -367,6 +367,16 @@ func interactionListParams(c *gin.Context) (InteractionListParams, bool) {
 		httpx.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", "follow_up_to harus format YYYY-MM-DD", nil)
 		return InteractionListParams{}, false
 	}
+	params.CreatedFrom, err = parseDate(c.Query("created_from"))
+	if err != nil {
+		httpx.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", "created_from harus format YYYY-MM-DD", nil)
+		return InteractionListParams{}, false
+	}
+	params.CreatedTo, err = parseDate(c.Query("created_to"))
+	if err != nil {
+		httpx.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", "created_to harus format YYYY-MM-DD", nil)
+		return InteractionListParams{}, false
+	}
 	return params, true
 }
 
@@ -394,6 +404,16 @@ func trainingListParams(c *gin.Context) (TrainingListParams, bool) {
 	params.ScheduledTo, err = parseDate(c.Query("scheduled_to"))
 	if err != nil {
 		httpx.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", "scheduled_to harus format YYYY-MM-DD", nil)
+		return TrainingListParams{}, false
+	}
+	params.CreatedFrom, err = parseDate(c.Query("created_from"))
+	if err != nil {
+		httpx.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", "created_from harus format YYYY-MM-DD", nil)
+		return TrainingListParams{}, false
+	}
+	params.CreatedTo, err = parseDate(c.Query("created_to"))
+	if err != nil {
+		httpx.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", "created_to harus format YYYY-MM-DD", nil)
 		return TrainingListParams{}, false
 	}
 	return params, true

@@ -255,6 +255,8 @@ type ListParams struct {
 	Channel      string
 	Direction    string
 	Type         string
+	CreatedFrom  *time.Time
+	CreatedTo    *time.Time
 	PaidFrom     *time.Time
 	PaidTo       *time.Time
 	OccurredFrom *time.Time

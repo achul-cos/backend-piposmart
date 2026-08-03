@@ -243,6 +243,16 @@ func listParams(c *gin.Context) (ListParams, bool) {
 		httpx.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", "active_to harus format YYYY-MM-DD", nil)
 		return ListParams{}, false
 	}
+	params.CreatedFrom, err = parseDate(c.Query("created_from"))
+	if err != nil {
+		httpx.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", "created_from harus format YYYY-MM-DD", nil)
+		return ListParams{}, false
+	}
+	params.CreatedTo, err = parseDate(c.Query("created_to"))
+	if err != nil {
+		httpx.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", "created_to harus format YYYY-MM-DD", nil)
+		return ListParams{}, false
+	}
 	return params, true
 }
 
