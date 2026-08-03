@@ -172,15 +172,15 @@ func (s *Service) GenerateExport(ctx context.Context, exportID int64) error {
 	fileBase := fmt.Sprintf("%s_%d", item.ReportKey, item.ID)
 	switch item.Format {
 	case ExportFormatCSV:
-		content, err = buildCSV(report.Columns, report.Items)
+		content, err = BuildCSV(report.Columns, report.Items)
 		mimeType = "text/csv"
 		extension = ".csv"
 	case ExportFormatXLSX:
-		content, err = buildXLSX(report.ReportKey, "Report", report.Columns, report.Items, report.Insight)
+		content, err = BuildXLSX(report.ReportKey, "Report", report.Columns, report.Items, report.Insight)
 		mimeType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 		extension = ".xlsx"
 	case ExportFormatPDF:
-		content, err = buildPDF(report.ReportKey, report.Columns, report.Items, report.Insight)
+		content, err = BuildPDF(report.ReportKey, report.Columns, report.Items, report.Insight)
 		mimeType = "application/pdf"
 		extension = ".pdf"
 	default:

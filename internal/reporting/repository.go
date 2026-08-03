@@ -859,10 +859,10 @@ func (r *Repository) buildReportQuery(actor Actor, reportKey string, params List
 		LEFT JOIN users pic ON pic.id = cl.current_owner_user_id
 		LEFT JOIN (
 			SELECT cla.lead_id, cla.started_at
-			FROM customer_lead_assignments cla
+			FROM lead_assignments cla
 			INNER JOIN (
 				SELECT lead_id, MAX(id) AS max_id
-				FROM customer_lead_assignments
+				FROM lead_assignments
 				WHERE deleted_at IS NULL AND active = TRUE
 				GROUP BY lead_id
 			) active_last ON active_last.max_id = cla.id
@@ -921,7 +921,7 @@ func (r *Repository) buildReportQuery(actor Actor, reportKey string, params List
 			COALESCE(ot.city, o.city, '') AS city,
 			COALESCE(ot.province, o.province, '') AS province,
 			DATE(o.created_at) AS created_date,
-			wp.paid_at AS topup_date,
+			MIN(wp.paid_at) AS topup_date,
 			COALESCE(sc.final_amount, so.final_amount, 0) AS activation_amount,
 			COALESCE(sc.confirmed_at, sc.closed_at, so.purchased_at) AS activation_date,
 			JSON_UNQUOTE(JSON_EXTRACT(sc.package_snapshot_json, '$.name')) AS package_name,

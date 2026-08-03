@@ -28,7 +28,7 @@ func sanitizeSpreadsheetCell(value any) any {
 	return text
 }
 
-func buildCSV(columns []ReportColumn, items []map[string]any) ([]byte, error) {
+func BuildCSV(columns []ReportColumn, items []map[string]any) ([]byte, error) {
 	var buf bytes.Buffer
 	writer := csv.NewWriter(&buf)
 	headers := make([]string, 0, len(columns))
@@ -54,7 +54,7 @@ func buildCSV(columns []ReportColumn, items []map[string]any) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-func buildXLSX(reportKey, sheetName string, columns []ReportColumn, items []map[string]any, insight map[string]any) ([]byte, error) {
+func BuildXLSX(reportKey, sheetName string, columns []ReportColumn, items []map[string]any, insight map[string]any) ([]byte, error) {
 	if reportKey == ReportAdminOwnerOutlet {
 		return buildAdminOwnerOutletXLSX(sheetName, columns, items)
 	}
@@ -77,6 +77,7 @@ func buildXLSX(reportKey, sheetName string, columns []ReportColumn, items []map[
 	}
 	return buf.Bytes(), nil
 }
+
 
 func buildAdminOwnerOutletXLSX(sheetName string, columns []ReportColumn, items []map[string]any) ([]byte, error) {
 	file := excelize.NewFile()
@@ -220,7 +221,7 @@ func adminOwnerOutletColumnWidth(key string) float64 {
 	}
 }
 
-func buildPDF(title string, columns []ReportColumn, items []map[string]any, insight map[string]any) ([]byte, error) {
+func BuildPDF(title string, columns []ReportColumn, items []map[string]any, insight map[string]any) ([]byte, error) {
 	pdf := fpdf.New("L", "mm", "A4", "")
 	pdf.SetMargins(8, 8, 8)
 	pdf.SetAutoPageBreak(true, 8)

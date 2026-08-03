@@ -1,7 +1,6 @@
 -- +goose Up
-ALTER TABLE report_exports
-    ADD COLUMN file_blob LONGBLOB NULL AFTER mime_type;
+-- file_blob is already defined in 20260802000200_reporting_exports.sql
 
 -- +goose Down
-ALTER TABLE report_exports
-    DROP COLUMN file_blob;
+-- file_blob is handled in 20260802000200_reporting_exports.sql
+
