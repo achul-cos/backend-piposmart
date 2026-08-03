@@ -459,20 +459,20 @@ func (r *Repository) CreateUpgrade(ctx context.Context, actor identity.User, sub
 	if err != nil {
 		return OrderResult{}, err
 	}
-	if !effectiveStart.After(sourceSubscription.ActiveFrom) {
-		return OrderResult{}, ErrUpgradeNotAllowed
+	if effectiveStart.Before(sourceSubscription.ActiveFrom) {
+		return OrderResult{}, fmt.Errorf("%w: tanggal efektif upgrade (%s) tidak boleh sebelum tanggal mulai berlangganan (%s)", ErrUpgradeNotAllowed, effectiveStart.Format("2006-01-02"), sourceSubscription.ActiveFrom.Format("2006-01-02"))
 	}
 	if !effectiveStart.Before(sourceSubscription.ActiveUntil) {
-		return OrderResult{}, ErrUpgradeNotAllowed
+		return OrderResult{}, fmt.Errorf("%w: tanggal efektif upgrade (%s) harus sebelum tanggal berakhir berlangganan (%s)", ErrUpgradeNotAllowed, effectiveStart.Format("2006-01-02"), sourceSubscription.ActiveUntil.Format("2006-01-02"))
 	}
 
 	remainingDays := businessDateDiff(effectiveStart, sourceSubscription.ActiveUntil)
 	if remainingDays < 1 {
-		return OrderResult{}, ErrUpgradeNotAllowed
+		return OrderResult{}, fmt.Errorf("%w: sisa hari berlangganan kurang dari 1 hari (%d hari)", ErrUpgradeNotAllowed, remainingDays)
 	}
 	usedDays := businessDateDiff(sourceSubscription.ActiveFrom, effectiveStart)
-	if usedDays < 1 {
-		return OrderResult{}, ErrUpgradeNotAllowed
+	if usedDays < 0 {
+		return OrderResult{}, fmt.Errorf("%w: tanggal efektif upgrade sebelum tanggal mulai berlangganan", ErrUpgradeNotAllowed)
 	}
 
 	previousPackage, previousPlan, err := snapshotsFromOrder(sourceOrder)
@@ -484,7 +484,7 @@ func (r *Repository) CreateUpgrade(ctx context.Context, actor identity.User, sub
 		return OrderResult{}, err
 	}
 	if targetPackage.LevelOrder <= previousPackage.LevelOrder {
-		return OrderResult{}, ErrUpgradeNotAllowed
+		return OrderResult{}, fmt.Errorf("%w: level paket tujuan (%s: level %d) harus lebih tinggi dari paket saat ini (%s: level %d)", ErrUpgradeNotAllowed, targetPackage.Name, targetPackage.LevelOrder, previousPackage.Name, previousPackage.LevelOrder)
 	}
 
 	var closing *closingSnapshot
@@ -2144,7 +2144,7 @@ func effectiveUpgradeStartDate(value string, purchasedAt time.Time) (time.Time, 
 		return time.Time{}, err
 	}
 	if startDate.After(dateOnly(purchasedAt)) {
-		return time.Time{}, ErrUpgradeNotAllowed
+		return time.Time{}, fmt.Errorf("%w: tanggal efektif upgrade (%s) tidak boleh lebih dari tanggal pembelian (%s)", ErrUpgradeNotAllowed, startDate.Format("2006-01-02"), purchasedAt.Format("2006-01-02"))
 	}
 	return startDate, nil
 }

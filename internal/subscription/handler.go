@@ -2,8 +2,10 @@ package subscription
 
 import (
 	"errors"
+	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"backend_crm_piposmart/internal/identity"
@@ -347,7 +349,18 @@ func writeError(c *gin.Context, err error) {
 		httpx.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
 	case errors.Is(err, ErrInvalidRequest):
 		httpx.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
+	case err != nil && strings.Contains(err.Error(), "Duplicate entry"):
+		if strings.Contains(err.Error(), "external_reference") {
+			httpx.Error(c, http.StatusBadRequest, "DUPLICATE_REFERENCE", "External reference sudah pernah digunakan pada order lain.", nil)
+		} else if strings.Contains(err.Error(), "idempotency") {
+			httpx.Error(c, http.StatusBadRequest, "DUPLICATE_IDEMPOTENCY", "Idempotency key sudah pernah digunakan.", nil)
+		} else {
+			httpx.Error(c, http.StatusBadRequest, "DUPLICATE_ENTRY", "Data transaksi/referensi sudah pernah digunakan.", nil)
+		}
 	default:
+		if err != nil {
+			log.Printf("[subscription writeError 500] %v", err)
+		}
 		httpx.Error(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Terjadi kesalahan pada server", nil)
 	}
 }
