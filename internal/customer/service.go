@@ -84,6 +84,14 @@ func (s *Service) GetOwner(ctx context.Context, actor Actor, id int64) (OwnerRes
 	return NewOwnerResponse(owner), nil
 }
 
+func (s *Service) GetOwnerOverview(ctx context.Context, actor Actor, id int64) (OwnerOverviewResponse, error) {
+	overview, err := s.repo.GetOwnerOverview(ctx, actor, id)
+	if err != nil {
+		return OwnerOverviewResponse{}, err
+	}
+	return NewOwnerOverviewResponse(overview), nil
+}
+
 func (s *Service) RestoreOwner(ctx context.Context, actor Actor, id int64) (OwnerResponse, error) {
 	if !actorCanManageOwners(actor) {
 		return OwnerResponse{}, ErrForbidden

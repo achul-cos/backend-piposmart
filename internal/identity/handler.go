@@ -2,6 +2,7 @@ package identity
 
 import (
 	"errors"
+	"io"
 	"net/http"
 	"strconv"
 
@@ -28,6 +29,8 @@ func (h *Handler) RegisterRoutes(api *gin.RouterGroup) {
 	protected.POST("/logout", h.logout)
 	protected.GET("/me", h.me)
 	protected.POST("/change-password", h.changePassword)
+	protected.PATCH("/profile", h.updateProfile)
+	protected.PUT("/profile", h.updateProfile)
 
 	sales := api.Group("/sales")
 	sales.Use(AuthMiddleware(h.service))
@@ -47,6 +50,7 @@ func (h *Handler) RegisterRoutes(api *gin.RouterGroup) {
 
 	admins := api.Group("/admins")
 	admins.Use(AuthMiddleware(h.service))
+	admins.GET("", h.listAdmins)
 	admins.POST("", h.createAdmin)
 	admins.POST("/:id/reset-password", h.resetAdminPassword)
 }
@@ -80,7 +84,9 @@ func (h *Handler) refresh(c *gin.Context) {
 func (h *Handler) logout(c *gin.Context) {
 	user, _ := CurrentUser(c)
 	var req LogoutRequest
-	_ = c.ShouldBindJSON(&req)
+	if !bindOptionalJSON(c, &req) {
+		return
+	}
 	if err := h.service.Logout(c.Request.Context(), req.RefreshToken, user, requestMeta(c, &user)); err != nil {
 		writeServiceError(c, err)
 		return
@@ -106,6 +112,20 @@ func (h *Handler) changePassword(c *gin.Context) {
 	httpx.Success(c, http.StatusOK, gin.H{"status": "password_changed"})
 }
 
+func (h *Handler) updateProfile(c *gin.Context) {
+	user, _ := CurrentUser(c)
+	var req UpdateProfileRequest
+	if !bindJSON(c, &req) {
+		return
+	}
+	resp, err := h.service.UpdateProfile(c.Request.Context(), user, req, requestMeta(c, &user))
+	if err != nil {
+		writeServiceError(c, err)
+		return
+	}
+	httpx.Success(c, http.StatusOK, resp)
+}
+
 func (h *Handler) listSales(c *gin.Context) {
 	user, _ := CurrentUser(c)
 	response, err := h.service.ListSales(c.Request.Context(), user, c.Query("status"))
@@ -119,6 +139,16 @@ func (h *Handler) listSales(c *gin.Context) {
 func (h *Handler) listSupervisors(c *gin.Context) {
 	user, _ := CurrentUser(c)
 	response, err := h.service.ListSupervisors(c.Request.Context(), user, c.Query("status"))
+	if err != nil {
+		writeServiceError(c, err)
+		return
+	}
+	httpx.Success(c, http.StatusOK, response)
+}
+
+func (h *Handler) listAdmins(c *gin.Context) {
+	user, _ := CurrentUser(c)
+	response, err := h.service.ListAdmins(c.Request.Context(), user, c.Query("status"))
 	if err != nil {
 		writeServiceError(c, err)
 		return
@@ -229,7 +259,9 @@ func (h *Handler) resetSalesPassword(c *gin.Context) {
 		return
 	}
 	var req ResetPasswordRequest
-	_ = c.ShouldBindJSON(&req)
+	if !bindOptionalJSON(c, &req) {
+		return
+	}
 	response, err := h.service.ResetSalesPassword(c.Request.Context(), user, id, req, requestMeta(c, &user))
 	if err != nil {
 		writeServiceError(c, err)
@@ -245,7 +277,9 @@ func (h *Handler) resetSupervisorPassword(c *gin.Context) {
 		return
 	}
 	var req ResetPasswordRequest
-	_ = c.ShouldBindJSON(&req)
+	if !bindOptionalJSON(c, &req) {
+		return
+	}
 	response, err := h.service.ResetSupervisorPassword(c.Request.Context(), user, id, req, requestMeta(c, &user))
 	if err != nil {
 		writeServiceError(c, err)
@@ -261,7 +295,9 @@ func (h *Handler) resetAdminPassword(c *gin.Context) {
 		return
 	}
 	var req ResetPasswordRequest
-	_ = c.ShouldBindJSON(&req)
+	if !bindOptionalJSON(c, &req) {
+		return
+	}
 	response, err := h.service.ResetAdminPassword(c.Request.Context(), user, id, req, requestMeta(c, &user))
 	if err != nil {
 		writeServiceError(c, err)
@@ -272,6 +308,17 @@ func (h *Handler) resetAdminPassword(c *gin.Context) {
 
 func bindJSON(c *gin.Context, target any) bool {
 	if err := c.ShouldBindJSON(target); err != nil {
+		httpx.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", "Payload request tidak valid", gin.H{"error": err.Error()})
+		return false
+	}
+	return true
+}
+
+func bindOptionalJSON(c *gin.Context, target any) bool {
+	if err := c.ShouldBindJSON(target); err != nil {
+		if errors.Is(err, io.EOF) {
+			return true
+		}
 		httpx.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", "Payload request tidak valid", gin.H{"error": err.Error()})
 		return false
 	}

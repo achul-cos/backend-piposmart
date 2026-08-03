@@ -10,8 +10,9 @@ const (
 	RoleSupervisor = "SUPERVISOR"
 	RoleSales      = "SALES"
 
-	InteractionCall = "CALL"
-	InteractionChat = "CHAT"
+	InteractionCall     = "CALL"
+	InteractionChat     = "CHAT"
+	InteractionCallChat = "CALL_CHAT"
 
 	StageNew       = "NEW"
 	StagePossible  = "POSSIBLE"
@@ -64,6 +65,8 @@ type CustomerInteraction struct {
 	SupervisorID     sql.NullInt64
 	SupervisorName   sql.NullString
 	InteractionType  string
+	CallStatus       sql.NullString
+	ChatStatus       sql.NullString
 	InteractionAt    time.Time
 	ContactName      sql.NullString
 	ContactPhone     sql.NullString
@@ -138,7 +141,9 @@ type TrainingReport struct {
 }
 
 type CreateInteractionRequest struct {
-	Type             string     `json:"type" binding:"required"`
+	Type             string     `json:"type"`
+	CallStatus       string     `json:"call_status"`
+	ChatStatus       string     `json:"chat_status"`
 	InteractionAt    *time.Time `json:"interaction_at"`
 	ContactName      string     `json:"contact_name"`
 	ContactPhone     string     `json:"contact_phone"`
@@ -152,11 +157,11 @@ type CreateInteractionRequest struct {
 }
 
 type ScheduleTrainingRequest struct {
-	TrainingType    string    `json:"training_type" binding:"required"`
-	ScheduledAt     time.Time `json:"scheduled_at" binding:"required"`
-	Location        string    `json:"location"`
-	MeetingURL      string    `json:"meeting_url"`
-	Note            string    `json:"note"`
+	TrainingType string    `json:"training_type" binding:"required"`
+	ScheduledAt  time.Time `json:"scheduled_at" binding:"required"`
+	Location     string    `json:"location"`
+	MeetingURL   string    `json:"meeting_url"`
+	Note         string    `json:"note"`
 }
 
 type RescheduleTrainingRequest struct {
@@ -178,6 +183,8 @@ type InteractionListParams struct {
 	Type            string
 	Score           *int64
 	SalesID         *int64
+	CreatedFrom     *time.Time
+	CreatedTo       *time.Time
 	InteractionFrom *time.Time
 	InteractionTo   *time.Time
 	FollowUpFrom    *time.Time
@@ -194,6 +201,8 @@ type TrainingListParams struct {
 	Status        string
 	TrainingType  string
 	SalesID       *int64
+	CreatedFrom   *time.Time
+	CreatedTo     *time.Time
 	ScheduledFrom *time.Time
 	ScheduledTo   *time.Time
 	All           bool
@@ -216,6 +225,8 @@ type CustomerInteractionResponse struct {
 	Sales            *UserBrief `json:"sales,omitempty"`
 	Supervisor       *UserBrief `json:"supervisor,omitempty"`
 	Type             string     `json:"type"`
+	CallStatus       string     `json:"call_status,omitempty"`
+	ChatStatus       string     `json:"chat_status,omitempty"`
 	InteractionAt    time.Time  `json:"interaction_at"`
 	ContactName      string     `json:"contact_name,omitempty"`
 	ContactPhone     string     `json:"contact_phone,omitempty"`
@@ -257,30 +268,30 @@ type StageHistoryResponse struct {
 }
 
 type TrainingReportResponse struct {
-	ID              int64      `json:"id"`
-	LeadID          *int64     `json:"lead_id,omitempty"`
-	LeadCode        string     `json:"lead_code,omitempty"`
-	OwnerID         *int64     `json:"owner_id,omitempty"`
-	OwnerCode       string     `json:"owner_code,omitempty"`
-	OwnerName       string     `json:"owner_name,omitempty"`
-	OutletID        *int64     `json:"outlet_id,omitempty"`
-	Sales           *UserBrief `json:"sales,omitempty"`
-	Supervisor      *UserBrief `json:"supervisor,omitempty"`
-	TrainingType    string     `json:"training_type"`
-	Status          string     `json:"status"`
-	ScheduledAt     time.Time  `json:"scheduled_at"`
-	CompletedAt     *time.Time `json:"completed_at,omitempty"`
-	CanceledAt      *time.Time `json:"canceled_at,omitempty"`
-	RescheduledAt   *time.Time `json:"rescheduled_at,omitempty"`
-	Location        string     `json:"location,omitempty"`
-	MeetingURL      string     `json:"meeting_url,omitempty"`
-	Note            string     `json:"note,omitempty"`
-	ResultNote      string     `json:"result_note,omitempty"`
-	CancelReason    string     `json:"cancel_reason,omitempty"`
-	CreatedBy       *UserBrief `json:"created_by,omitempty"`
-	UpdatedBy       *UserBrief `json:"updated_by,omitempty"`
-	CreatedAt       time.Time  `json:"created_at"`
-	UpdatedAt       time.Time  `json:"updated_at"`
+	ID            int64      `json:"id"`
+	LeadID        *int64     `json:"lead_id,omitempty"`
+	LeadCode      string     `json:"lead_code,omitempty"`
+	OwnerID       *int64     `json:"owner_id,omitempty"`
+	OwnerCode     string     `json:"owner_code,omitempty"`
+	OwnerName     string     `json:"owner_name,omitempty"`
+	OutletID      *int64     `json:"outlet_id,omitempty"`
+	Sales         *UserBrief `json:"sales,omitempty"`
+	Supervisor    *UserBrief `json:"supervisor,omitempty"`
+	TrainingType  string     `json:"training_type"`
+	Status        string     `json:"status"`
+	ScheduledAt   time.Time  `json:"scheduled_at"`
+	CompletedAt   *time.Time `json:"completed_at,omitempty"`
+	CanceledAt    *time.Time `json:"canceled_at,omitempty"`
+	RescheduledAt *time.Time `json:"rescheduled_at,omitempty"`
+	Location      string     `json:"location,omitempty"`
+	MeetingURL    string     `json:"meeting_url,omitempty"`
+	Note          string     `json:"note,omitempty"`
+	ResultNote    string     `json:"result_note,omitempty"`
+	CancelReason  string     `json:"cancel_reason,omitempty"`
+	CreatedBy     *UserBrief `json:"created_by,omitempty"`
+	UpdatedBy     *UserBrief `json:"updated_by,omitempty"`
+	CreatedAt     time.Time  `json:"created_at"`
+	UpdatedAt     time.Time  `json:"updated_at"`
 }
 
 type UserBrief struct {
@@ -313,6 +324,8 @@ func NewInteractionResponse(item CustomerInteraction) CustomerInteractionRespons
 		Sales:            nullableUser(item.SalesID, item.SalesName, RoleSales),
 		Supervisor:       nullableUser(item.SupervisorID, item.SupervisorName, RoleSupervisor),
 		Type:             item.InteractionType,
+		CallStatus:       item.CallStatus.String,
+		ChatStatus:       item.ChatStatus.String,
 		InteractionAt:    item.InteractionAt,
 		ContactName:      item.ContactName.String,
 		ContactPhone:     item.ContactPhone.String,
@@ -358,30 +371,30 @@ func NewStageHistoryResponse(item LeadStageHistory) StageHistoryResponse {
 
 func NewTrainingReportResponse(item TrainingReport) TrainingReportResponse {
 	return TrainingReportResponse{
-		ID:              item.ID,
-		LeadID:          nullableInt64Ptr(item.LeadID),
-		LeadCode:        item.LeadCode.String,
-		OwnerID:         nullableInt64Ptr(item.OwnerID),
-		OwnerCode:       item.OwnerCode.String,
-		OwnerName:       item.OwnerName.String,
-		OutletID:        nullableInt64Ptr(item.OutletID),
-		Sales:           nullableUser(item.SalesID, item.SalesName, RoleSales),
-		Supervisor:      nullableUser(item.SupervisorID, item.SupervisorName, RoleSupervisor),
-		TrainingType:    item.TrainingType,
-		Status:          item.Status,
-		ScheduledAt:     item.ScheduledAt,
-		CompletedAt:     nullableTimePtr(item.CompletedAt),
-		CanceledAt:      nullableTimePtr(item.CanceledAt),
-		RescheduledAt:   nullableTimePtr(item.RescheduledAt),
-		Location:        item.Location.String,
-		MeetingURL:      item.MeetingURL.String,
-		Note:            item.Note.String,
-		ResultNote:      item.ResultNote.String,
-		CancelReason:    item.CancelReason.String,
-		CreatedBy:       nullableUser(item.CreatedByUserID, item.CreatedByName, ""),
-		UpdatedBy:       nullableUser(item.UpdatedByUserID, item.UpdatedByName, ""),
-		CreatedAt:       item.CreatedAt,
-		UpdatedAt:       item.UpdatedAt,
+		ID:            item.ID,
+		LeadID:        nullableInt64Ptr(item.LeadID),
+		LeadCode:      item.LeadCode.String,
+		OwnerID:       nullableInt64Ptr(item.OwnerID),
+		OwnerCode:     item.OwnerCode.String,
+		OwnerName:     item.OwnerName.String,
+		OutletID:      nullableInt64Ptr(item.OutletID),
+		Sales:         nullableUser(item.SalesID, item.SalesName, RoleSales),
+		Supervisor:    nullableUser(item.SupervisorID, item.SupervisorName, RoleSupervisor),
+		TrainingType:  item.TrainingType,
+		Status:        item.Status,
+		ScheduledAt:   item.ScheduledAt,
+		CompletedAt:   nullableTimePtr(item.CompletedAt),
+		CanceledAt:    nullableTimePtr(item.CanceledAt),
+		RescheduledAt: nullableTimePtr(item.RescheduledAt),
+		Location:      item.Location.String,
+		MeetingURL:    item.MeetingURL.String,
+		Note:          item.Note.String,
+		ResultNote:    item.ResultNote.String,
+		CancelReason:  item.CancelReason.String,
+		CreatedBy:     nullableUser(item.CreatedByUserID, item.CreatedByName, ""),
+		UpdatedBy:     nullableUser(item.UpdatedByUserID, item.UpdatedByName, ""),
+		CreatedAt:     item.CreatedAt,
+		UpdatedAt:     item.UpdatedAt,
 	}
 }
 

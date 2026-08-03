@@ -22,6 +22,7 @@ func (h *Handler) RegisterRoutes(api *gin.RouterGroup) {
 	api.GET("/subscription-orders/all-deleted", h.listAllOrders)
 	api.GET("/subscription-orders/:order_id", h.getOrder)
 	api.POST("/owners/:owner_id/subscription-orders", h.createOrder)
+	api.POST("/subscriptions/:subscription_id/upgrades", h.createUpgrade)
 	api.POST("/subscription-orders/:order_id/reconcile", h.reconcileOrder)
 	api.GET("/subscriptions", h.listSubscriptions)
 	api.GET("/subscriptions/all", h.listAllSubscriptions)
@@ -89,6 +90,24 @@ func (h *Handler) createOrder(c *gin.Context) {
 		return
 	}
 	response, err := h.service.CreateOrder(c.Request.Context(), user, ownerID, req)
+	if err != nil {
+		writeError(c, err)
+		return
+	}
+	httpx.Success(c, http.StatusCreated, response)
+}
+
+func (h *Handler) createUpgrade(c *gin.Context) {
+	user, _ := identity.CurrentUser(c)
+	subscriptionID, ok := parsePathID(c, "subscription_id", "ID subscription tidak valid")
+	if !ok {
+		return
+	}
+	var req CreateUpgradeRequest
+	if !bindJSON(c, &req) {
+		return
+	}
+	response, err := h.service.CreateUpgrade(c.Request.Context(), user, subscriptionID, req)
 	if err != nil {
 		writeError(c, err)
 		return
@@ -218,8 +237,8 @@ func (h *Handler) listAllIssues(c *gin.Context) {
 func listParams(c *gin.Context) (ListParams, bool) {
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))
-	params := ListParams{Query: c.Query("q"), Status: c.Query("status"), IssueType: c.Query("issue_type"), All: false, Page: page, Limit: limit, Sort: c.Query("sort")}
-	if !parseOptionalInt64Query(c, "owner_id", &params.OwnerID) || !parseOptionalInt64Query(c, "outlet_id", &params.OutletID) || !parseOptionalInt64Query(c, "order_id", &params.OrderID) || !parseOptionalInt64Query(c, "closing_id", &params.ClosingID) || !parseOptionalInt64Query(c, "sales_id", &params.SalesID) || !parseOptionalInt64Query(c, "supervisor_id", &params.SupervisorID) || !parseOptionalInt64Query(c, "plan_id", &params.PlanID) {
+	params := ListParams{Query: c.Query("q"), Status: c.Query("status"), OrderType: c.Query("order_type"), IssueType: c.Query("issue_type"), All: false, Page: page, Limit: limit, Sort: c.Query("sort")}
+	if !parseOptionalInt64Query(c, "owner_id", &params.OwnerID) || !parseOptionalInt64Query(c, "outlet_id", &params.OutletID) || !parseOptionalInt64Query(c, "order_id", &params.OrderID) || !parseOptionalInt64Query(c, "source_subscription_id", &params.SourceSubscriptionID) || !parseOptionalInt64Query(c, "closing_id", &params.ClosingID) || !parseOptionalInt64Query(c, "sales_id", &params.SalesID) || !parseOptionalInt64Query(c, "supervisor_id", &params.SupervisorID) || !parseOptionalInt64Query(c, "plan_id", &params.PlanID) {
 		return ListParams{}, false
 	}
 	var err error
@@ -241,6 +260,16 @@ func listParams(c *gin.Context) (ListParams, bool) {
 	params.ActiveTo, err = parseDate(c.Query("active_to"))
 	if err != nil {
 		httpx.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", "active_to harus format YYYY-MM-DD", nil)
+		return ListParams{}, false
+	}
+	params.CreatedFrom, err = parseDate(c.Query("created_from"))
+	if err != nil {
+		httpx.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", "created_from harus format YYYY-MM-DD", nil)
+		return ListParams{}, false
+	}
+	params.CreatedTo, err = parseDate(c.Query("created_to"))
+	if err != nil {
+		httpx.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", "created_to harus format YYYY-MM-DD", nil)
 		return ListParams{}, false
 	}
 	return params, true
@@ -308,6 +337,10 @@ func writeError(c *gin.Context, err error) {
 		httpx.Error(c, http.StatusBadRequest, "CLOSING_MISMATCH", err.Error(), nil)
 	case errors.Is(err, ErrOrderAlreadyReconciled):
 		httpx.Error(c, http.StatusConflict, "ORDER_ALREADY_RECONCILED", err.Error(), nil)
+	case errors.Is(err, ErrSubscriptionNotActive):
+		httpx.Error(c, http.StatusBadRequest, "SUBSCRIPTION_NOT_ACTIVE", err.Error(), nil)
+	case errors.Is(err, ErrUpgradeNotAllowed):
+		httpx.Error(c, http.StatusBadRequest, "UPGRADE_NOT_ALLOWED", err.Error(), nil)
 	case errors.Is(err, ErrInvalidAction):
 		httpx.Error(c, http.StatusBadRequest, "INVALID_ACTION", err.Error(), nil)
 	case errors.Is(err, ErrInvalidDate):

@@ -3,7 +3,6 @@ package closing
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"strings"
 	"time"
 
@@ -35,7 +34,13 @@ func (s *Service) GetClosing(ctx context.Context, actor identity.User, id int64)
 	if err != nil {
 		return ClosingResponse{}, err
 	}
-	return NewClosingResponse(item), nil
+	response := NewClosingResponse(item)
+	promotions, err := s.repo.ListClosingPromotions(ctx, id)
+	if err != nil {
+		return ClosingResponse{}, err
+	}
+	response.Promotions = promotions
+	return response, nil
 }
 
 func (s *Service) CreateClosing(ctx context.Context, actor identity.User, leadID int64, req CreateClosingRequest) (ClosingResponse, error) {
@@ -49,7 +54,13 @@ func (s *Service) CreateClosing(ctx context.Context, actor identity.User, leadID
 	if err != nil {
 		return ClosingResponse{}, err
 	}
-	return NewClosingResponse(item), nil
+	response := NewClosingResponse(item)
+	promotions, err := s.repo.ListClosingPromotions(ctx, item.ID)
+	if err != nil {
+		return ClosingResponse{}, err
+	}
+	response.Promotions = promotions
+	return response, nil
 }
 
 func (s *Service) ConfirmClosing(ctx context.Context, actor identity.User, id int64, req UpdateClosingStatusRequest) (ClosingResponse, error) {
@@ -126,19 +137,39 @@ func validateCreateClosingRequest(req CreateClosingRequest) error {
 	if req.PromotionID != nil && *req.PromotionID < 1 {
 		return ErrInvalidRequest
 	}
+	for _, id := range req.PromotionIDs {
+		if id < 1 {
+			return ErrInvalidRequest
+		}
+	}
 	if req.UniqueTransferCode != nil && (*req.UniqueTransferCode < 0 || *req.UniqueTransferCode > 999) {
 		return ErrInvalidRequest
 	}
-	if req.ClosedAt != nil && req.ClosedAt.After(time.Now()) {
-		return errors.New("waktu closing tidak valid karena di masa depan")
-	}
-	if _, err := normalizeInteractionType(req.InteractionType); err != nil {
+	if _, err := resolveInteractionChannels(req.InteractionType, req.CallStatus, req.ChatStatus); err != nil {
 		return err
 	}
 	if _, err := parseMoneyToCents(req.DiscountAmount); err != nil {
 		return err
 	}
 	return nil
+}
+
+func resolveInteractionChannels(legacyType string, callStatus string, chatStatus string) (string, error) {
+	call := strings.TrimSpace(callStatus)
+	chat := strings.TrimSpace(chatStatus)
+	if call != "" && chat != "" {
+		return InteractionCallChat, nil
+	}
+	if call != "" {
+		return InteractionCall, nil
+	}
+	if chat != "" {
+		return InteractionChat, nil
+	}
+	if strings.TrimSpace(legacyType) == "" {
+		return "", ErrInvalidRequest
+	}
+	return normalizeInteractionType(legacyType)
 }
 
 func normalizeListParams(params ListParams) ListParams {

@@ -146,6 +146,16 @@ func (s *Service) ChangePassword(ctx context.Context, user User, req ChangePassw
 	return nil
 }
 
+func (s *Service) UpdateProfile(ctx context.Context, user User, req UpdateProfileRequest, meta RequestMeta) (UserResponse, error) {
+	before := user
+	after, err := s.repo.UpdateUserProfile(ctx, user.ID, req)
+	if err != nil {
+		return UserResponse{}, err
+	}
+	_ = s.auditUserChange(ctx, user, "auth.update_profile", user.ID, NewUserResponse(before), NewUserResponse(after), meta)
+	return NewUserResponse(after), nil
+}
+
 func (s *Service) BootstrapAdmin(ctx context.Context) (User, error) {
 	if strings.TrimSpace(s.cfg.Bootstrap.AdminEmail) == "" || strings.TrimSpace(s.cfg.Bootstrap.AdminPassword) == "" {
 		return User{}, errors.New("BOOTSTRAP_ADMIN_EMAIL dan BOOTSTRAP_ADMIN_PASSWORD wajib diisi")
@@ -201,6 +211,22 @@ func (s *Service) ListSupervisors(ctx context.Context, actor User, status string
 		return SalesListResponse{}, ErrForbidden
 	}
 	users, total, err := s.repo.ListSupervisors(ctx, status)
+	if err != nil {
+		return SalesListResponse{}, err
+	}
+	items := make([]UserResponse, 0, len(users))
+	for _, user := range users {
+		items = append(items, NewUserResponse(user))
+	}
+	return SalesListResponse{Items: items, Total: total}, nil
+}
+
+// ListAdmins returns all active admins. Accessible by ADMIN role or users with users.manage_all permission.
+func (s *Service) ListAdmins(ctx context.Context, actor User, status string) (SalesListResponse, error) {
+	if actor.RoleCode != RoleAdmin && !hasPermission(actor, "users.manage_all") {
+		return SalesListResponse{}, ErrForbidden
+	}
+	users, total, err := s.repo.ListAdmins(ctx, status)
 	if err != nil {
 		return SalesListResponse{}, err
 	}

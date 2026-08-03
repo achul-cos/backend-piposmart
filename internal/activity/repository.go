@@ -66,7 +66,7 @@ func (r *Repository) CreateInteraction(ctx context.Context, actor identity.User,
 		return CustomerInteraction{}, ErrForbidden
 	}
 
-	interactionType, err := normalizeInteractionType(req.Type)
+	interactionType, callStatus, chatStatus, err := resolveInteractionChannels(req.Type, req.CallStatus, req.ChatStatus)
 	if err != nil {
 		return CustomerInteraction{}, err
 	}
@@ -112,17 +112,19 @@ func (r *Repository) CreateInteraction(ctx context.Context, actor identity.User,
 
 	result, err := tx.ExecContext(ctx, `
 		INSERT INTO customer_interactions
-			(lead_id, owner_id, outlet_id, sales_id, supervisor_id, interaction_type, interaction_at,
+			(lead_id, owner_id, outlet_id, sales_id, supervisor_id, interaction_type, call_status, chat_status, interaction_at,
 			 contact_name, contact_phone, duration_seconds, remark_reason_id, remark_score, remark_code, remark_label,
 			 note, customer_response, follow_up_at, follow_up_note, stage_before, stage_after, status_before,
 			 status_after, score_before, score_after, created_by_user_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		leadID,
 		current.OwnerID,
 		current.OutletID,
 		salesIDForInteraction(actor, current),
 		current.SupervisorID,
 		interactionType,
+		callStatus,
+		chatStatus,
 		interactionAt,
 		nullableString(req.ContactName),
 		nullableString(req.ContactPhone),
@@ -630,7 +632,7 @@ func interactionSelect() string {
 			ci.id, ci.lead_id, ci.owner_id, ci.outlet_id,
 			ci.sales_id, sales.name,
 			ci.supervisor_id, supervisor.name,
-			ci.interaction_type, ci.interaction_at, ci.contact_name, ci.contact_phone,
+			ci.interaction_type, ci.call_status, ci.chat_status, ci.interaction_at, ci.contact_name, ci.contact_phone,
 			ci.duration_seconds, ci.remark_reason_id, ci.remark_score, ci.remark_code,
 			ci.remark_label, ci.note, ci.customer_response, ci.follow_up_at, ci.follow_up_note,
 			ci.stage_before, ci.stage_after, ci.status_before, ci.status_after,
@@ -691,8 +693,17 @@ func interactionWhere(actor identity.User, params InteractionListParams) (string
 		args = append(args, *params.LeadID)
 	}
 	if params.Type != "" {
-		where = append(where, "ci.interaction_type = ?")
-		args = append(args, strings.ToUpper(strings.TrimSpace(params.Type)))
+		switch strings.ToUpper(strings.TrimSpace(params.Type)) {
+		case InteractionCall:
+			where = append(where, "((ci.call_status IS NOT NULL AND ci.call_status <> '') OR ci.interaction_type = 'CALL')")
+		case InteractionChat:
+			where = append(where, "((ci.chat_status IS NOT NULL AND ci.chat_status <> '') OR ci.interaction_type = 'CHAT')")
+		case InteractionCallChat:
+			where = append(where, "(ci.call_status IS NOT NULL AND ci.call_status <> '') AND (ci.chat_status IS NOT NULL AND ci.chat_status <> '')")
+		default:
+			where = append(where, "ci.interaction_type = ?")
+			args = append(args, strings.ToUpper(strings.TrimSpace(params.Type)))
+		}
 	}
 	if params.Score != nil {
 		where = append(where, "ci.remark_score = ?")
@@ -701,6 +712,14 @@ func interactionWhere(actor identity.User, params InteractionListParams) (string
 	if params.SalesID != nil {
 		where = append(where, "ci.sales_id = ?")
 		args = append(args, *params.SalesID)
+	}
+	if params.CreatedFrom != nil {
+		where = append(where, "ci.created_at >= ?")
+		args = append(args, *params.CreatedFrom)
+	}
+	if params.CreatedTo != nil {
+		where = append(where, "ci.created_at < ?")
+		args = append(args, params.CreatedTo.AddDate(0, 0, 1))
 	}
 	if params.InteractionFrom != nil {
 		where = append(where, "ci.interaction_at >= ?")
@@ -745,6 +764,14 @@ func trainingWhere(actor identity.User, params TrainingListParams) (string, []an
 	if params.SalesID != nil {
 		where = append(where, "tr.sales_id = ?")
 		args = append(args, *params.SalesID)
+	}
+	if params.CreatedFrom != nil {
+		where = append(where, "tr.created_at >= ?")
+		args = append(args, *params.CreatedFrom)
+	}
+	if params.CreatedTo != nil {
+		where = append(where, "tr.created_at < ?")
+		args = append(args, params.CreatedTo.AddDate(0, 0, 1))
 	}
 	if params.ScheduledFrom != nil {
 		where = append(where, "tr.scheduled_at >= ?")
@@ -821,6 +848,8 @@ func scanInteraction(row scanner) (CustomerInteraction, error) {
 		&item.SupervisorID,
 		&item.SupervisorName,
 		&item.InteractionType,
+		&item.CallStatus,
+		&item.ChatStatus,
 		&item.InteractionAt,
 		&item.ContactName,
 		&item.ContactPhone,
@@ -958,11 +987,44 @@ func salesIDForTraining(actor identity.User, current LeadState) sql.NullInt64 {
 func normalizeInteractionType(value string) (string, error) {
 	value = strings.ToUpper(strings.TrimSpace(value))
 	switch value {
-	case InteractionCall, InteractionChat:
+	case InteractionCall, InteractionChat, InteractionCallChat:
 		return value, nil
 	default:
 		return "", ErrInvalidType
 	}
+}
+
+func resolveInteractionChannels(legacyType string, callStatus string, chatStatus string) (string, sql.NullString, sql.NullString, error) {
+	call := nullableString(callStatus)
+	chat := nullableString(chatStatus)
+
+	if call.Valid && chat.Valid {
+		return InteractionCallChat, call, chat, nil
+	}
+	if call.Valid {
+		return InteractionCall, call, chat, nil
+	}
+	if chat.Valid {
+		return InteractionChat, call, chat, nil
+	}
+
+	if strings.TrimSpace(legacyType) == "" {
+		return "", sql.NullString{}, sql.NullString{}, ErrInteractionEmpty
+	}
+	normalized, err := normalizeInteractionType(legacyType)
+	if err != nil {
+		return "", sql.NullString{}, sql.NullString{}, err
+	}
+	switch normalized {
+	case InteractionCall:
+		call = nullableString("RECORDED")
+	case InteractionChat:
+		chat = nullableString("RECORDED")
+	case InteractionCallChat:
+		call = nullableString("RECORDED")
+		chat = nullableString("RECORDED")
+	}
+	return normalized, call, chat, nil
 }
 
 func normalizeTrainingType(value string) (string, error) {

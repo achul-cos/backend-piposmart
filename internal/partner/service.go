@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -141,20 +142,24 @@ func (s *Service) CreatePartnerType(ctx context.Context, req CreatePartnerTypeRe
 	if err := validateCommissionValue(req.CommissionMode, req.CommissionValue); err != nil {
 		return nil, err
 	}
+	createdAt := time.Now()
+	if req.CreatedAt != nil {
+		createdAt = req.CreatedAt.UTC()
+	}
 	pt := PartnerType{
 		Code:            req.Code,
 		Name:            req.Name,
 		CommissionMode:  req.CommissionMode,
 		CommissionValue: req.CommissionValue,
 		Description:     req.Description,
+		CreatedAt:       createdAt,
+		UpdatedAt:       createdAt,
 	}
 	id, err := s.repo.CreatePartnerType(ctx, pt)
 	if err != nil {
 		return nil, err
 	}
 	pt.ID = id
-	pt.CreatedAt = time.Now()
-	pt.UpdatedAt = time.Now()
 	resp := NewPartnerTypeResponse(pt)
 	return &resp, nil
 }
@@ -168,8 +173,8 @@ func (s *Service) GetPartnerTypeByID(ctx context.Context, id int64) (*PartnerTyp
 	return &resp, nil
 }
 
-func (s *Service) ListPartnerTypes(ctx context.Context) ([]PartnerTypeResponse, error) {
-	pts, err := s.repo.ListPartnerTypes(ctx)
+func (s *Service) ListPartnerTypes(ctx context.Context, params PartnerTypeListParams) ([]PartnerTypeResponse, error) {
+	pts, err := s.repo.ListPartnerTypes(ctx, params)
 	if err != nil {
 		return nil, err
 	}
@@ -216,7 +221,7 @@ func (s *Service) UpdatePartnerType(ctx context.Context, id int64, req UpdatePar
 
 /* ---------- Partner ---------- */
 
-func (s *Service) CreatePartner(ctx context.Context, req CreatePartnerRequest) (*PartnerResponse, error) {
+func (s *Service) CreatePartner(ctx context.Context, actor identity.User, req CreatePartnerRequest) (*PartnerResponse, error) {
 	// Validate partner type exists
 	if _, err := s.repo.GetPartnerTypeByID(ctx, req.PartnerTypeID); err != nil {
 		return nil, err
@@ -238,6 +243,10 @@ func (s *Service) CreatePartner(ctx context.Context, req CreatePartnerRequest) (
 		}
 	}
 
+	createdAt := time.Now()
+	if req.CreatedAt != nil {
+		createdAt = req.CreatedAt.UTC()
+	}
 	p := Partner{
 		PartnerTypeID:        req.PartnerTypeID,
 		Code:                 req.Code,
@@ -248,6 +257,8 @@ func (s *Service) CreatePartner(ctx context.Context, req CreatePartnerRequest) (
 		BankAccountEncrypted: encrypted,
 		BankAccountLast4:     last4,
 		Status:               req.Status,
+		CreatedAt:            createdAt,
+		UpdatedAt:            createdAt,
 	}
 	if p.Status == "" {
 		p.Status = StatusActive
@@ -258,8 +269,20 @@ func (s *Service) CreatePartner(ctx context.Context, req CreatePartnerRequest) (
 		return nil, err
 	}
 	p.ID = id
-	p.CreatedAt = time.Now()
-	p.UpdatedAt = time.Now()
+
+	if req.SelfAssignPIC && actor.ID > 0 {
+		if _, err := s.repo.AssignPIC(ctx, PartnerAssignment{
+			PartnerID:    id,
+			UserID:       actor.ID,
+			AssignedByID: sql.NullInt64{Int64: actor.ID, Valid: true},
+			AssignedAt:   createdAt,
+			Active:       true,
+			CreatedAt:    createdAt,
+			UpdatedAt:    createdAt,
+		}); err != nil {
+			return nil, fmt.Errorf("partner: self-assign PIC: %w", err)
+		}
+	}
 
 	pt, _ := s.repo.GetPartnerTypeByID(ctx, p.PartnerTypeID)
 	attachPartnerType(&p, pt)
@@ -289,14 +312,14 @@ func (s *Service) GetPartnerByCode(ctx context.Context, code string) (*PartnerRe
 	return &resp, nil
 }
 
-func (s *Service) ListPartners(ctx context.Context, limit int, offset int, search string) ([]PartnerResponse, int64, error) {
-	if limit < 0 {
-		limit = 0
+func (s *Service) ListPartners(ctx context.Context, params PartnerListParams) ([]PartnerResponse, int64, error) {
+	if params.Limit < 0 {
+		params.Limit = 0
 	}
-	if offset < 0 {
-		offset = 0
+	if params.Offset < 0 {
+		params.Offset = 0
 	}
-	parts, total, err := s.repo.ListPartners(ctx, limit, offset, search)
+	parts, total, err := s.repo.ListPartners(ctx, params)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -368,18 +391,24 @@ func (s *Service) DeactivatePartner(ctx context.Context, id int64) error {
 
 /* ---------- PartnerAssignment ---------- */
 
-func (s *Service) AssignPIC(ctx context.Context, partnerID int64, userID int64, assignedByID *int64) (*PartnerAssignmentResponse, error) {
+func (s *Service) AssignPIC(ctx context.Context, partnerID int64, userID int64, assignedByID *int64, createdAt *time.Time) (*PartnerAssignmentResponse, error) {
 	// Ensure partner exists
 	if _, err := s.repo.GetPartnerByID(ctx, partnerID); err != nil {
 		return nil, err
 	}
 	// Ensure user exists (could check via identity service, but we trust ID)
+	now := time.Now()
+	if createdAt != nil {
+		now = createdAt.UTC()
+	}
 	a := PartnerAssignment{
 		PartnerID:    partnerID,
 		UserID:       userID,
 		AssignedByID: ptrToInt64(assignedByID),
-		AssignedAt:   time.Now(),
+		AssignedAt:   now,
 		Active:       true,
+		CreatedAt:    now,
+		UpdatedAt:    now,
 	}
 	// Deactivate-then-insert happens atomically under a partner row lock
 	// (see Repository.AssignPIC), backstopped by the DB-level
@@ -390,8 +419,6 @@ func (s *Service) AssignPIC(ctx context.Context, partnerID int64, userID int64, 
 		return nil, err
 	}
 	a.ID = id
-	a.CreatedAt = time.Now()
-	a.UpdatedAt = time.Now()
 	resp := NewPartnerAssignmentResponse(a)
 	return &resp, nil
 }
@@ -405,8 +432,8 @@ func (s *Service) GetActiveAssignmentForPartner(ctx context.Context, partnerID i
 	return &resp, nil
 }
 
-func (s *Service) ListPartnerAssignments(ctx context.Context, partnerID int64) ([]PartnerAssignmentResponse, error) {
-	list, err := s.repo.ListPartnerAssignments(ctx, partnerID)
+func (s *Service) ListPartnerAssignments(ctx context.Context, partnerID int64, params PartnerHistoryListParams) ([]PartnerAssignmentResponse, error) {
+	list, err := s.repo.ListPartnerAssignments(ctx, partnerID, params)
 	if err != nil {
 		return nil, err
 	}
@@ -430,18 +457,23 @@ func (s *Service) ReleasePartner(ctx context.Context, partnerID int64) error {
 
 /* ---------- PartnerInteraction ---------- */
 
-func (s *Service) RecordInteraction(ctx context.Context, partnerID int64, itype string, iTime *time.Time, note *string) (*PartnerInteractionResponse, error) {
+func (s *Service) RecordInteraction(ctx context.Context, partnerID int64, itype string, iTime *time.Time, note *string, createdAt *time.Time) (*PartnerInteractionResponse, error) {
 	if itype != "CALL" && itype != "CHAT" {
 		return nil, errors.New("invalid interaction type")
 	}
 	if _, err := s.repo.GetPartnerByID(ctx, partnerID); err != nil {
 		return nil, err
 	}
+	now := time.Now()
+	if createdAt != nil {
+		now = createdAt.UTC()
+	}
 	i := PartnerInteraction{
 		PartnerID:       partnerID,
 		InteractionType: itype,
-		InteractionAt:   time.Now(),
+		InteractionAt:   now,
 		Note:            ptrToSqlNullString(note),
+		CreatedAt:       now,
 	}
 	if iTime != nil {
 		i.InteractionAt = *iTime
@@ -451,19 +483,18 @@ func (s *Service) RecordInteraction(ctx context.Context, partnerID int64, itype 
 		return nil, err
 	}
 	i.ID = id
-	i.CreatedAt = time.Now()
 	resp := NewPartnerInteractionResponse(i)
 	return &resp, nil
 }
 
-func (s *Service) ListInteractions(ctx context.Context, partnerID int64, limit int, offset int) ([]PartnerInteractionResponse, int64, error) {
-	if limit < 0 {
-		limit = 0
+func (s *Service) ListInteractions(ctx context.Context, partnerID int64, params PartnerHistoryListParams) ([]PartnerInteractionResponse, int64, error) {
+	if params.Limit < 0 {
+		params.Limit = 0
 	}
-	if offset < 0 {
-		offset = 0
+	if params.Offset < 0 {
+		params.Offset = 0
 	}
-	list, total, err := s.repo.ListPartnerInteractions(ctx, partnerID, limit, offset)
+	list, total, err := s.repo.ListPartnerInteractions(ctx, partnerID, params)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -476,7 +507,7 @@ func (s *Service) ListInteractions(ctx context.Context, partnerID int64, limit i
 
 /* ---------- PartnerReferral ---------- */
 
-func (s *Service) CreateReferral(ctx context.Context, partnerID int64, leadID int64, refTime *time.Time, notes *string) (*PartnerReferralResponse, error) {
+func (s *Service) CreateReferral(ctx context.Context, partnerID int64, leadID int64, refTime *time.Time, notes *string, createdAt *time.Time) (*PartnerReferralResponse, error) {
 	// Ensure partner exists
 	if _, err := s.repo.GetPartnerByID(ctx, partnerID); err != nil {
 		return nil, err
@@ -490,11 +521,16 @@ func (s *Service) CreateReferral(ctx context.Context, partnerID int64, leadID in
 	if existing != nil {
 		return nil, ErrDuplicateReferral
 	}
+	now := time.Now()
+	if createdAt != nil {
+		now = createdAt.UTC()
+	}
 	r := PartnerReferral{
 		PartnerID:    partnerID,
 		LeadID:       leadID,
-		ReferralDate: time.Now(),
+		ReferralDate: now,
 		Notes:        ptrToSqlNullString(notes),
+		CreatedAt:    now,
 	}
 	if refTime != nil {
 		r.ReferralDate = *refTime
@@ -504,13 +540,39 @@ func (s *Service) CreateReferral(ctx context.Context, partnerID int64, leadID in
 		return nil, err
 	}
 	r.ID = id
-	r.CreatedAt = time.Now()
 	resp := NewPartnerReferralResponse(r)
 	return &resp, nil
 }
 
-func (s *Service) ListReferrals(ctx context.Context, partnerID int64) ([]PartnerReferralResponse, error) {
-	list, err := s.repo.ListPartnerReferrals(ctx, partnerID)
+// GetMonthlyActivityStatus classifies a partner for the given month: TELAH_MEMBERIKAN_REFERAL if
+// the PIC sales rep logged at least one referral that month, BELUM_MEMBERIKAN_REFERAL otherwise.
+func (s *Service) GetMonthlyActivityStatus(ctx context.Context, partnerID int64, year int, month int) (*PartnerActivityStatusResponse, error) {
+	if _, err := s.repo.GetPartnerByID(ctx, partnerID); err != nil {
+		return nil, err
+	}
+	hasReferral, err := s.repo.HasReferralInMonth(ctx, partnerID, year, month)
+	if err != nil {
+		return nil, err
+	}
+	status := PartnerActivityNotYetReferred
+	if hasReferral {
+		status = PartnerActivityReferred
+	}
+	return &PartnerActivityStatusResponse{
+		PartnerID: partnerID,
+		Month:     fmt.Sprintf("%04d-%02d", year, month),
+		Status:    status,
+	}, nil
+}
+
+func (s *Service) ListReferrals(ctx context.Context, partnerID int64, params PartnerHistoryListParams) ([]PartnerReferralResponse, error) {
+	if params.Limit < 0 {
+		params.Limit = 0
+	}
+	if params.Offset < 0 {
+		params.Offset = 0
+	}
+	list, err := s.repo.ListPartnerReferrals(ctx, partnerID, params)
 	if err != nil {
 		return nil, err
 	}
@@ -663,9 +725,9 @@ func (s *Service) CreateCommissionRule(ctx context.Context, actor identity.User,
 		return nil, ErrInvalidCommissionTier
 	}
 
-	var packageID sql.NullInt64
-	if req.PackageID != nil {
-		packageID = sql.NullInt64{Int64: *req.PackageID, Valid: true}
+	var planID sql.NullInt64
+	if req.PlanID != nil {
+		planID = sql.NullInt64{Int64: *req.PlanID, Valid: true}
 	}
 	var value sql.NullString
 	if req.Value != nil {
@@ -678,7 +740,7 @@ func (s *Service) CreateCommissionRule(ctx context.Context, actor identity.User,
 
 	rule := CommissionRule{
 		PartnerTypeID:   partnerTypeID,
-		PackageID:       packageID,
+		PlanID:          planID,
 		Mode:            req.Mode,
 		Value:           value,
 		EffectiveFrom:   req.EffectiveFrom,
@@ -697,11 +759,11 @@ func (s *Service) CreateCommissionRule(ctx context.Context, actor identity.User,
 	return &resp, nil
 }
 
-func (s *Service) ListCommissionRules(ctx context.Context, partnerTypeID int64, packageID *int64, activeOnly bool) ([]CommissionRuleResponse, error) {
+func (s *Service) ListCommissionRules(ctx context.Context, partnerTypeID int64, planID *int64, activeOnly bool) ([]CommissionRuleResponse, error) {
 	if _, err := s.repo.GetPartnerTypeByID(ctx, partnerTypeID); err != nil {
 		return nil, err
 	}
-	list, err := s.repo.ListCommissionRules(ctx, partnerTypeID, packageID, activeOnly)
+	list, err := s.repo.ListCommissionRules(ctx, partnerTypeID, planID, activeOnly)
 	if err != nil {
 		return nil, err
 	}

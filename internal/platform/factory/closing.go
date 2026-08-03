@@ -11,8 +11,13 @@ import (
 )
 
 type Closing struct {
-	PlanCode           string
-	PromotionCode      string
+	PlanCode      string
+	PromotionCode string
+	// Sprint 15a §4b — PromotionCodes lets a demo closing stack more than one promotion for the
+	// same plan (sales_closing_promotions). When set, it takes precedence over the singular
+	// PromotionCode; the first entry still populates the legacy promotion_id/promotion_snapshot_json
+	// columns, matching production's insertClosing behavior.
+	PromotionCodes     []string
 	DiscountAmount     string
 	UniqueTransferCode int
 	Status             string
@@ -41,17 +46,35 @@ func (f *Factory) CreateClosing(ctx context.Context, tx *sql.Tx, leadID int64, c
 	if err != nil {
 		return 0, err
 	}
+	promotionCodes := closing.PromotionCodes
+	if len(promotionCodes) == 0 && strings.TrimSpace(closing.PromotionCode) != "" {
+		promotionCodes = []string{closing.PromotionCode}
+	}
 	additionalCharge := "0.00"
 	var promotionID sql.NullInt64
 	var promotionSnapshot sql.NullString
-	if strings.TrimSpace(closing.PromotionCode) != "" {
-		promo, err := lookupPromotionSnapshot(ctx, tx, closing.PromotionCode)
-		if err != nil {
-			return 0, err
+	var promotionSnapshots []promotionSeedSnapshot
+	if len(promotionCodes) > 0 {
+		additionalCents := int64(0)
+		for _, promotionCode := range promotionCodes {
+			promo, err := lookupPromotionSnapshot(ctx, tx, promotionCode)
+			if err != nil {
+				return 0, err
+			}
+			cents, err := parseSeedMoneyToCents(promo.AdditionalCharge)
+			if err != nil {
+				return 0, err
+			}
+			additionalCents += cents
+			promotionSnapshots = append(promotionSnapshots, promo)
 		}
-		additionalCharge = promo.AdditionalCharge
-		promotionID = sql.NullInt64{Int64: promo.ID, Valid: true}
-		bytes, err := json.Marshal(promo)
+		additionalCharge = formatSeedCents(additionalCents)
+		// The legacy singular promotion_id/promotion_snapshot_json columns keep only the FIRST
+		// promotion, matching production's insertClosing — sales_closing_promotions (inserted
+		// below, once closingID exists) is the authoritative full list.
+		first := promotionSnapshots[0]
+		promotionID = sql.NullInt64{Int64: first.ID, Valid: true}
+		bytes, err := json.Marshal(first)
 		if err != nil {
 			return 0, err
 		}
@@ -143,16 +166,29 @@ func (f *Factory) CreateClosing(ctx context.Context, tx *sql.Tx, leadID int64, c
 	if err != nil {
 		return 0, err
 	}
+	for _, promo := range promotionSnapshots {
+		promoBytes, err := json.Marshal(promo)
+		if err != nil {
+			return 0, err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO sales_closing_promotions (closing_id, promotion_id, promotion_snapshot_json, additional_charge)
+			VALUES (?, ?, ?, ?)`,
+			closingID, promo.ID, string(promoBytes), promo.AdditionalCharge,
+		); err != nil {
+			return 0, fmt.Errorf("seed closing promotion %s: %w", code, err)
+		}
+	}
 	reasonID, reasonCode, reasonLabel, err := lookupRemarkReasonByScore(ctx, tx, 3)
 	if err != nil {
 		return 0, err
 	}
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO customer_interactions
-			(lead_id, owner_id, outlet_id, sales_id, supervisor_id, interaction_type, interaction_at,
+			(lead_id, owner_id, outlet_id, sales_id, supervisor_id, interaction_type, call_status, chat_status, interaction_at,
 			 remark_reason_id, remark_score, remark_code, remark_label, note, customer_response,
 			 stage_before, stage_after, status_before, status_after, score_before, score_after, created_by_user_id)
-		VALUES (?, ?, ?, ?, ?, 'CALL', ?, ?, 3, ?, ?, ?, ?, ?, 'CLOSING', ?, 'OPEN', ?, 3, ?)`,
+		VALUES (?, ?, ?, ?, ?, 'CALL', 'TERHUBUNG', NULL, ?, ?, 3, ?, ?, ?, ?, ?, 'CLOSING', ?, 'OPEN', ?, 3, ?)`,
 		leadID,
 		state.ownerID,
 		state.outletID,

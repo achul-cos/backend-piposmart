@@ -120,6 +120,14 @@ LIMIT 1`, args...))
 	return item, err
 }
 
+func (r *Repository) FindOrderDetailByID(ctx context.Context, actor identity.User, id int64) (OrderResult, error) {
+	order, err := r.FindOrderByID(ctx, actor, id)
+	if err != nil {
+		return OrderResult{}, err
+	}
+	return r.orderResultFromOrder(ctx, r.db, order, false)
+}
+
 func (r *Repository) ListSubscriptions(ctx context.Context, actor identity.User, params ListParams) ([]Subscription, int64, error) {
 	where, args := subscriptionWhere(actor, params)
 	var total int64
@@ -288,14 +296,41 @@ func (r *Repository) CreateOrder(ctx context.Context, actor identity.User, owner
 		return OrderResult{}, err
 	}
 	balanceAfterCents := balanceBeforeCents - finalAmountCents
+	var shortfallCents int64
 	if balanceAfterCents < 0 {
-		return OrderResult{}, ErrInsufficientBalance
+		// Non-Admin callers hit a real, live debit (Sales/Supervisor creating an order tied to an
+		// actual closing) — insufficient balance still hard-blocks. Admin creating a manual order
+		// is backfilling/correcting a purchase that already happened in the real Piposmart app
+		// (where balance was presumably sufficient) — proceed, clamp the wallet to 0 (never
+		// negative: wallet_accounts.balance has a CHECK >= 0), and flag the difference instead.
+		if actor.RoleCode != RoleAdmin {
+			return OrderResult{}, ErrInsufficientBalance
+		}
+		shortfallCents = -balanceAfterCents
+		balanceAfterCents = 0
 	}
 
 	orderCode := nextCode("ORD", time.Now().UTC(), ownerID)
-	orderID, err := r.insertOrder(ctx, tx, actor, orderCode, key, ownerID, wallet.ID, input, req, purchasedAt, startDate)
+	var balanceShortfallAmount sql.NullString
+	if shortfallCents > 0 {
+		balanceShortfallAmount = sql.NullString{String: formatCents(shortfallCents), Valid: true}
+	}
+	orderID, err := r.insertOrder(ctx, tx, actor, orderCode, key, ownerID, wallet.ID, input, req, purchasedAt, startDate, balanceShortfallAmount)
 	if err != nil {
 		return OrderResult{}, err
+	}
+	for _, snapshot := range input.PromotionSnapshots {
+		snapshotBytes, err := json.Marshal(snapshot)
+		if err != nil {
+			return OrderResult{}, err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO subscription_order_promotions (order_id, promotion_id, promotion_snapshot_json, additional_charge)
+			VALUES (?, ?, ?, ?)`,
+			orderID, snapshot.ID, string(snapshotBytes), snapshot.AdditionalCharge,
+		); err != nil {
+			return OrderResult{}, err
+		}
 	}
 	transactionID, err := r.insertLedgerTransaction(ctx, tx, ledgerInput{
 		Wallet:            wallet,
@@ -307,6 +342,7 @@ func (r *Repository) CreateOrder(ctx context.Context, actor identity.User, owner
 		IdempotencyKey:    key,
 		OccurredAt:        purchasedAt,
 		Note:              req.Note,
+		SourceType:        WalletSourceSubscriptionOrder,
 		ActorID:           actor.ID,
 	})
 	if err != nil {
@@ -322,7 +358,7 @@ WHERE id = ?`, transactionID, actor.ID, orderID); err != nil {
 		return OrderResult{}, err
 	}
 
-	subscriptionID, periodID, err := r.activateSubscription(ctx, tx, orderID, ownerID, input, startDate)
+	subscriptionID, periodID, err := r.activateSubscription(ctx, tx, orderID, ownerID, input, startDate, WalletSourceSubscriptionOrder)
 	if err != nil {
 		return OrderResult{}, err
 	}
@@ -370,6 +406,292 @@ WHERE id = ?`, transactionID, actor.ID, orderID); err != nil {
 	return r.orderResultByIDs(ctx, r.db, orderID, subscriptionID, periodID, reconciliationID, issueID, false)
 }
 
+func (r *Repository) CreateUpgrade(ctx context.Context, actor identity.User, subscriptionID int64, req CreateUpgradeRequest) (OrderResult, error) {
+	key, err := upgradeIdempotencyKey(req)
+	if err != nil {
+		return OrderResult{}, err
+	}
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return OrderResult{}, err
+	}
+	defer tx.Rollback()
+
+	if existing, found, err := r.findOrderByIdempotency(ctx, tx, key); err != nil {
+		return OrderResult{}, err
+	} else if found {
+		result, err := r.orderResultFromOrder(ctx, tx, existing, true)
+		if err != nil {
+			return OrderResult{}, err
+		}
+		if err := tx.Commit(); err != nil {
+			return OrderResult{}, err
+		}
+		return result, nil
+	}
+
+	sourceSubscription, err := r.lockSubscriptionByID(ctx, tx, subscriptionID)
+	if err != nil {
+		return OrderResult{}, err
+	}
+	if sourceSubscription.Status != SubscriptionStatusActive {
+		return OrderResult{}, ErrSubscriptionNotActive
+	}
+	if !sourceSubscription.OwnerID.Valid || !sourceSubscription.OrderID.Valid {
+		return OrderResult{}, ErrUpgradeNotAllowed
+	}
+
+	sourceOrder, err := r.findOrderByIDRaw(ctx, tx, sourceSubscription.OrderID.Int64)
+	if err != nil {
+		return OrderResult{}, err
+	}
+	sourcePeriod, err := r.findPeriodByOrderID(ctx, tx, sourceOrder.ID)
+	if err != nil {
+		return OrderResult{}, err
+	}
+
+	purchasedAt := time.Now().UTC()
+	if req.PurchasedAt != nil {
+		purchasedAt = req.PurchasedAt.UTC()
+	}
+	effectiveStart, err := effectiveUpgradeStartDate(req.EffectiveStartDate, purchasedAt)
+	if err != nil {
+		return OrderResult{}, err
+	}
+	if !effectiveStart.After(sourceSubscription.ActiveFrom) {
+		return OrderResult{}, ErrUpgradeNotAllowed
+	}
+	if !effectiveStart.Before(sourceSubscription.ActiveUntil) {
+		return OrderResult{}, ErrUpgradeNotAllowed
+	}
+
+	remainingDays := businessDateDiff(effectiveStart, sourceSubscription.ActiveUntil)
+	if remainingDays < 1 {
+		return OrderResult{}, ErrUpgradeNotAllowed
+	}
+	usedDays := businessDateDiff(sourceSubscription.ActiveFrom, effectiveStart)
+	if usedDays < 1 {
+		return OrderResult{}, ErrUpgradeNotAllowed
+	}
+
+	previousPackage, previousPlan, err := snapshotsFromOrder(sourceOrder)
+	if err != nil {
+		return OrderResult{}, err
+	}
+	targetPackage, targetPlan, err := r.findPlanSnapshot(ctx, tx, req.PlanID, purchasedAt)
+	if err != nil {
+		return OrderResult{}, err
+	}
+	if targetPackage.LevelOrder <= previousPackage.LevelOrder {
+		return OrderResult{}, ErrUpgradeNotAllowed
+	}
+
+	var closing *closingSnapshot
+	if req.ClosingID != nil {
+		item, err := r.lockClosing(ctx, tx, *req.ClosingID)
+		if err != nil {
+			return OrderResult{}, err
+		}
+		if !item.OwnerID.Valid || item.OwnerID.Int64 != sourceSubscription.OwnerID.Int64 || item.Status == closingStatusRejected {
+			return OrderResult{}, ErrClosingMismatch
+		}
+		if sourceSubscription.OutletID.Valid && item.OutletID.Valid && sourceSubscription.OutletID.Int64 != item.OutletID.Int64 {
+			return OrderResult{}, ErrClosingMismatch
+		}
+		if !item.PlanID.Valid || item.PlanID.Int64 != req.PlanID {
+			return OrderResult{}, ErrClosingMismatch
+		}
+		closing = &item
+	}
+
+	proratedFinalCents, dailyCents, err := proratedPlanAmount(targetPlan.Price, targetPlan.DurationDays, remainingDays)
+	if err != nil {
+		return OrderResult{}, err
+	}
+	targetPackageJSON, err := json.Marshal(targetPackage)
+	if err != nil {
+		return OrderResult{}, err
+	}
+	targetPlanJSON, err := json.Marshal(targetPlan)
+	if err != nil {
+		return OrderResult{}, err
+	}
+	previousPackageJSON, err := json.Marshal(previousPackage)
+	if err != nil {
+		return OrderResult{}, err
+	}
+	previousPlanJSON, err := json.Marshal(previousPlan)
+	if err != nil {
+		return OrderResult{}, err
+	}
+
+	input := orderInput{
+		OutletID:                    sourceSubscription.OutletID,
+		SalesID:                     sourceOrder.SalesID,
+		SupervisorID:                sourceOrder.SupervisorID,
+		PackageID:                   sql.NullInt64{Int64: targetPackage.ID, Valid: true},
+		PlanID:                      sql.NullInt64{Int64: targetPlan.ID, Valid: true},
+		PackageSnapshotJSON:         string(targetPackageJSON),
+		PlanSnapshotJSON:            string(targetPlanJSON),
+		OrderType:                   OrderTypeUpgrade,
+		SourceSubscriptionID:        sql.NullInt64{Int64: sourceSubscription.ID, Valid: true},
+		UpgradeEffectiveStartDate:   sql.NullTime{Time: effectiveStart, Valid: true},
+		UpgradeOriginalEndDate:      sql.NullTime{Time: sourceSubscription.ActiveUntil, Valid: true},
+		UpgradeRemainingDays:        sql.NullInt64{Int64: int64(remainingDays), Valid: true},
+		UpgradeDailyPrice:           sql.NullString{String: formatCents(dailyCents), Valid: true},
+		PreviousPackageSnapshotJSON: sql.NullString{String: string(previousPackageJSON), Valid: true},
+		PreviousPlanSnapshotJSON:    sql.NullString{String: string(previousPlanJSON), Valid: true},
+		TenureMonths:                targetPlan.TenureMonths,
+		DurationDays:                remainingDays,
+		BasePrice:                   formatCents(proratedFinalCents),
+		DiscountAmount:              "0.00",
+		AdditionalCharge:            "0.00",
+		FinalAmount:                 formatCents(proratedFinalCents),
+		Currency:                    targetPlan.Currency,
+	}
+	if closing != nil {
+		input.ClosingID = sql.NullInt64{Int64: closing.ID, Valid: true}
+		input.SalesID = closing.SalesID
+		input.SupervisorID = closing.SupervisorID
+	}
+
+	wallet, err := r.lockOrCreateWallet(ctx, tx, sourceSubscription.OwnerID.Int64)
+	if err != nil {
+		return OrderResult{}, err
+	}
+	balanceBeforeCents, err := parseMoneyToCents(wallet.Balance)
+	if err != nil {
+		return OrderResult{}, err
+	}
+	balanceAfterCents := balanceBeforeCents - proratedFinalCents
+	var shortfallCents int64
+	if balanceAfterCents < 0 {
+		if actor.RoleCode != RoleAdmin {
+			return OrderResult{}, ErrInsufficientBalance
+		}
+		shortfallCents = -balanceAfterCents
+		balanceAfterCents = 0
+	}
+
+	orderCode := nextCode("ORD", time.Now().UTC(), sourceSubscription.OwnerID.Int64)
+	var balanceShortfallAmount sql.NullString
+	if shortfallCents > 0 {
+		balanceShortfallAmount = sql.NullString{String: formatCents(shortfallCents), Valid: true}
+	}
+	orderReq := CreateOrderRequest{
+		ExternalReference: req.ExternalReference,
+		Note:              req.Note,
+	}
+	orderID, err := r.insertOrder(ctx, tx, actor, orderCode, key, sourceSubscription.OwnerID.Int64, wallet.ID, input, orderReq, purchasedAt, effectiveStart, balanceShortfallAmount)
+	if err != nil {
+		return OrderResult{}, err
+	}
+
+	transactionID, err := r.insertLedgerTransaction(ctx, tx, ledgerInput{
+		Wallet:            wallet,
+		OrderCode:         orderCode,
+		AmountCents:       proratedFinalCents,
+		BalanceBefore:     balanceBeforeCents,
+		BalanceAfter:      balanceAfterCents,
+		ExternalReference: req.ExternalReference,
+		IdempotencyKey:    key,
+		OccurredAt:        purchasedAt,
+		Note:              req.Note,
+		SourceType:        WalletSourceSubscriptionUpgrade,
+		ActorID:           actor.ID,
+	})
+	if err != nil {
+		return OrderResult{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `
+UPDATE subscription_orders
+SET wallet_transaction_id = ?, updated_by_user_id = ?
+WHERE id = ?`, transactionID, actor.ID, orderID); err != nil {
+		return OrderResult{}, err
+	}
+	if err := r.updateWalletBalance(ctx, tx, wallet.ID, balanceAfterCents); err != nil {
+		return OrderResult{}, err
+	}
+	if err := r.trimSubscriptionForUpgrade(ctx, tx, sourceSubscription, sourcePeriod, effectiveStart, usedDays); err != nil {
+		return OrderResult{}, err
+	}
+	subscriptionIDNew, periodID, err := r.activateSubscriptionForRange(ctx, tx, orderID, sourceSubscription.OwnerID.Int64, input, effectiveStart, sourceSubscription.ActiveUntil, WalletSourceSubscriptionUpgrade)
+	if err != nil {
+		return OrderResult{}, err
+	}
+	var reconciliationID int64
+	var issueID int64
+	if closing != nil {
+		if err := r.ensureClosingNotReconciledByOtherOrder(ctx, tx, closing.ID, orderID); err != nil {
+			return OrderResult{}, err
+		}
+		amountDifference, err := moneyDifference(input.FinalAmount, closing.FinalAmount)
+		if err != nil {
+			return OrderResult{}, err
+		}
+		now := time.Now().UTC()
+		if amountDifference == "0.00" || amountDifference == "-0.00" {
+			reconciliationID, err = r.insertReconciliation(ctx, tx, reconciliationInput{
+				OrderID:          sql.NullInt64{Int64: orderID, Valid: true},
+				ClosingID:        sql.NullInt64{Int64: closing.ID, Valid: true},
+				OwnerID:          sql.NullInt64{Int64: sourceSubscription.OwnerID.Int64, Valid: true},
+				Status:           ReconciliationStatusConfirmed,
+				MatchType:        ReconciliationMatchAuto,
+				AmountDifference: "0.00",
+				Note:             nullableString("Auto reconciliation dari subscription upgrade dan closing sales."),
+				ConfirmedAt:      sql.NullTime{Time: now, Valid: true},
+				ActorID:          actor.ID,
+			})
+			if err != nil {
+				return OrderResult{}, err
+			}
+			if err := r.confirmOrderAndClosing(ctx, tx, actor.ID, orderID, closing.ID); err != nil {
+				return OrderResult{}, err
+			}
+		} else {
+			reconciliationID, err = r.insertReconciliation(ctx, tx, reconciliationInput{
+				OrderID:          sql.NullInt64{Int64: orderID, Valid: true},
+				ClosingID:        sql.NullInt64{Int64: closing.ID, Valid: true},
+				OwnerID:          sql.NullInt64{Int64: sourceSubscription.OwnerID.Int64, Valid: true},
+				Status:           ReconciliationStatusPartialConfirm,
+				MatchType:        ReconciliationMatchAuto,
+				AmountDifference: amountDifference,
+				AdminFinalAmount: sql.NullString{String: input.FinalAmount, Valid: true},
+				Note:             nullableString("Auto partial reconciliation dari subscription upgrade; closing dipin ke nominal prorata upgrade."),
+				ConfirmedAt:      sql.NullTime{Time: now, Valid: true},
+				ActorID:          actor.ID,
+			})
+			if err != nil {
+				return OrderResult{}, err
+			}
+			if err := r.confirmOrderAndClosingWithAmount(ctx, tx, actor.ID, orderID, closing.ID, input.FinalAmount); err != nil {
+				return OrderResult{}, err
+			}
+		}
+		if err := r.resolveIssues(ctx, tx, actor.ID, orderID, closing.ID, now); err != nil {
+			return OrderResult{}, err
+		}
+	} else {
+		issueID, err = r.insertIssue(ctx, tx, issueInput{
+			OrderID:     sql.NullInt64{Int64: orderID, Valid: true},
+			OwnerID:     sql.NullInt64{Int64: sourceSubscription.OwnerID.Int64, Valid: true},
+			IssueType:   IssueHangingOrder,
+			Description: nullableString("Subscription upgrade belum terhubung dengan laporan closing sales."),
+			DetectedAt:  purchasedAt,
+			ActorID:     actor.ID,
+		})
+		if err != nil {
+			return OrderResult{}, err
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return OrderResult{}, err
+	}
+	return r.orderResultByIDs(ctx, r.db, orderID, subscriptionIDNew, periodID, reconciliationID, issueID, false)
+}
+
 func (r *Repository) ReconcileOrder(ctx context.Context, actor identity.User, orderID int64, req ManualReconcileRequest) (ReconciliationResult, error) {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -403,7 +725,8 @@ func (r *Repository) ReconcileOrder(ctx context.Context, actor identity.User, or
 	issueCode := sql.NullString{}
 	if !sameNullableID(order.OwnerID, closing.OwnerID) {
 		issueCode = sql.NullString{String: IssueOwnerMismatch, Valid: true}
-		if normalizeAction(req.Action) == ReconciliationStatusConfirmed {
+		normalizedAction := normalizeAction(req.Action)
+		if normalizedAction == ReconciliationStatusConfirmed || normalizedAction == ReconciliationStatusPartialConfirm {
 			return ReconciliationResult{}, ErrClosingMismatch
 		}
 	} else if amountDifference != "0.00" && amountDifference != "-0.00" {
@@ -433,6 +756,43 @@ func (r *Repository) ReconcileOrder(ctx context.Context, actor identity.User, or
 			return ReconciliationResult{}, err
 		}
 		if err := r.confirmOrderAndClosing(ctx, tx, actor.ID, orderID, closing.ID); err != nil {
+			return ReconciliationResult{}, err
+		}
+		if err := r.resolveIssues(ctx, tx, actor.ID, orderID, closing.ID, now); err != nil {
+			return ReconciliationResult{}, err
+		}
+	case ReconciliationStatusPartialConfirm:
+		if req.AdminFinalAmount == nil || strings.TrimSpace(*req.AdminFinalAmount) == "" {
+			return ReconciliationResult{}, ErrInvalidAction
+		}
+		adminFinalAmountCents, err := parsePositiveMoneyToCents(*req.AdminFinalAmount)
+		if err != nil {
+			return ReconciliationResult{}, err
+		}
+		adminFinalAmount := formatCents(adminFinalAmountCents)
+		var adminTenureMonths sql.NullInt64
+		if req.AdminTenureMonths != nil {
+			adminTenureMonths = sql.NullInt64{Int64: int64(*req.AdminTenureMonths), Valid: true}
+		}
+		reconciliationID, err = r.upsertReconciliation(ctx, tx, reconciliationInput{
+			OrderID:           sql.NullInt64{Int64: orderID, Valid: true},
+			ClosingID:         sql.NullInt64{Int64: closing.ID, Valid: true},
+			OwnerID:           order.OwnerID,
+			Status:            ReconciliationStatusPartialConfirm,
+			MatchType:         ReconciliationMatchManual,
+			IssueCode:         issueCode,
+			AmountDifference:  amountDifference,
+			AdminTenureMonths: adminTenureMonths,
+			AdminFinalAmount:  sql.NullString{String: adminFinalAmount, Valid: true},
+			Note:              nullableString(req.Note),
+			Reason:            nullableString(req.Reason),
+			ConfirmedAt:       sql.NullTime{Time: now, Valid: true},
+			ActorID:           actor.ID,
+		})
+		if err != nil {
+			return ReconciliationResult{}, err
+		}
+		if err := r.confirmOrderAndClosingWithAmount(ctx, tx, actor.ID, orderID, closing.ID, adminFinalAmount); err != nil {
 			return ReconciliationResult{}, err
 		}
 		if err := r.resolveIssues(ctx, tx, actor.ID, orderID, closing.ID, now); err != nil {
@@ -522,13 +882,24 @@ type orderInput struct {
 	PackageSnapshotJSON   string
 	PlanSnapshotJSON      string
 	PromotionSnapshotJSON sql.NullString
-	TenureMonths          int
-	DurationDays          int
-	BasePrice             string
-	DiscountAmount        string
-	AdditionalCharge      string
-	FinalAmount           string
-	Currency              string
+	// PromotionSnapshots is the full stacked promotion list (Sprint 15a §4b) — PromotionID/
+	// PromotionSnapshotJSON above only ever hold the first, for backward compat.
+	OrderType                   string
+	SourceSubscriptionID        sql.NullInt64
+	UpgradeEffectiveStartDate   sql.NullTime
+	UpgradeOriginalEndDate      sql.NullTime
+	UpgradeRemainingDays        sql.NullInt64
+	UpgradeDailyPrice           sql.NullString
+	PreviousPackageSnapshotJSON sql.NullString
+	PreviousPlanSnapshotJSON    sql.NullString
+	PromotionSnapshots          []PromotionSnapshot
+	TenureMonths                int
+	DurationDays                int
+	BasePrice                   string
+	DiscountAmount              string
+	AdditionalCharge            string
+	FinalAmount                 string
+	Currency                    string
 }
 
 func (r *Repository) buildOrderInput(ctx context.Context, tx *sql.Tx, ownerID int64, req CreateOrderRequest, purchasedAt time.Time) (orderInput, error) {
@@ -540,7 +911,11 @@ func (r *Repository) buildOrderInput(ctx context.Context, tx *sql.Tx, ownerID in
 		if !closing.OwnerID.Valid || closing.OwnerID.Int64 != ownerID || closing.Status == closingStatusRejected {
 			return orderInput{}, ErrClosingMismatch
 		}
-		durationDays := totalDurationDays(closing.DurationDays, closing.PromotionSnapshotJSON)
+		promotionSnapshots, err := r.findClosingPromotionSnapshots(ctx, tx, closing.ID)
+		if err != nil {
+			return orderInput{}, err
+		}
+		durationDays := totalDurationDaysMulti(closing.DurationDays, promotionSnapshots)
 		return orderInput{
 			OutletID:              closing.OutletID,
 			ClosingID:             sql.NullInt64{Int64: closing.ID, Valid: true},
@@ -552,6 +927,8 @@ func (r *Repository) buildOrderInput(ctx context.Context, tx *sql.Tx, ownerID in
 			PackageSnapshotJSON:   closing.PackageSnapshotJSON,
 			PlanSnapshotJSON:      closing.PlanSnapshotJSON,
 			PromotionSnapshotJSON: closing.PromotionSnapshotJSON,
+			OrderType:             OrderTypeNew,
+			PromotionSnapshots:    promotionSnapshots,
 			TenureMonths:          closing.TenureMonths,
 			DurationDays:          durationDays,
 			BasePrice:             closing.BasePrice,
@@ -568,17 +945,32 @@ func (r *Repository) buildOrderInput(ctx context.Context, tx *sql.Tx, ownerID in
 	if err != nil {
 		return orderInput{}, err
 	}
+	promotionIDs := req.PromotionIDs
+	if len(promotionIDs) == 0 && req.PromotionID != nil {
+		promotionIDs = []int64{*req.PromotionID}
+	}
 	additionalCharge := "0.00"
 	var promotionID sql.NullInt64
 	var promotionSnapshotJSON sql.NullString
-	if req.PromotionID != nil {
-		promotionSnapshot, err := r.findEligiblePromotionSnapshot(ctx, tx, *req.PromotionID, req.PlanID, purchasedAt)
-		if err != nil {
-			return orderInput{}, err
+	var promotionSnapshots []PromotionSnapshot
+	if len(promotionIDs) > 0 {
+		additionalChargeCents := int64(0)
+		for _, id := range promotionIDs {
+			snapshot, err := r.findEligiblePromotionSnapshot(ctx, tx, id, req.PlanID, purchasedAt)
+			if err != nil {
+				return orderInput{}, err
+			}
+			cents, err := parseMoneyToCents(snapshot.AdditionalCharge)
+			if err != nil {
+				return orderInput{}, err
+			}
+			additionalChargeCents += cents
+			promotionSnapshots = append(promotionSnapshots, snapshot)
 		}
-		promotionID = sql.NullInt64{Int64: promotionSnapshot.ID, Valid: true}
-		additionalCharge = promotionSnapshot.AdditionalCharge
-		bytes, err := json.Marshal(promotionSnapshot)
+		additionalCharge = formatCents(additionalChargeCents)
+		first := promotionSnapshots[0]
+		promotionID = sql.NullInt64{Int64: first.ID, Valid: true}
+		bytes, err := json.Marshal(first)
 		if err != nil {
 			return orderInput{}, err
 		}
@@ -610,8 +1002,10 @@ func (r *Repository) buildOrderInput(ctx context.Context, tx *sql.Tx, ownerID in
 		PackageSnapshotJSON:   string(packageBytes),
 		PlanSnapshotJSON:      string(planBytes),
 		PromotionSnapshotJSON: promotionSnapshotJSON,
+		OrderType:             OrderTypeNew,
+		PromotionSnapshots:    promotionSnapshots,
 		TenureMonths:          planSnapshot.TenureMonths,
-		DurationDays:          totalDurationDays(planSnapshot.DurationDays, promotionSnapshotJSON),
+		DurationDays:          totalDurationDaysMulti(planSnapshot.DurationDays, promotionSnapshots),
 		BasePrice:             calc.BasePrice,
 		DiscountAmount:        calc.DiscountAmount,
 		AdditionalCharge:      calc.AdditionalCharge,
@@ -667,18 +1061,26 @@ func calculateFinalAmount(basePrice, discountAmount, additionalCharge string) (f
 	return finalAmountCalculation{BasePrice: formatCents(baseCents), DiscountAmount: formatCents(discountCents), AdditionalCharge: formatCents(additionalCents), FinalAmount: formatCents(finalCents)}, nil
 }
 
-func (r *Repository) insertOrder(ctx context.Context, tx *sql.Tx, actor identity.User, code string, key string, ownerID, walletID int64, input orderInput, req CreateOrderRequest, purchasedAt time.Time, startDate time.Time) (int64, error) {
+func (r *Repository) insertOrder(ctx context.Context, tx *sql.Tx, actor identity.User, code string, key string, ownerID, walletID int64, input orderInput, req CreateOrderRequest, purchasedAt time.Time, startDate time.Time, balanceShortfallAmount sql.NullString) (int64, error) {
+	orderType := input.OrderType
+	if orderType == "" {
+		orderType = OrderTypeNew
+	}
 	result, err := tx.ExecContext(ctx, `
 INSERT INTO subscription_orders
 (code, owner_id, outlet_id, closing_id, sales_id, supervisor_id, wallet_account_id, package_id, plan_id, promotion_id,
  package_snapshot_json, plan_snapshot_json, promotion_snapshot_json, tenure_months, duration_days,
- base_price, discount_amount, additional_charge, final_amount, currency, status, idempotency_key, external_reference,
+ base_price, discount_amount, additional_charge, final_amount, balance_shortfall_amount, currency, order_type, status, source_subscription_id,
+ upgrade_effective_start_date, upgrade_original_end_date, upgrade_remaining_days, upgrade_daily_price,
+ previous_package_snapshot_json, previous_plan_snapshot_json, idempotency_key, external_reference,
  purchased_at, subscription_start_date, note, created_by_user_id, updated_by_user_id)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		code, ownerID, input.OutletID, input.ClosingID, input.SalesID, input.SupervisorID, walletID,
 		input.PackageID, input.PlanID, input.PromotionID, input.PackageSnapshotJSON, input.PlanSnapshotJSON,
 		input.PromotionSnapshotJSON, input.TenureMonths, input.DurationDays, input.BasePrice, input.DiscountAmount,
-		input.AdditionalCharge, input.FinalAmount, input.Currency, OrderStatusPaid, key, nullableString(req.ExternalReference),
+		input.AdditionalCharge, input.FinalAmount, balanceShortfallAmount, input.Currency, orderType, OrderStatusPaid, input.SourceSubscriptionID,
+		input.UpgradeEffectiveStartDate, input.UpgradeOriginalEndDate, input.UpgradeRemainingDays, input.UpgradeDailyPrice,
+		input.PreviousPackageSnapshotJSON, input.PreviousPlanSnapshotJSON, key, nullableString(req.ExternalReference),
 		purchasedAt, startDate, nullableString(req.Note), actor.ID, actor.ID,
 	)
 	if err != nil {
@@ -697,10 +1099,15 @@ type ledgerInput struct {
 	IdempotencyKey    string
 	OccurredAt        time.Time
 	Note              string
+	SourceType        string
 	ActorID           int64
 }
 
 func (r *Repository) insertLedgerTransaction(ctx context.Context, tx *sql.Tx, input ledgerInput) (int64, error) {
+	sourceType := input.SourceType
+	if sourceType == "" {
+		sourceType = WalletSourceSubscriptionOrder
+	}
 	result, err := tx.ExecContext(ctx, `
 INSERT INTO wallet_transactions
 (code, wallet_account_id, owner_id, transaction_type, direction, amount, balance_before, balance_after,
@@ -708,7 +1115,7 @@ INSERT INTO wallet_transactions
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		nextCode("WTX", time.Now().UTC(), input.Wallet.ID), input.Wallet.ID, input.Wallet.OwnerID,
 		WalletTransactionDebit, WalletDirectionDebit, formatCents(input.AmountCents), formatCents(input.BalanceBefore),
-		formatCents(input.BalanceAfter), input.Wallet.Currency, WalletSourceSubscriptionOrder, input.OrderCode,
+		formatCents(input.BalanceAfter), input.Wallet.Currency, sourceType, input.OrderCode,
 		nullableString(input.ExternalReference), input.IdempotencyKey, input.OccurredAt, nullableString(input.Note), input.ActorID,
 	)
 	if err != nil {
@@ -717,14 +1124,21 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 	return result.LastInsertId()
 }
 
-func (r *Repository) activateSubscription(ctx context.Context, tx *sql.Tx, orderID int64, ownerID int64, input orderInput, startDate time.Time) (int64, int64, error) {
+func (r *Repository) activateSubscription(ctx context.Context, tx *sql.Tx, orderID int64, ownerID int64, input orderInput, startDate time.Time, sourceType string) (int64, int64, error) {
 	endDate := startDate.AddDate(0, 0, input.DurationDays)
+	return r.activateSubscriptionForRange(ctx, tx, orderID, ownerID, input, startDate, endDate, sourceType)
+}
+
+func (r *Repository) activateSubscriptionForRange(ctx context.Context, tx *sql.Tx, orderID int64, ownerID int64, input orderInput, startDate time.Time, endDate time.Time, sourceType string) (int64, int64, error) {
+	if sourceType == "" {
+		sourceType = WalletSourceSubscriptionOrder
+	}
 	result, err := tx.ExecContext(ctx, `
 INSERT INTO subscriptions
 (code, owner_id, outlet_id, order_id, package_id, plan_id, status, active_from, active_until, total_duration_days, source_type)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		nextCode("SUB", time.Now().UTC(), orderID), ownerID, input.OutletID, orderID, input.PackageID, input.PlanID,
-		SubscriptionStatusActive, startDate, endDate, input.DurationDays, WalletSourceSubscriptionOrder,
+		SubscriptionStatusActive, startDate, endDate, input.DurationDays, sourceType,
 	)
 	if err != nil {
 		return 0, 0, err
@@ -751,11 +1165,30 @@ VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?)`,
 }
 
 func (r *Repository) confirmOrderAndClosing(ctx context.Context, tx *sql.Tx, actorID, orderID, closingID int64) error {
+	return r.confirmOrderAndClosingWithAmount(ctx, tx, actorID, orderID, closingID, "")
+}
+
+// confirmOrderAndClosingWithAmount is confirmOrderAndClosing plus, when adminFinalAmount is
+// non-empty (PARTIAL_CONFIRM), overriding sales_closings.final_amount to the admin dashboard's
+// real number — this is what actually flows into partner commission calculation
+// (partner.SyncCommissions reads sc.final_amount directly), not just an audit-trail note.
+func (r *Repository) confirmOrderAndClosingWithAmount(ctx context.Context, tx *sql.Tx, actorID, orderID, closingID int64, adminFinalAmount string) error {
 	if _, err := tx.ExecContext(ctx, `
 UPDATE subscription_orders
 SET status = ?, updated_by_user_id = ?
 WHERE id = ? AND deleted_at IS NULL`, OrderStatusReconciled, actorID, orderID); err != nil {
 		return err
+	}
+	if adminFinalAmount != "" {
+		if _, err := tx.ExecContext(ctx, `
+UPDATE sales_closings
+SET final_amount = ?, status = ?, confirmed_at = COALESCE(confirmed_at, ?), rejected_at = NULL, rejection_reason = NULL, updated_by_user_id = ?
+WHERE id = ? AND deleted_at IS NULL AND status <> ?`,
+			adminFinalAmount, closingStatusConfirmed, time.Now().UTC(), actorID, closingID, closingStatusRejected,
+		); err != nil {
+			return err
+		}
+		return nil
 	}
 	_, err := tx.ExecContext(ctx, `
 UPDATE sales_closings
@@ -767,28 +1200,32 @@ WHERE id = ? AND deleted_at IS NULL AND status <> ?`,
 }
 
 type reconciliationInput struct {
-	OrderID          sql.NullInt64
-	ClosingID        sql.NullInt64
-	OwnerID          sql.NullInt64
-	Status           string
-	MatchType        string
-	IssueCode        sql.NullString
-	AmountDifference string
-	Note             sql.NullString
-	Reason           sql.NullString
-	ConfirmedAt      sql.NullTime
-	RejectedAt       sql.NullTime
-	ActorID          int64
+	OrderID           sql.NullInt64
+	ClosingID         sql.NullInt64
+	OwnerID           sql.NullInt64
+	Status            string
+	MatchType         string
+	IssueCode         sql.NullString
+	AmountDifference  string
+	AdminTenureMonths sql.NullInt64
+	AdminFinalAmount  sql.NullString
+	Note              sql.NullString
+	Reason            sql.NullString
+	ConfirmedAt       sql.NullTime
+	RejectedAt        sql.NullTime
+	ActorID           int64
 }
 
 func (r *Repository) insertReconciliation(ctx context.Context, tx *sql.Tx, input reconciliationInput) (int64, error) {
 	result, err := tx.ExecContext(ctx, `
 INSERT INTO subscription_reconciliations
-(code, order_id, closing_id, owner_id, status, match_type, issue_code, amount_difference, note, reason,
+(code, order_id, closing_id, owner_id, status, match_type, issue_code, amount_difference,
+ admin_tenure_months, admin_final_amount, note, reason,
  confirmed_at, rejected_at, created_by_user_id, updated_by_user_id)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		nextCode("REC", time.Now().UTC(), input.OrderID.Int64), input.OrderID, input.ClosingID, input.OwnerID,
-		input.Status, input.MatchType, input.IssueCode, input.AmountDifference, input.Note, input.Reason,
+		input.Status, input.MatchType, input.IssueCode, input.AmountDifference,
+		input.AdminTenureMonths, input.AdminFinalAmount, input.Note, input.Reason,
 		input.ConfirmedAt, input.RejectedAt, input.ActorID, input.ActorID,
 	)
 	if err != nil {
@@ -810,15 +1247,17 @@ func (r *Repository) upsertReconciliation(ctx context.Context, tx *sql.Tx, input
 	if !found {
 		return r.insertReconciliation(ctx, tx, input)
 	}
-	if existing.Status == ReconciliationStatusConfirmed {
+	if existing.Status == ReconciliationStatusConfirmed || existing.Status == ReconciliationStatusPartialConfirm {
 		return 0, ErrOrderAlreadyReconciled
 	}
 	_, err = tx.ExecContext(ctx, `
 UPDATE subscription_reconciliations
 SET closing_id = ?, owner_id = ?, status = ?, match_type = ?, issue_code = ?, amount_difference = ?,
+admin_tenure_months = ?, admin_final_amount = ?,
 note = ?, reason = ?, confirmed_at = ?, rejected_at = ?, updated_by_user_id = ?
 WHERE id = ? AND deleted_at IS NULL`,
 		input.ClosingID, input.OwnerID, input.Status, input.MatchType, input.IssueCode, input.AmountDifference,
+		input.AdminTenureMonths, input.AdminFinalAmount,
 		input.Note, input.Reason, input.ConfirmedAt, input.RejectedAt, input.ActorID, existing.ID,
 	)
 	if err != nil {
@@ -960,6 +1399,24 @@ func (r *Repository) updateWalletBalance(ctx context.Context, tx *sql.Tx, wallet
 	return err
 }
 
+func (r *Repository) trimSubscriptionForUpgrade(ctx context.Context, tx *sql.Tx, subscription Subscription, period SubscriptionPeriod, effectiveStart time.Time, usedDays int) error {
+	if _, err := tx.ExecContext(ctx, `
+UPDATE subscriptions
+SET status = ?, active_until = ?, total_duration_days = ?
+WHERE id = ? AND deleted_at IS NULL`,
+		SubscriptionStatusCanceled, effectiveStart, usedDays, subscription.ID,
+	); err != nil {
+		return err
+	}
+	_, err := tx.ExecContext(ctx, `
+UPDATE subscription_periods
+SET end_date = ?, duration_days = ?, status = ?
+WHERE id = ? AND deleted_at IS NULL`,
+		effectiveStart, usedDays, SubscriptionStatusCanceled, period.ID,
+	)
+	return err
+}
+
 func (r *Repository) lockClosing(ctx context.Context, tx *sql.Tx, id int64) (closingSnapshot, error) {
 	var item closingSnapshot
 	err := tx.QueryRowContext(ctx, `
@@ -1036,6 +1493,59 @@ LIMIT 1`, planID, asOf, asOf).Scan(
 		plan.EffectiveTo = effectiveTo.Time.Format("2006-01-02")
 	}
 	return pkg, plan, nil
+}
+
+// ListOrderPromotions returns every promotion stacked onto orderID (Sprint 15a §4b) — the
+// authoritative list; the order row's own promotion_id/promotion_snapshot_json only ever holds
+// the first one, kept for backward compat.
+func (r *Repository) ListOrderPromotions(ctx context.Context, orderID int64) ([]EntityRef, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT p.id, p.code, p.name
+		FROM subscription_order_promotions sop
+		JOIN promotions p ON p.id = sop.promotion_id
+		WHERE sop.order_id = ?
+		ORDER BY sop.id`, orderID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []EntityRef{}
+	for rows.Next() {
+		var item EntityRef
+		if err := rows.Scan(&item.ID, &item.Code, &item.Name); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+// findClosingPromotionSnapshots reads the full stacked promotion list a closing carries
+// (sales_closing_promotions, populated by internal/closing's own multi-promotion support) so an
+// order derived from that closing (req.ClosingID path) can record the same list in
+// subscription_order_promotions for traceability — the discount arithmetic itself needs no
+// recomputation here since closing.AdditionalCharge/FinalAmount are already the correct sum.
+func (r *Repository) findClosingPromotionSnapshots(ctx context.Context, tx *sql.Tx, closingID int64) ([]PromotionSnapshot, error) {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT CAST(promotion_snapshot_json AS CHAR) FROM sales_closing_promotions
+		WHERE closing_id = ? ORDER BY id`, closingID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var snapshots []PromotionSnapshot
+	for rows.Next() {
+		var raw string
+		if err := rows.Scan(&raw); err != nil {
+			return nil, err
+		}
+		var snapshot PromotionSnapshot
+		if err := json.Unmarshal([]byte(raw), &snapshot); err != nil {
+			return nil, err
+		}
+		snapshots = append(snapshots, snapshot)
+	}
+	return snapshots, rows.Err()
 }
 
 func (r *Repository) findEligiblePromotionSnapshot(ctx context.Context, tx *sql.Tx, promotionID, planID int64, asOf time.Time) (PromotionSnapshot, error) {
@@ -1148,6 +1658,14 @@ func (r *Repository) findSubscriptionByOrderID(ctx context.Context, q queryExecu
 	return item, err
 }
 
+func (r *Repository) lockSubscriptionByID(ctx context.Context, tx *sql.Tx, id int64) (Subscription, error) {
+	item, err := scanSubscription(tx.QueryRowContext(ctx, subscriptionSelect()+` WHERE s.id = ? AND s.deleted_at IS NULL LIMIT 1 FOR UPDATE`, id))
+	if err == sql.ErrNoRows {
+		return Subscription{}, ErrNotFound
+	}
+	return item, err
+}
+
 func (r *Repository) findPeriodByIDRaw(ctx context.Context, q queryExecutor, id int64) (SubscriptionPeriod, error) {
 	item, err := scanPeriod(q.QueryRowContext(ctx, periodSelect()+` WHERE spd.id = ? AND spd.deleted_at IS NULL LIMIT 1`, id))
 	if err == sql.ErrNoRows {
@@ -1221,7 +1739,11 @@ so.sales_id, su.name, so.supervisor_id, spvu.name, so.wallet_account_id, so.wall
 so.package_id, sp.code, sp.name, so.plan_id, spl.code, spl.name, so.promotion_id, p.code, p.name,
 CAST(so.package_snapshot_json AS CHAR), CAST(so.plan_snapshot_json AS CHAR), CAST(so.promotion_snapshot_json AS CHAR),
 so.tenure_months, so.duration_days, CAST(so.base_price AS CHAR), CAST(so.discount_amount AS CHAR),
-CAST(so.additional_charge AS CHAR), CAST(so.final_amount AS CHAR), so.currency, so.status, so.idempotency_key,
+CAST(so.additional_charge AS CHAR), CAST(so.final_amount AS CHAR), CAST(so.balance_shortfall_amount AS CHAR),
+so.currency, so.order_type, so.status, so.source_subscription_id, ssrc.code,
+so.upgrade_effective_start_date, so.upgrade_original_end_date, so.upgrade_remaining_days,
+CAST(so.upgrade_daily_price AS CHAR), CAST(so.previous_package_snapshot_json AS CHAR), CAST(so.previous_plan_snapshot_json AS CHAR),
+so.idempotency_key,
 so.external_reference, so.purchased_at, so.subscription_start_date, so.note,
 so.created_by_user_id, cbu.name, so.updated_by_user_id, ubu.name, so.created_at, so.updated_at
 FROM subscription_orders so
@@ -1232,6 +1754,7 @@ LEFT JOIN users spvu ON spvu.id = so.supervisor_id
 LEFT JOIN subscription_packages sp ON sp.id = so.package_id
 LEFT JOIN subscription_plans spl ON spl.id = so.plan_id
 LEFT JOIN promotions p ON p.id = so.promotion_id
+LEFT JOIN subscriptions ssrc ON ssrc.id = so.source_subscription_id AND ssrc.deleted_at IS NULL
 LEFT JOIN users cbu ON cbu.id = so.created_by_user_id
 LEFT JOIN users ubu ON ubu.id = so.updated_by_user_id`
 }
@@ -1259,7 +1782,8 @@ FROM subscription_periods spd`
 func reconciliationSelect() string {
 	return `
 SELECT sr.id, sr.code, sr.order_id, so.code, sr.closing_id, sc.code, sr.owner_id, o.code, o.name,
-sr.status, sr.match_type, sr.issue_code, CAST(sr.amount_difference AS CHAR), sr.note, sr.reason,
+sr.status, sr.match_type, sr.issue_code, CAST(sr.amount_difference AS CHAR),
+sr.admin_tenure_months, CAST(sr.admin_final_amount AS CHAR), sr.note, sr.reason,
 sr.confirmed_at, sr.rejected_at, sr.created_by_user_id, cbu.name, sr.updated_by_user_id, ubu.name,
 sr.created_at, sr.updated_at
 FROM subscription_reconciliations sr
@@ -1298,9 +1822,17 @@ func orderWhere(actor identity.User, params ListParams) (string, []any) {
 		where = append(where, "so.status = ?")
 		args = append(args, params.Status)
 	}
+	if params.OrderType != "" {
+		where = append(where, "so.order_type = ?")
+		args = append(args, params.OrderType)
+	}
 	if params.OwnerID != nil {
 		where = append(where, "so.owner_id = ?")
 		args = append(args, *params.OwnerID)
+	}
+	if params.SourceSubscriptionID != nil {
+		where = append(where, "so.source_subscription_id = ?")
+		args = append(args, *params.SourceSubscriptionID)
 	}
 	if params.ClosingID != nil {
 		where = append(where, "so.closing_id = ?")
@@ -1317,6 +1849,14 @@ func orderWhere(actor identity.User, params ListParams) (string, []any) {
 	if params.PlanID != nil {
 		where = append(where, "so.plan_id = ?")
 		args = append(args, *params.PlanID)
+	}
+	if params.CreatedFrom != nil {
+		where = append(where, "so.created_at >= ?")
+		args = append(args, *params.CreatedFrom)
+	}
+	if params.CreatedTo != nil {
+		where = append(where, "so.created_at < ?")
+		args = append(args, params.CreatedTo.AddDate(0, 0, 1))
 	}
 	if params.PurchasedFrom != nil {
 		where = append(where, "so.purchased_at >= ?")
@@ -1360,6 +1900,14 @@ func subscriptionWhere(actor identity.User, params ListParams) (string, []any) {
 		where = append(where, "s.plan_id = ?")
 		args = append(args, *params.PlanID)
 	}
+	if params.CreatedFrom != nil {
+		where = append(where, "s.created_at >= ?")
+		args = append(args, *params.CreatedFrom)
+	}
+	if params.CreatedTo != nil {
+		where = append(where, "s.created_at < ?")
+		args = append(args, params.CreatedTo.AddDate(0, 0, 1))
+	}
 	if params.ActiveFrom != nil {
 		where = append(where, "s.active_from >= ?")
 		args = append(args, *params.ActiveFrom)
@@ -1398,6 +1946,14 @@ func reconciliationWhere(actor identity.User, params ListParams) (string, []any)
 		where = append(where, "sr.closing_id = ?")
 		args = append(args, *params.ClosingID)
 	}
+	if params.CreatedFrom != nil {
+		where = append(where, "sr.created_at >= ?")
+		args = append(args, *params.CreatedFrom)
+	}
+	if params.CreatedTo != nil {
+		where = append(where, "sr.created_at < ?")
+		args = append(args, params.CreatedTo.AddDate(0, 0, 1))
+	}
 	return strings.Join(where, " AND "), args
 }
 
@@ -1431,6 +1987,14 @@ func issueWhere(actor identity.User, params ListParams) (string, []any) {
 	if params.ClosingID != nil {
 		where = append(where, "ri.closing_id = ?")
 		args = append(args, *params.ClosingID)
+	}
+	if params.CreatedFrom != nil {
+		where = append(where, "ri.created_at >= ?")
+		args = append(args, *params.CreatedFrom)
+	}
+	if params.CreatedTo != nil {
+		where = append(where, "ri.created_at < ?")
+		args = append(args, params.CreatedTo.AddDate(0, 0, 1))
 	}
 	return strings.Join(where, " AND "), args
 }
@@ -1510,7 +2074,7 @@ type scanner interface{ Scan(dest ...any) error }
 
 func scanOrder(row scanner) (SubscriptionOrder, error) {
 	var item SubscriptionOrder
-	err := row.Scan(&item.ID, &item.Code, &item.OwnerID, &item.OwnerCode, &item.OwnerName, &item.OutletID, &item.ClosingID, &item.ClosingCode, &item.SalesID, &item.SalesName, &item.SupervisorID, &item.SupervisorName, &item.WalletAccountID, &item.WalletTransactionID, &item.PackageID, &item.PackageCode, &item.PackageName, &item.PlanID, &item.PlanCode, &item.PlanName, &item.PromotionID, &item.PromotionCode, &item.PromotionName, &item.PackageSnapshotJSON, &item.PlanSnapshotJSON, &item.PromotionSnapshotJSON, &item.TenureMonths, &item.DurationDays, &item.BasePrice, &item.DiscountAmount, &item.AdditionalCharge, &item.FinalAmount, &item.Currency, &item.Status, &item.IdempotencyKey, &item.ExternalReference, &item.PurchasedAt, &item.SubscriptionStartDate, &item.Note, &item.CreatedByUserID, &item.CreatedByName, &item.UpdatedByUserID, &item.UpdatedByName, &item.CreatedAt, &item.UpdatedAt)
+	err := row.Scan(&item.ID, &item.Code, &item.OwnerID, &item.OwnerCode, &item.OwnerName, &item.OutletID, &item.ClosingID, &item.ClosingCode, &item.SalesID, &item.SalesName, &item.SupervisorID, &item.SupervisorName, &item.WalletAccountID, &item.WalletTransactionID, &item.PackageID, &item.PackageCode, &item.PackageName, &item.PlanID, &item.PlanCode, &item.PlanName, &item.PromotionID, &item.PromotionCode, &item.PromotionName, &item.PackageSnapshotJSON, &item.PlanSnapshotJSON, &item.PromotionSnapshotJSON, &item.TenureMonths, &item.DurationDays, &item.BasePrice, &item.DiscountAmount, &item.AdditionalCharge, &item.FinalAmount, &item.BalanceShortfallAmount, &item.Currency, &item.OrderType, &item.Status, &item.SourceSubscriptionID, &item.SourceSubscriptionCode, &item.UpgradeEffectiveStartDate, &item.UpgradeOriginalEndDate, &item.UpgradeRemainingDays, &item.UpgradeDailyPrice, &item.PreviousPackageSnapshotJSON, &item.PreviousPlanSnapshotJSON, &item.IdempotencyKey, &item.ExternalReference, &item.PurchasedAt, &item.SubscriptionStartDate, &item.Note, &item.CreatedByUserID, &item.CreatedByName, &item.UpdatedByUserID, &item.UpdatedByName, &item.CreatedAt, &item.UpdatedAt)
 	return item, err
 }
 
@@ -1528,7 +2092,7 @@ func scanPeriod(row scanner) (SubscriptionPeriod, error) {
 
 func scanReconciliation(row scanner) (Reconciliation, error) {
 	var item Reconciliation
-	err := row.Scan(&item.ID, &item.Code, &item.OrderID, &item.OrderCode, &item.ClosingID, &item.ClosingCode, &item.OwnerID, &item.OwnerCode, &item.OwnerName, &item.Status, &item.MatchType, &item.IssueCode, &item.AmountDifference, &item.Note, &item.Reason, &item.ConfirmedAt, &item.RejectedAt, &item.CreatedByUserID, &item.CreatedByName, &item.UpdatedByUserID, &item.UpdatedByName, &item.CreatedAt, &item.UpdatedAt)
+	err := row.Scan(&item.ID, &item.Code, &item.OrderID, &item.OrderCode, &item.ClosingID, &item.ClosingCode, &item.OwnerID, &item.OwnerCode, &item.OwnerName, &item.Status, &item.MatchType, &item.IssueCode, &item.AmountDifference, &item.AdminTenureMonths, &item.AdminFinalAmount, &item.Note, &item.Reason, &item.ConfirmedAt, &item.RejectedAt, &item.CreatedByUserID, &item.CreatedByName, &item.UpdatedByUserID, &item.UpdatedByName, &item.CreatedAt, &item.UpdatedAt)
 	return item, err
 }
 
@@ -1550,6 +2114,18 @@ func orderIdempotencyKey(req CreateOrderRequest) (string, error) {
 	return "subscription_order:external:" + externalReference, nil
 }
 
+func upgradeIdempotencyKey(req CreateUpgradeRequest) (string, error) {
+	key := strings.TrimSpace(req.IdempotencyKey)
+	if key != "" {
+		return "subscription_upgrade:" + key, nil
+	}
+	externalReference := strings.TrimSpace(req.ExternalReference)
+	if externalReference == "" {
+		return "", ErrIdempotencyRequired
+	}
+	return "subscription_upgrade:external:" + externalReference, nil
+}
+
 func subscriptionStartDate(value string, purchasedAt time.Time) (time.Time, error) {
 	value = strings.TrimSpace(value)
 	if value == "" {
@@ -1562,15 +2138,30 @@ func subscriptionStartDate(value string, purchasedAt time.Time) (time.Time, erro
 	return parsed, nil
 }
 
-func totalDurationDays(baseDays int, promotionSnapshotJSON sql.NullString) int {
+func effectiveUpgradeStartDate(value string, purchasedAt time.Time) (time.Time, error) {
+	startDate, err := subscriptionStartDate(value, purchasedAt)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if startDate.After(dateOnly(purchasedAt)) {
+		return time.Time{}, ErrUpgradeNotAllowed
+	}
+	return startDate, nil
+}
+
+// totalDurationDaysMulti sums baseDays plus every stacked promotion's FREE_DURATION benefit (Sprint
+// 15a §4b) — a single-promotion-JSON lookup would only ever see the FIRST promotion applied and
+// silently miss a FREE_DURATION benefit carried by a second or third one.
+func totalDurationDaysMulti(baseDays int, promotions []PromotionSnapshot) int {
 	total := baseDays
-	if !promotionSnapshotJSON.Valid || promotionSnapshotJSON.String == "" {
-		return total
+	for _, promotion := range promotions {
+		total += freeDurationDays(promotion)
 	}
-	var promotion PromotionSnapshot
-	if err := json.Unmarshal([]byte(promotionSnapshotJSON.String), &promotion); err != nil {
-		return total
-	}
+	return total
+}
+
+func freeDurationDays(promotion PromotionSnapshot) int {
+	total := 0
 	for _, benefit := range promotion.Benefits {
 		if strings.EqualFold(benefit.BenefitType, benefitTypeFreeDuration) && benefit.DurationDays != nil {
 			total += int(*benefit.DurationDays)
@@ -1589,6 +2180,39 @@ func moneyDifference(left, right string) (string, error) {
 		return "", err
 	}
 	return formatCents(leftCents - rightCents), nil
+}
+
+func snapshotsFromOrder(order SubscriptionOrder) (PackageSnapshot, PlanSnapshot, error) {
+	var pkg PackageSnapshot
+	if err := json.Unmarshal([]byte(order.PackageSnapshotJSON), &pkg); err != nil {
+		return PackageSnapshot{}, PlanSnapshot{}, err
+	}
+	var plan PlanSnapshot
+	if err := json.Unmarshal([]byte(order.PlanSnapshotJSON), &plan); err != nil {
+		return PackageSnapshot{}, PlanSnapshot{}, err
+	}
+	return pkg, plan, nil
+}
+
+func businessDateDiff(start, end time.Time) int {
+	return int(dateOnly(end).Sub(dateOnly(start)).Hours() / 24)
+}
+
+func proratedPlanAmount(planPrice string, planDurationDays int, targetDays int) (int64, int64, error) {
+	if planDurationDays <= 0 || targetDays <= 0 {
+		return 0, 0, ErrUpgradeNotAllowed
+	}
+	baseCents, err := parsePositiveMoneyToCents(planPrice)
+	if err != nil {
+		return 0, 0, err
+	}
+	numerator := baseCents * int64(targetDays)
+	prorated := (numerator + int64(planDurationDays/2)) / int64(planDurationDays)
+	if prorated <= 0 {
+		return 0, 0, ErrUpgradeNotAllowed
+	}
+	daily := (baseCents + int64(planDurationDays/2)) / int64(planDurationDays)
+	return prorated, daily, nil
 }
 
 func sameNullableID(left, right sql.NullInt64) bool {
@@ -1613,6 +2237,8 @@ func normalizeAction(value string) string {
 		return ReconciliationStatusConfirmed
 	case "REJECT", ReconciliationStatusRejected:
 		return ReconciliationStatusRejected
+	case ReconciliationStatusPartialConfirm:
+		return ReconciliationStatusPartialConfirm
 	default:
 		return ""
 	}

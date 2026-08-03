@@ -18,8 +18,9 @@ const (
 	StageClosing = "CLOSING"
 	StatusOpen   = "OPEN"
 
-	InteractionCall = "CALL"
-	InteractionChat = "CHAT"
+	InteractionCall     = "CALL"
+	InteractionChat     = "CHAT"
+	InteractionCallChat = "CALL_CHAT"
 
 	ScopeActive  = "ACTIVE"
 	ScopeDeleted = "DELETED"
@@ -150,16 +151,20 @@ type EntityRef struct {
 }
 
 type ClosingResponse struct {
-	ID                 int64              `json:"id"`
-	Code               string             `json:"code"`
-	Lead               *EntityRef         `json:"lead,omitempty"`
-	Owner              *EntityRef         `json:"owner,omitempty"`
-	OutletID           *int64             `json:"outlet_id,omitempty"`
-	Sales              *UserBrief         `json:"sales,omitempty"`
-	Supervisor         *UserBrief         `json:"supervisor,omitempty"`
-	Package            *EntityRef         `json:"package,omitempty"`
-	Plan               *EntityRef         `json:"plan,omitempty"`
+	ID         int64      `json:"id"`
+	Code       string     `json:"code"`
+	Lead       *EntityRef `json:"lead,omitempty"`
+	Owner      *EntityRef `json:"owner,omitempty"`
+	OutletID   *int64     `json:"outlet_id,omitempty"`
+	Sales      *UserBrief `json:"sales,omitempty"`
+	Supervisor *UserBrief `json:"supervisor,omitempty"`
+	Package    *EntityRef `json:"package,omitempty"`
+	Plan       *EntityRef `json:"plan,omitempty"`
+	// Promotion/PromotionSnapshot are the FIRST applied promotion, kept for any old consumer of
+	// this single field. Promotions is the full stacked list (Sprint 15a §4b) — always use this
+	// one for anything beyond simple display, since a closing can now carry more than one.
 	Promotion          *EntityRef         `json:"promotion,omitempty"`
+	Promotions         []EntityRef        `json:"promotions,omitempty"`
 	PackageSnapshot    PackageSnapshot    `json:"package_snapshot"`
 	PlanSnapshot       PlanSnapshot       `json:"plan_snapshot"`
 	PromotionSnapshot  *PromotionSnapshot `json:"promotion_snapshot,omitempty"`
@@ -195,12 +200,18 @@ type ClosingListResponse struct {
 }
 
 type CreateClosingRequest struct {
-	PlanID             int64      `json:"plan_id" binding:"required,min=1"`
-	PromotionID        *int64     `json:"promotion_id"`
+	PlanID      int64  `json:"plan_id" binding:"required,min=1"`
+	PromotionID *int64 `json:"promotion_id"`
+	// PromotionIDs stacks multiple promotions on the same plan (Sprint 15a §4b) — if set, it's
+	// used instead of PromotionID (which stays for backward compat with older single-promotion
+	// clients). Every ID must be eligible for PlanID or the whole request is rejected.
+	PromotionIDs       []int64    `json:"promotion_ids"`
 	DiscountAmount     string     `json:"discount_amount"`
 	UniqueTransferCode *int       `json:"unique_transfer_code"`
 	ClosedAt           *time.Time `json:"closed_at"`
 	InteractionType    string     `json:"interaction_type"`
+	CallStatus         string     `json:"call_status"`
+	ChatStatus         string     `json:"chat_status"`
 	ContactName        string     `json:"contact_name"`
 	ContactPhone       string     `json:"contact_phone"`
 	CustomerResponse   string     `json:"customer_response"`
@@ -230,6 +241,8 @@ type ListParams struct {
 	SupervisorID *int64
 	PlanID       *int64
 	Scope        string
+	CreatedFrom  *time.Time
+	CreatedTo    *time.Time
 	ClosedFrom   *time.Time
 	ClosedTo     *time.Time
 	All          bool

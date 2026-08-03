@@ -64,6 +64,31 @@ func (r *Repository) FindClosingByID(ctx context.Context, actor identity.User, i
 	return item, err
 }
 
+// ListClosingPromotions returns every promotion stacked onto closingID (Sprint 15a §4b) — the
+// authoritative list; the closing row's own promotion_id/promotion_snapshot_json only ever holds
+// the first one, kept for backward compat.
+func (r *Repository) ListClosingPromotions(ctx context.Context, closingID int64) ([]EntityRef, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT p.id, p.code, p.name
+		FROM sales_closing_promotions scp
+		JOIN promotions p ON p.id = scp.promotion_id
+		WHERE scp.closing_id = ?
+		ORDER BY scp.id`, closingID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []EntityRef{}
+	for rows.Next() {
+		var item EntityRef
+		if err := rows.Scan(&item.ID, &item.Code, &item.Name); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
 func (r *Repository) CreateClosing(ctx context.Context, actor identity.User, leadID int64, req CreateClosingRequest) (Closing, error) {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -94,18 +119,35 @@ func (r *Repository) CreateClosing(ctx context.Context, actor identity.User, lea
 		return Closing{}, err
 	}
 
+	promotionIDs := req.PromotionIDs
+	if len(promotionIDs) == 0 && req.PromotionID != nil {
+		promotionIDs = []int64{*req.PromotionID}
+	}
 	additionalCharge := "0.00"
 	var promotionID sql.NullInt64
-	var promotionSnapshot PromotionSnapshot
 	var promotionSnapshotJSON sql.NullString
-	if req.PromotionID != nil {
-		promotionSnapshot, err = r.findEligiblePromotionSnapshot(ctx, tx, *req.PromotionID, req.PlanID, closedAt)
-		if err != nil {
-			return Closing{}, err
+	var promotionSnapshots []PromotionSnapshot
+	if len(promotionIDs) > 0 {
+		additionalChargeCents := int64(0)
+		for _, id := range promotionIDs {
+			snapshot, err := r.findEligiblePromotionSnapshot(ctx, tx, id, req.PlanID, closedAt)
+			if err != nil {
+				return Closing{}, err
+			}
+			cents, err := parseMoneyToCents(snapshot.AdditionalCharge)
+			if err != nil {
+				return Closing{}, err
+			}
+			additionalChargeCents += cents
+			promotionSnapshots = append(promotionSnapshots, snapshot)
 		}
-		additionalCharge = promotionSnapshot.AdditionalCharge
-		promotionID = sql.NullInt64{Int64: promotionSnapshot.ID, Valid: true}
-		promotionBytes, err := json.Marshal(promotionSnapshot)
+		additionalCharge = formatCents(additionalChargeCents)
+		// The legacy singular promotion_id/promotion_snapshot_json columns keep only the FIRST
+		// promotion, for any consumer still reading that single field — sales_closing_promotions
+		// (inserted below, after the closing row exists) is the authoritative full list.
+		first := promotionSnapshots[0]
+		promotionID = sql.NullInt64{Int64: first.ID, Valid: true}
+		promotionBytes, err := json.Marshal(first)
 		if err != nil {
 			return Closing{}, err
 		}
@@ -169,6 +211,19 @@ func (r *Repository) CreateClosing(ctx context.Context, actor identity.User, lea
 	closingID, err := result.LastInsertId()
 	if err != nil {
 		return Closing{}, err
+	}
+	for _, snapshot := range promotionSnapshots {
+		snapshotBytes, err := json.Marshal(snapshot)
+		if err != nil {
+			return Closing{}, err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO sales_closing_promotions (closing_id, promotion_id, promotion_snapshot_json, additional_charge)
+			VALUES (?, ?, ?, ?)`,
+			closingID, snapshot.ID, string(snapshotBytes), snapshot.AdditionalCharge,
+		); err != nil {
+			return Closing{}, err
+		}
 	}
 
 	remark, err := r.resolveClosingRemark(ctx, tx)
@@ -492,23 +547,25 @@ func (r *Repository) resolveClosingRemark(ctx context.Context, tx *sql.Tx) (Rema
 }
 
 func (r *Repository) insertClosingInteraction(ctx context.Context, tx *sql.Tx, actor identity.User, current LeadState, req CreateClosingRequest, closedAt time.Time, closingID int64, remark RemarkReason) error {
-	interactionType, err := normalizeInteractionType(req.InteractionType)
+	interactionType, err := resolveInteractionChannels(req.InteractionType, req.CallStatus, req.ChatStatus)
 	if err != nil {
 		return err
 	}
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO customer_interactions
-			(lead_id, owner_id, outlet_id, sales_id, supervisor_id, interaction_type, interaction_at,
+			(lead_id, owner_id, outlet_id, sales_id, supervisor_id, interaction_type, call_status, chat_status, interaction_at,
 			 contact_name, contact_phone, remark_reason_id, remark_score, remark_code, remark_label,
 			 note, customer_response, stage_before, stage_after, status_before, status_after,
 			 score_before, score_after, created_by_user_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		current.ID,
 		current.OwnerID,
 		current.OutletID,
 		current.ActiveSalesID,
 		current.SupervisorID,
 		interactionType,
+		nullableString(req.CallStatus),
+		nullableString(req.ChatStatus),
 		closedAt,
 		nullableString(req.ContactName),
 		nullableString(req.ContactPhone),
@@ -632,6 +689,14 @@ func closingWhere(actor identity.User, params ListParams) (string, []any) {
 	if params.PlanID != nil {
 		where = append(where, "sc.plan_id = ?")
 		args = append(args, *params.PlanID)
+	}
+	if params.CreatedFrom != nil {
+		where = append(where, "sc.created_at >= ?")
+		args = append(args, *params.CreatedFrom)
+	}
+	if params.CreatedTo != nil {
+		where = append(where, "sc.created_at < ?")
+		args = append(args, params.CreatedTo.AddDate(0, 0, 1))
 	}
 	if params.ClosedFrom != nil {
 		where = append(where, "sc.closed_at >= ?")

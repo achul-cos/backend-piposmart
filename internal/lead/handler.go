@@ -2,6 +2,7 @@ package lead
 
 import (
 	"errors"
+	"io"
 	"net/http"
 	"strconv"
 
@@ -178,7 +179,9 @@ func (h *Handler) release(c *gin.Context) {
 		return
 	}
 	var req ReleaseRequest
-	_ = c.ShouldBindJSON(&req)
+	if !bindOptionalJSON(c, &req) {
+		return
+	}
 	response, err := h.service.Release(c.Request.Context(), user, leadID, req)
 	if err != nil {
 		writeError(c, err)
@@ -208,7 +211,9 @@ func (h *Handler) markInvalid(c *gin.Context) {
 		return
 	}
 	var req MarkInvalidRequest
-	_ = c.ShouldBindJSON(&req)
+	if !bindOptionalJSON(c, &req) {
+		return
+	}
 	response, err := h.service.MarkInvalid(c.Request.Context(), user, leadID, req)
 	if err != nil {
 		writeError(c, err)
@@ -266,11 +271,34 @@ func listParams(c *gin.Context) (ListParams, bool) {
 	}
 	params.FollowUpFrom = followUpFrom
 	params.FollowUpTo = followUpTo
+	createdFrom, err := parseDate(c.Query("created_from"))
+	if err != nil {
+		httpx.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", "created_from harus format YYYY-MM-DD", nil)
+		return ListParams{}, false
+	}
+	createdTo, err := parseDate(c.Query("created_to"))
+	if err != nil {
+		httpx.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", "created_to harus format YYYY-MM-DD", nil)
+		return ListParams{}, false
+	}
+	params.CreatedFrom = createdFrom
+	params.CreatedTo = createdTo
 	return params, true
 }
 
 func bindJSON(c *gin.Context, target any) bool {
 	if err := c.ShouldBindJSON(target); err != nil {
+		httpx.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", "Payload request tidak valid", gin.H{"error": err.Error()})
+		return false
+	}
+	return true
+}
+
+func bindOptionalJSON(c *gin.Context, target any) bool {
+	if err := c.ShouldBindJSON(target); err != nil {
+		if errors.Is(err, io.EOF) {
+			return true
+		}
 		httpx.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", "Payload request tidak valid", gin.H{"error": err.Error()})
 		return false
 	}

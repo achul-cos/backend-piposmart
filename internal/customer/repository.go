@@ -61,9 +61,9 @@ func (r *Repository) CreateOwners(ctx context.Context, actor Actor, requests []C
 }
 
 func (r *Repository) createOwner(ctx context.Context, q queryExecutor, actor Actor, req CreateOwnerRequest, normalizedPhone string) (Owner, error) {
-	result, err := q.ExecContext(ctx, `
-		INSERT INTO owners (code, name, phone, email, brand_name, province, city, address, status)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE')`,
+	query := `
+		INSERT INTO owners (code, name, phone, email, brand_name, province, city, address, status`
+	args := []any{
 		trim(req.Code),
 		trim(req.Name),
 		nullableString(normalizedPhone),
@@ -72,7 +72,15 @@ func (r *Repository) createOwner(ctx context.Context, q queryExecutor, actor Act
 		nullableString(req.Province),
 		nullableString(req.City),
 		nullableString(req.Address),
-	)
+	}
+	values := `) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE'`
+	if req.CreatedAt != nil {
+		query += `, created_at`
+		values += `, ?`
+		args = append(args, req.CreatedAt.UTC())
+	}
+	query += values + `)`
+	result, err := q.ExecContext(ctx, query, args...)
 	if err != nil {
 		return Owner{}, mapDuplicateError(err)
 	}
@@ -354,9 +362,9 @@ func (r *Repository) CreateOutlets(ctx context.Context, ownerID int64, requests 
 }
 
 func (r *Repository) createOutlet(ctx context.Context, q queryExecutor, ownerID int64, req CreateOutletRequest, normalizedPhone string) (Outlet, error) {
-	result, err := q.ExecContext(ctx, `
-		INSERT INTO outlets (owner_id, code, name, phone, province, city, address, status)
-		VALUES (?, ?, ?, ?, ?, ?, ?, 'ACTIVE')`,
+	query := `
+		INSERT INTO outlets (owner_id, code, name, phone, province, city, address, status`
+	args := []any{
 		ownerID,
 		trim(req.Code),
 		trim(req.Name),
@@ -364,7 +372,15 @@ func (r *Repository) createOutlet(ctx context.Context, q queryExecutor, ownerID 
 		nullableString(req.Province),
 		nullableString(req.City),
 		nullableString(req.Address),
-	)
+	}
+	values := `) VALUES (?, ?, ?, ?, ?, ?, ?, 'ACTIVE'`
+	if req.CreatedAt != nil {
+		query += `, created_at`
+		values += `, ?`
+		args = append(args, req.CreatedAt.UTC())
+	}
+	query += values + `)`
+	result, err := q.ExecContext(ctx, query, args...)
 	if err != nil {
 		return Outlet{}, mapDuplicateError(err)
 	}
@@ -722,13 +738,6 @@ func scanOutletOverview(row scanner) (OutletOverview, error) {
 		&item.OwnerPhone,
 		&item.OwnerEmail,
 		&item.OwnerBrandName,
-		&item.AccountCode,
-		&item.WalletID,
-		&item.WalletBalance,
-		&item.WalletLedgerBalance,
-		&item.WalletStatus,
-		&item.WalletCreatedAt,
-		&item.WalletUpdatedAt,
 		&item.Code,
 		&item.Name,
 		&item.Phone,
@@ -744,6 +753,70 @@ func scanOutletOverview(row scanner) (OutletOverview, error) {
 		&item.CreatedAt,
 		&item.UpdatedAt,
 	)
+	return item, err
+}
+
+// ownerAgeThreshold is the NEW/OLD cutoff for OwnerOverview.AgeStatus. 90 days chosen provisionally
+// (flagged to the user as unconfirmed in the Sprint 15a plan) — distinct from the 60-day EXPIRED
+// threshold in outlet_subscription_status.go, which answers a different question (subscription
+// lapse, not account age).
+const ownerAgeThresholdDays = 90
+
+func scanOwnerOverview(row scanner) (OwnerOverview, error) {
+	var item OwnerOverview
+	err := row.Scan(
+		&item.ID,
+		&item.Code,
+		&item.Name,
+		&item.Phone,
+		&item.Email,
+		&item.BrandName,
+		&item.Province,
+		&item.City,
+		&item.Address,
+		&item.Status,
+		&item.AccountCode,
+		&item.WalletID,
+		&item.WalletBalance,
+		&item.WalletLedgerBalance,
+		&item.WalletStatus,
+		&item.WalletCreatedAt,
+		&item.WalletUpdatedAt,
+		&item.TotalTransferred,
+		&item.TotalTopup,
+		&item.TotalSpent,
+		&item.OutletCount,
+		&item.SubscribedOutletCount,
+		&item.CreatedAt,
+		&item.UpdatedAt,
+	)
+	if err != nil {
+		return OwnerOverview{}, err
+	}
+	if time.Since(item.CreatedAt) > ownerAgeThresholdDays*24*time.Hour {
+		item.AgeStatus = OwnerAgeOld
+	} else {
+		item.AgeStatus = OwnerAgeNew
+	}
+	if item.SubscribedOutletCount > 0 {
+		item.SubscriptionStatus = OwnerSubscriptionStatusSubscribed
+	} else {
+		item.SubscriptionStatus = OwnerSubscriptionStatusNotSubscribed
+	}
+	return item, nil
+}
+
+// GetOwnerOverview returns the Owner-level rollup (wallet + transfer/topup/spent totals + age and
+// subscription status). actor visibility rules mirror ListOwners (ownerVisibilityWhere).
+func (r *Repository) GetOwnerOverview(ctx context.Context, actor Actor, ownerID int64) (OwnerOverview, error) {
+	visibility, args := ownerVisibilityWhere(actor)
+	args = append([]any{ownerID}, args...)
+	item, err := scanOwnerOverview(r.db.QueryRowContext(ctx, ownerOverviewSelect()+`
+		WHERE o.id = ? AND o.deleted_at IS NULL AND `+visibility+`
+		LIMIT 1`, args...))
+	if err == sql.ErrNoRows {
+		return OwnerOverview{}, ErrNotFound
+	}
 	return item, err
 }
 
@@ -781,6 +854,14 @@ func ownerWhere(actor Actor, params ListParams) (string, []any) {
 	if params.City != "" {
 		where = append(where, "o.city LIKE ?")
 		args = append(args, like(params.City))
+	}
+	if params.CreatedFrom != nil {
+		where = append(where, "o.created_at >= ?")
+		args = append(args, *params.CreatedFrom)
+	}
+	if params.CreatedTo != nil {
+		where = append(where, "o.created_at < ?")
+		args = append(args, params.CreatedTo.AddDate(0, 0, 1))
 	}
 	return strings.Join(where, " AND "), args
 }
@@ -843,6 +924,14 @@ func outletWhere(ownerID int64, params ListParams) (string, []any) {
 		where = append(where, "ot.city LIKE ?")
 		args = append(args, like(params.City))
 	}
+	if params.CreatedFrom != nil {
+		where = append(where, "ot.created_at >= ?")
+		args = append(args, *params.CreatedFrom)
+	}
+	if params.CreatedTo != nil {
+		where = append(where, "ot.created_at < ?")
+		args = append(args, params.CreatedTo.AddDate(0, 0, 1))
+	}
 	return strings.Join(where, " AND "), args
 }
 
@@ -885,6 +974,14 @@ func globalOutletWhere(actor Actor, params ListParams) (string, []any) {
 		where = append(where, "ot.city LIKE ?")
 		args = append(args, like(params.City))
 	}
+	if params.CreatedFrom != nil {
+		where = append(where, "ot.created_at >= ?")
+		args = append(args, *params.CreatedFrom)
+	}
+	if params.CreatedTo != nil {
+		where = append(where, "ot.created_at < ?")
+		args = append(args, params.CreatedTo.AddDate(0, 0, 1))
+	}
 	if params.SubscriptionStatus != "" || params.SubscriptionMonth != "" {
 		subQuery := []string{"s.outlet_id = ot.id", "s.deleted_at IS NULL"}
 		subArgs := []any{}
@@ -924,17 +1021,6 @@ func outletOverviewSelect() string {
 			o.phone,
 			o.email,
 			o.brand_name,
-			COALESCE(wa.account_code, CONCAT('WALLET-OWNER-', LPAD(COALESCE(ot.owner_id, 0), 6, '0'))) AS account_code,
-			COALESCE(wa.id, 0) AS wallet_id,
-			COALESCE(CAST(wa.balance AS CHAR), '0.00') AS wallet_balance,
-			COALESCE(CAST((
-				SELECT COALESCE(SUM(CASE WHEN wt.direction = 'CREDIT' THEN wt.amount ELSE -wt.amount END), 0)
-				FROM wallet_transactions wt
-				WHERE wt.wallet_account_id = wa.id AND wt.deleted_at IS NULL
-			) AS CHAR), '0.00') AS wallet_ledger_balance,
-			COALESCE(wa.status, CASE WHEN ot.owner_id IS NULL THEN 'UNAVAILABLE' ELSE 'ACTIVE' END) AS wallet_status,
-			COALESCE(wa.created_at, o.created_at, ot.created_at) AS wallet_created_at,
-			COALESCE(wa.updated_at, o.updated_at, ot.updated_at) AS wallet_updated_at,
 			ot.code,
 			ot.name,
 			ot.phone,
@@ -976,8 +1062,71 @@ func outletOverviewSelect() string {
 			ot.created_at,
 			ot.updated_at
 		FROM outlets ot
-		LEFT JOIN owners o ON o.id = ot.owner_id
-		LEFT JOIN wallet_accounts wa ON wa.owner_id = ot.owner_id AND wa.deleted_at IS NULL`
+		LEFT JOIN owners o ON o.id = ot.owner_id`
+}
+
+// ownerOverviewSelect is the Owner-level analog of outletOverviewSelect: wallet balance and its
+// rollups (transferred/topup/spent) live here now — they used to be duplicated per outlet via a
+// JOIN on wa.owner_id = ot.owner_id, which showed the identical number on every outlet an owner
+// had. That JOIN is gone from outletOverviewSelect; this is the only place wallet data is surfaced.
+//
+// total_topup filters on wp.status = 'ACCEPTED' (Sprint 15a §2's top-up lifecycle: a top-up only
+// credits the wallet, and only counts toward this rollup, once ACCEPTED — PENDING/REJECTED/EXPIRED
+// top-ups never touched balance in the first place).
+func ownerOverviewSelect() string {
+	return `
+		SELECT
+			o.id,
+			o.code,
+			o.name,
+			o.phone,
+			o.email,
+			o.brand_name,
+			o.province,
+			o.city,
+			o.address,
+			o.status,
+			COALESCE(wa.account_code, CONCAT('WALLET-OWNER-', LPAD(o.id, 6, '0'))) AS account_code,
+			COALESCE(wa.id, 0) AS wallet_id,
+			COALESCE(CAST(wa.balance AS CHAR), '0.00') AS wallet_balance,
+			COALESCE(CAST((
+				SELECT COALESCE(SUM(CASE WHEN wt.direction = 'CREDIT' THEN wt.amount ELSE -wt.amount END), 0)
+				FROM wallet_transactions wt
+				WHERE wt.wallet_account_id = wa.id AND wt.deleted_at IS NULL
+			) AS CHAR), '0.00') AS wallet_ledger_balance,
+			COALESCE(wa.status, 'UNAVAILABLE') AS wallet_status,
+			COALESCE(wa.created_at, o.created_at) AS wallet_created_at,
+			COALESCE(wa.updated_at, o.updated_at) AS wallet_updated_at,
+			COALESCE(CAST((
+				SELECT COALESCE(SUM(ot2.amount), 0)
+				FROM owner_transfers ot2
+				WHERE ot2.owner_id = o.id AND ot2.match_status = 'MATCHED'
+			) AS CHAR), '0.00') AS total_transferred,
+			COALESCE(CAST((
+				SELECT COALESCE(SUM(wp.amount), 0)
+				FROM wallet_payments wp
+				WHERE wp.owner_id = o.id AND wp.payment_type = 'TOPUP' AND wp.status = 'ACCEPTED'
+			) AS CHAR), '0.00') AS total_topup,
+			COALESCE(CAST((
+				SELECT COALESCE(SUM(wt.amount), 0)
+				FROM wallet_transactions wt
+				WHERE wt.wallet_account_id = wa.id AND wt.direction = 'DEBIT' AND wt.deleted_at IS NULL
+			) AS CHAR), '0.00') AS total_spent,
+			(
+				SELECT COUNT(*)
+				FROM outlets ot3
+				WHERE ot3.owner_id = o.id AND ot3.deleted_at IS NULL
+			) AS outlet_count,
+			(
+				SELECT COUNT(DISTINCT s.outlet_id)
+				FROM subscriptions s
+				JOIN outlets ot4 ON ot4.id = s.outlet_id
+				WHERE ot4.owner_id = o.id AND s.deleted_at IS NULL AND s.status = 'ACTIVE'
+			) AS subscribed_outlet_count,
+			o.created_at,
+			o.updated_at
+		FROM owners o
+		LEFT JOIN wallet_accounts wa ON wa.owner_id = o.id AND wa.deleted_at IS NULL`
 }
 
 func ownerOrderBy(sort string) (string, error) {

@@ -17,4 +17,6 @@ var (
 	ErrInvalidPromotion       = errors.New("promo tidak eligible untuk plan yang dipilih")
 	ErrClosingMismatch        = errors.New("closing tidak sesuai dengan order atau owner")
 	ErrOrderAlreadyReconciled = errors.New("order sudah direkonsiliasi")
+	ErrSubscriptionNotActive  = errors.New("subscription tidak aktif untuk di-upgrade")
+	ErrUpgradeNotAllowed      = errors.New("upgrade paket tidak valid")
 )

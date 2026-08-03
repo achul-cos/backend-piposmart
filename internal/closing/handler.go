@@ -3,6 +3,7 @@ package closing
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"strconv"
 
@@ -127,7 +128,9 @@ func (h *Handler) updateStatus(c *gin.Context, action statusAction) {
 		return
 	}
 	var req UpdateClosingStatusRequest
-	_ = c.ShouldBindJSON(&req)
+	if !bindOptionalJSON(c, &req) {
+		return
+	}
 	response, err := action(c.Request.Context(), user, id, req)
 	if err != nil {
 		writeError(c, err)
@@ -219,6 +222,16 @@ func listParams(c *gin.Context) (ListParams, bool) {
 		httpx.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", "closed_to harus format YYYY-MM-DD", nil)
 		return ListParams{}, false
 	}
+	params.CreatedFrom, err = parseDate(c.Query("created_from"))
+	if err != nil {
+		httpx.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", "created_from harus format YYYY-MM-DD", nil)
+		return ListParams{}, false
+	}
+	params.CreatedTo, err = parseDate(c.Query("created_to"))
+	if err != nil {
+		httpx.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", "created_to harus format YYYY-MM-DD", nil)
+		return ListParams{}, false
+	}
 	return params, true
 }
 
@@ -247,6 +260,17 @@ func parsePathID(c *gin.Context, name, message string) (int64, bool) {
 
 func bindJSON(c *gin.Context, target any) bool {
 	if err := c.ShouldBindJSON(target); err != nil {
+		httpx.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", "Payload request tidak valid", gin.H{"error": err.Error()})
+		return false
+	}
+	return true
+}
+
+func bindOptionalJSON(c *gin.Context, target any) bool {
+	if err := c.ShouldBindJSON(target); err != nil {
+		if errors.Is(err, io.EOF) {
+			return true
+		}
 		httpx.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", "Payload request tidak valid", gin.H{"error": err.Error()})
 		return false
 	}

@@ -6,11 +6,12 @@ import (
 	"net/http"
 	"time"
 
-	"backend_crm_piposmart/internal/analytics"
 	"backend_crm_piposmart/internal/activity"
+	"backend_crm_piposmart/internal/analytics"
 	"backend_crm_piposmart/internal/catalog"
 	"backend_crm_piposmart/internal/closing"
 	"backend_crm_piposmart/internal/customer"
+	"backend_crm_piposmart/internal/discussion"
 	"backend_crm_piposmart/internal/identity"
 	"backend_crm_piposmart/internal/importing"
 	"backend_crm_piposmart/internal/kpi"
@@ -19,8 +20,10 @@ import (
 	"backend_crm_piposmart/internal/platform/config"
 	"backend_crm_piposmart/internal/platform/httpx"
 	"backend_crm_piposmart/internal/platform/jobqueue"
+	"backend_crm_piposmart/internal/reporting"
 	"backend_crm_piposmart/internal/subscription"
 	"backend_crm_piposmart/internal/target"
+	"backend_crm_piposmart/internal/transfer"
 	"backend_crm_piposmart/internal/wallet"
 
 	"database/sql"
@@ -143,6 +146,12 @@ func NewRouter(cfg config.Config, logger *slog.Logger, connection Connection) *g
 		walletRoutes.Use(identity.AuthMiddleware(identityService))
 		wallet.NewHandler(walletService).RegisterRoutes(walletRoutes)
 
+		transferRepository := transfer.NewRepository(connection.SQLDB())
+		transferService := transfer.NewService(transferRepository, walletService)
+		transferRoutes := api.Group("")
+		transferRoutes.Use(identity.AuthMiddleware(identityService))
+		transfer.NewHandler(transferService).RegisterRoutes(transferRoutes)
+
 		subscriptionRepository := subscription.NewRepository(connection.SQLDB())
 		subscriptionService := subscription.NewService(subscriptionRepository)
 		subscriptionRoutes := api.Group("")
@@ -179,6 +188,18 @@ func NewRouter(cfg config.Config, logger *slog.Logger, connection Connection) *g
 		analyticsRoutes := api.Group("")
 		analyticsRoutes.Use(identity.AuthMiddleware(identityService))
 		analytics.NewHandler(analyticsService).RegisterRoutes(analyticsRoutes)
+
+		reportingRepository := reporting.NewRepository(connection.SQLDB())
+		reportingService := reporting.NewService(reportingRepository, jobRepository, cfg.Storage)
+		reportingRoutes := api.Group("")
+		reportingRoutes.Use(identity.AuthMiddleware(identityService))
+		reporting.NewHandler(reportingService).RegisterRoutes(reportingRoutes)
+
+		discussionRepository := discussion.NewRepository(connection.SQLDB())
+		discussionService := discussion.NewService(discussionRepository)
+		discussionRoutes := api.Group("")
+		discussionRoutes.Use(identity.AuthMiddleware(identityService))
+		discussion.NewHandler(discussionService).RegisterRoutes(discussionRoutes)
 	}
 
 	router.NoRoute(func(c *gin.Context) {

@@ -12,8 +12,19 @@ const (
 
 	WalletStatusActive = "ACTIVE"
 
-	PaymentTypeTopup  = "TOPUP"
-	PaymentStatusPaid = "PAID"
+	PaymentTypeTopup = "TOPUP"
+
+	// Sprint 15a §2: a top-up starts PENDING (no balance/ledger effect yet — the transfer hasn't
+	// been verified), auto-EXPIREs after its 24h session window if left untouched, and only
+	// credits the wallet once ACCEPTED (by admin, or via Transfer suggest/confirm matching).
+	PaymentStatusPending  = "PENDING"
+	PaymentStatusRejected = "REJECTED"
+	PaymentStatusExpired  = "EXPIRED"
+	PaymentStatusAccepted = "ACCEPTED"
+
+	// topupSessionDuration is the 24h window a PENDING top-up has before ExpireStaleTopups moves
+	// it to EXPIRED.
+	topupSessionDuration = 24 * time.Hour
 
 	DirectionCredit = "CREDIT"
 	DirectionDebit  = "DEBIT"
@@ -44,25 +55,28 @@ type WalletAccount struct {
 }
 
 type WalletPayment struct {
-	ID                int64
-	Code              string
-	OwnerID           sql.NullInt64
-	OwnerCode         sql.NullString
-	OwnerName         sql.NullString
-	WalletAccountID   sql.NullInt64
-	PaymentType       string
-	PaymentChannel    string
-	ExternalReference sql.NullString
-	IdempotencyKey    string
-	Amount            string
-	Currency          string
-	Status            string
-	PaidAt            sql.NullTime
-	Note              sql.NullString
-	CreatedByUserID   sql.NullInt64
-	CreatedByName     sql.NullString
-	CreatedAt         time.Time
-	UpdatedAt         time.Time
+	ID                   int64
+	Code                 string
+	OwnerID              sql.NullInt64
+	OwnerCode            sql.NullString
+	OwnerName            sql.NullString
+	WalletAccountID      sql.NullInt64
+	PaymentType          string
+	PaymentChannel       string
+	ExternalReference    sql.NullString
+	IdempotencyKey       string
+	Amount               string
+	Currency             string
+	Status               string
+	PaidAt               sql.NullTime
+	SessionExpiresAt     sql.NullTime
+	TransferDateOverride sql.NullTime
+	UniqueCode           sql.NullString
+	Note                 sql.NullString
+	CreatedByUserID      sql.NullInt64
+	CreatedByName        sql.NullString
+	CreatedAt            time.Time
+	UpdatedAt            time.Time
 }
 
 type WalletTransaction struct {
@@ -115,22 +129,28 @@ type WalletAccountResponse struct {
 }
 
 type WalletPaymentResponse struct {
-	ID                int64      `json:"id"`
-	Code              string     `json:"code"`
-	Owner             *OwnerRef  `json:"owner,omitempty"`
-	WalletAccountID   *int64     `json:"wallet_account_id,omitempty"`
-	PaymentType       string     `json:"payment_type"`
-	PaymentChannel    string     `json:"payment_channel"`
-	ExternalReference string     `json:"external_reference,omitempty"`
-	IdempotencyKey    string     `json:"idempotency_key"`
-	Amount            string     `json:"amount"`
-	Currency          string     `json:"currency"`
-	Status            string     `json:"status"`
-	PaidAt            *time.Time `json:"paid_at,omitempty"`
-	Note              string     `json:"note,omitempty"`
-	CreatedBy         *UserBrief `json:"created_by,omitempty"`
-	CreatedAt         time.Time  `json:"created_at"`
-	UpdatedAt         time.Time  `json:"updated_at"`
+	ID                   int64      `json:"id"`
+	Code                 string     `json:"code"`
+	Owner                *OwnerRef  `json:"owner,omitempty"`
+	WalletAccountID      *int64     `json:"wallet_account_id,omitempty"`
+	PaymentType          string     `json:"payment_type"`
+	PaymentChannel       string     `json:"payment_channel"`
+	ExternalReference    string     `json:"external_reference,omitempty"`
+	IdempotencyKey       string     `json:"idempotency_key"`
+	Amount               string     `json:"amount"`
+	Currency             string     `json:"currency"`
+	Status               string     `json:"status"`
+	PaidAt               *time.Time `json:"paid_at,omitempty"`
+	SessionExpiresAt     *time.Time `json:"session_expires_at,omitempty"`
+	TransferDateOverride *time.Time `json:"transfer_date_override,omitempty"`
+	// EffectiveTransferDate is TransferDateOverride when the admin has corrected it (e.g. the
+	// receipt shows yesterday but the system recorded it in real time), falling back to PaidAt.
+	EffectiveTransferDate *time.Time `json:"effective_transfer_date,omitempty"`
+	UniqueCode            string     `json:"unique_code,omitempty"`
+	Note                  string     `json:"note,omitempty"`
+	CreatedBy             *UserBrief `json:"created_by,omitempty"`
+	CreatedAt             time.Time  `json:"created_at"`
+	UpdatedAt             time.Time  `json:"updated_at"`
 }
 
 type WalletTransactionResponse struct {
@@ -155,11 +175,13 @@ type WalletTransactionResponse struct {
 	CreatedAt         time.Time  `json:"created_at"`
 }
 
+// Transaction is nil while the top-up is PENDING — no ledger entry exists yet, since the wallet
+// is only credited once the top-up is ACCEPTED (see AcceptTopup).
 type TopupResponse struct {
-	Payment     WalletPaymentResponse     `json:"payment"`
-	Transaction WalletTransactionResponse `json:"transaction"`
-	Wallet      WalletAccountResponse     `json:"wallet"`
-	Idempotent  bool                      `json:"idempotent"`
+	Payment     WalletPaymentResponse      `json:"payment"`
+	Transaction *WalletTransactionResponse `json:"transaction,omitempty"`
+	Wallet      WalletAccountResponse      `json:"wallet"`
+	Idempotent  bool                       `json:"idempotent"`
 }
 
 type PaginationMeta struct {
@@ -192,6 +214,25 @@ type CreateTopupRequest struct {
 	Note              string     `json:"note"`
 }
 
+// AcceptTopupRequest confirms a PENDING top-up as a genuine, matched transfer. UniqueCode
+// records the trailing digits a manual-transfer amount carries beyond the round requested
+// amount (e.g. request Rp 34.000, owner transfers Rp 34.123 — the 123 is recorded here but never
+// counted as revenue; the wallet is always credited req.Amount, the round number).
+// TransferDateOverride lets admin correct the transfer date from the payment proof/receipt when
+// it differs from when the system recorded the top-up.
+type AcceptTopupRequest struct {
+	UniqueCode           string     `json:"unique_code"`
+	TransferDateOverride *time.Time `json:"transfer_date_override"`
+}
+
+type RejectTopupRequest struct {
+	Note string `json:"note"`
+}
+
+type SetTransferDateOverrideRequest struct {
+	TransferDate time.Time `json:"transfer_date" binding:"required"`
+}
+
 type CreateWalletTransactionRequest struct {
 	Amount            string     `json:"amount" binding:"required"`
 	Direction         string     `json:"direction"`
@@ -214,6 +255,8 @@ type ListParams struct {
 	Channel      string
 	Direction    string
 	Type         string
+	CreatedFrom  *time.Time
+	CreatedTo    *time.Time
 	PaidFrom     *time.Time
 	PaidTo       *time.Time
 	OccurredFrom *time.Time
@@ -239,23 +282,31 @@ func NewWalletAccountResponse(item WalletAccount) WalletAccountResponse {
 }
 
 func NewWalletPaymentResponse(item WalletPayment) WalletPaymentResponse {
+	effective := nullableTimePtr(item.TransferDateOverride)
+	if effective == nil {
+		effective = nullableTimePtr(item.PaidAt)
+	}
 	return WalletPaymentResponse{
-		ID:                item.ID,
-		Code:              item.Code,
-		Owner:             nullableOwner(item.OwnerID, item.OwnerCode, item.OwnerName),
-		WalletAccountID:   nullableInt64Ptr(item.WalletAccountID),
-		PaymentType:       item.PaymentType,
-		PaymentChannel:    item.PaymentChannel,
-		ExternalReference: item.ExternalReference.String,
-		IdempotencyKey:    item.IdempotencyKey,
-		Amount:            item.Amount,
-		Currency:          item.Currency,
-		Status:            item.Status,
-		PaidAt:            nullableTimePtr(item.PaidAt),
-		Note:              item.Note.String,
-		CreatedBy:         nullableUser(item.CreatedByUserID, item.CreatedByName, ""),
-		CreatedAt:         item.CreatedAt,
-		UpdatedAt:         item.UpdatedAt,
+		ID:                    item.ID,
+		Code:                  item.Code,
+		Owner:                 nullableOwner(item.OwnerID, item.OwnerCode, item.OwnerName),
+		WalletAccountID:       nullableInt64Ptr(item.WalletAccountID),
+		PaymentType:           item.PaymentType,
+		PaymentChannel:        item.PaymentChannel,
+		ExternalReference:     item.ExternalReference.String,
+		IdempotencyKey:        item.IdempotencyKey,
+		Amount:                item.Amount,
+		Currency:              item.Currency,
+		Status:                item.Status,
+		PaidAt:                nullableTimePtr(item.PaidAt),
+		SessionExpiresAt:      nullableTimePtr(item.SessionExpiresAt),
+		TransferDateOverride:  nullableTimePtr(item.TransferDateOverride),
+		EffectiveTransferDate: effective,
+		UniqueCode:            item.UniqueCode.String,
+		Note:                  item.Note.String,
+		CreatedBy:             nullableUser(item.CreatedByUserID, item.CreatedByName, ""),
+		CreatedAt:             item.CreatedAt,
+		UpdatedAt:             item.UpdatedAt,
 	}
 }
 

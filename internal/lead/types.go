@@ -163,6 +163,7 @@ type CreateLeadRequest struct {
 	OutletID        *int64 `json:"outlet_id"`
 	SourceType      string `json:"source_type"`
 	SourceReference string `json:"source_reference"`
+	CreatedAt       *time.Time `json:"created_at,omitempty"`
 }
 
 type AssignSupervisorRequest struct {
@@ -210,6 +211,8 @@ type ListParams struct {
 	Score        *int64
 	SupervisorID *int64
 	SalesID      *int64
+	CreatedFrom  *time.Time
+	CreatedTo    *time.Time
 	FollowUpFrom *time.Time
 	FollowUpTo   *time.Time
 	All          bool

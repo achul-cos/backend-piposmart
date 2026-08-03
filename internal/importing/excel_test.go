@@ -18,6 +18,21 @@ var nonRegisterHeaderRow = []string{
 	"Created Date Kode OTP", "Status Nomor Telepon", "Status FU (Sales)", "Status Akun",
 	"Tanggal Follow UP", "Remarks", "Status FU OTP (ADM)",
 }
+var monthlyActiveTitleRow = []string{
+	"", "", "", "", " ", "", "", "", "berlangganan maret", "", "", "", "", "", "",
+	"2024", "", "", "", "", "", "", "", "", "", "", "", "Berlangganan 2025",
+}
+var monthlyActiveHeaderRow = []string{
+	"46548", "Share Ke CMO", "", "Kode Owner", "Nama Owner ", "No. Hp Owner", "Nama Brand/Outlet",
+	"No Hp & Nama PIC Kelolaan", "Kota", "Wilayah", "Tahun", "", "Nama Brand", "Nama Outlet",
+	"Des", "Jan", "Feb", "Mar", "Apr ", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des", "Jan",
+}
+var bonusMitraHeaderRow = []string{
+	"No", "MITRA", "Kode Owner", "Nama ", "Nama Brand / Outlet", "Kode Owner", "Nama Owner",
+	"Nama Brand /Outlet", "Bukti Fu", "Kategory Mitra", "Paket Langganan", "PIC", "Link Bukti Follow Up",
+	"Date Top Up", "Date of Renewal\t", "Status", "Tanggal Pencairan 1", "Tanggal Pencairan 2",
+	"Status Pencairan Komisi Mitra", "CMO",
+}
 
 func TestDetectProfile_OwnerOutlet(t *testing.T) {
 	rows := [][]string{ownerOutletHeaderRow, {"1", "46204", "Wilma", "Akun Baru"}}
@@ -193,5 +208,214 @@ func TestJoinNonEmpty(t *testing.T) {
 	want := "Jl. Merdeka, Kel. Sail"
 	if got != want {
 		t.Fatalf("joinNonEmpty = %q, want %q", got, want)
+	}
+}
+
+func TestInferMonthlyActiveColumns(t *testing.T) {
+	idx := buildHeaderIndex(monthlyActiveHeaderRow)
+	cols, err := inferMonthlyActiveColumns([][]string{monthlyActiveTitleRow, monthlyActiveHeaderRow}, 1, idx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(cols) < 14 {
+		t.Fatalf("expected many monthly columns, got %d", len(cols))
+	}
+	if cols[0].Year != 2023 || cols[0].Month != 12 {
+		t.Fatalf("first monthly column = %04d-%02d, want 2023-12", cols[0].Year, cols[0].Month)
+	}
+	if cols[1].Year != 2024 || cols[1].Month != 1 {
+		t.Fatalf("second monthly column = %04d-%02d, want 2024-01", cols[1].Year, cols[1].Month)
+	}
+}
+
+func TestParseMonthlyActiveRow(t *testing.T) {
+	idx := buildHeaderIndex(monthlyActiveHeaderRow)
+	months, err := inferMonthlyActiveColumns([][]string{monthlyActiveTitleRow, monthlyActiveHeaderRow}, 1, idx)
+	if err != nil {
+		t.Fatalf("unexpected infer error: %v", err)
+	}
+	row := make([]string, len(monthlyActiveHeaderRow))
+	row[idx["KODE OWNER"]] = "14514"
+	row[idx["NAMA OWNER"]] = "CuCumbah Laundry"
+	row[idx["NAMA BRAND/OUTLET"]] = "Cucumbah Laundry/Cucumbah Laundry"
+	row[idx["NAMA OUTLET"]] = "Cucumbah Laundry"
+	row[idx["KOTA"]] = "Kota Bekasi"
+	row[idx["WILAYAH"]] = "JABAR"
+	row[14] = "N-BC"
+	row[15] = "S-BC"
+	row[16] = "F-BC(6)"
+	parsed, errs := parseMonthlyActiveRow(row, idx, months)
+	if len(errs) != 0 {
+		t.Fatalf("expected no validation errors, got %v", errs)
+	}
+	if len(parsed.Activities) != 3 {
+		t.Fatalf("expected 3 activities, got %d", len(parsed.Activities))
+	}
+	if parsed.Activities[0].Category != "NEW" {
+		t.Fatalf("expected first category NEW, got %s", parsed.Activities[0].Category)
+	}
+	if parsed.Activities[2].TenorMonths == nil || *parsed.Activities[2].TenorMonths != 6 {
+		t.Fatalf("expected tenor 6, got %+v", parsed.Activities[2].TenorMonths)
+	}
+}
+
+func TestParseBonusMitraRow(t *testing.T) {
+	row := make([]string, 70)
+	row[1] = "REFERAL (Berlangganan)"
+	row[2] = "4181"
+	row[3] = "DIGNITY SINAGA"
+	row[4] = "DIGNITY LAUNDRY"
+	row[5] = "11384"
+	row[6] = "irwan derano parulian sinaga"
+	row[7] = "monang londry"
+	row[9] = "Referral"
+	row[10] = "Bisnis 1 Bulan"
+	row[11] = "Lidya"
+	row[13] = "45341"
+	row[14] = "45341"
+	row[15] = "Belum 1 Tahun"
+	row[18] = "Dicairkan Sebagian"
+	row[19] = "Share CMO"
+	row[65] = "50000"
+	row[66] = "0"
+	row[67] = "0"
+	row[68] = "12500"
+	row[69] = "62500"
+
+	parsed, errs := parseBonusMitraRow(row, buildHeaderIndex(bonusMitraHeaderRow))
+	if len(errs) != 0 {
+		t.Fatalf("expected no validation errors, got %v", errs)
+	}
+	if parsed.ReferredOwnerCode != "11384" {
+		t.Fatalf("unexpected referred owner code: %s", parsed.ReferredOwnerCode)
+	}
+	if parsed.TotalAmount != "62500" {
+		t.Fatalf("expected total 62500, got %s", parsed.TotalAmount)
+	}
+	if parsed.RenewalDate == "" {
+		t.Fatal("expected renewal date to be normalized")
+	}
+}
+
+var newSubscribeHeaderRow = []string{
+	"Kode", "Kode Owner", "Nama Owner", "No. Hp Owner/Outlet", "Project/Outlet", "Kota", "Provinsi",
+	"Nominal Aktivasi", "Tanggal Aktivasi", "Balance Top Up System", "Diskon Langganan",
+	"Fee Midtrans", "Settlement", "Metode Pembayaran", "Date of Renewal On Member", "Expired Date",
+	"Tenor", "Paket Membership", "Status",
+}
+
+func TestParseNewSubscribeRow_Valid(t *testing.T) {
+	idx := buildHeaderIndex(newSubscribeHeaderRow)
+	row := make([]string, len(newSubscribeHeaderRow))
+	row[idx["KODE"]] = "07-01.1"
+	row[idx["KODE OWNER"]] = "4181"
+	row[idx["NAMA OWNER"]] = "Dignity Sinaga"
+	row[idx["NO. HP OWNER/OUTLET"]] = "081234567890"
+	row[idx["PROJECT/OUTLET"]] = "Dignity Laundry/Dignity Outlet 1"
+	row[idx["KOTA"]] = "Bekasi"
+	row[idx["PROVINSI"]] = "Jawa Barat"
+	row[idx["NOMINAL AKTIVASI"]] = "858.000"
+	row[idx["BALANCE TOP UP SYSTEM"]] = "858.000"
+	row[idx["TENOR"]] = "12"
+	row[idx["PAKET MEMBERSHIP"]] = "Basic"
+	row[idx["STATUS"]] = "Aktif"
+
+	parsed, errs := parseNewSubscribeRow(row, idx)
+	if len(errs) != 0 {
+		t.Fatalf("expected no validation errors, got %v", errs)
+	}
+	if parsed.ProjectName != "Dignity Laundry" || parsed.OutletName != "Dignity Outlet 1" {
+		t.Fatalf("expected Project/Outlet split, got project=%q outlet=%q", parsed.ProjectName, parsed.OutletName)
+	}
+	if parsed.NominalAktivasi != "858000" {
+		t.Fatalf("expected dot-thousands nominal parsed to 858000, got %s", parsed.NominalAktivasi)
+	}
+	if parsed.TenorMonths != 12 {
+		t.Fatalf("expected tenor 12, got %d", parsed.TenorMonths)
+	}
+}
+
+func TestParseNewSubscribeRow_MissingRequiredFields(t *testing.T) {
+	idx := buildHeaderIndex(newSubscribeHeaderRow)
+	row := make([]string, len(newSubscribeHeaderRow))
+	_, errs := parseNewSubscribeRow(row, idx)
+	if len(errs) == 0 {
+		t.Fatal("expected validation errors for empty row")
+	}
+}
+
+var salesCallChatHeaderRow = []string{
+	"Kode Owner", "Nama Owner", "No. HP Owner", "Tanggal FU", "Call", "Chat", "Validitas",
+	"Remaks", "Scor", "Finalisasi (Closing)", "Nominal",
+}
+
+func TestParseSalesCallChatRow_Closing(t *testing.T) {
+	idx := buildHeaderIndex(salesCallChatHeaderRow)
+	row := make([]string, len(salesCallChatHeaderRow))
+	row[idx["KODE OWNER"]] = "4181"
+	row[idx["NAMA OWNER"]] = "Dignity Sinaga"
+	row[idx["SCOR"]] = "3"
+	row[idx["FINALISASI (CLOSING)"]] = "Berlangganan Basic"
+	row[idx["NOMINAL"]] = "858000"
+
+	parsed, errs := parseSalesCallChatRow(row, idx)
+	if len(errs) != 0 {
+		t.Fatalf("expected no validation errors, got %v", errs)
+	}
+	if !parsed.IsClosing {
+		t.Fatal("expected IsClosing true for Scor 3 with a real package name")
+	}
+	if parsed.Nominal != "858000" {
+		t.Fatalf("expected nominal 858000, got %s", parsed.Nominal)
+	}
+}
+
+func TestParseSalesCallChatRow_NotYetSentinel(t *testing.T) {
+	idx := buildHeaderIndex(salesCallChatHeaderRow)
+	row := make([]string, len(salesCallChatHeaderRow))
+	row[idx["KODE OWNER"]] = "4181"
+	row[idx["SCOR"]] = "1"
+	row[idx["FINALISASI (CLOSING)"]] = "Not Yet"
+
+	parsed, errs := parseSalesCallChatRow(row, idx)
+	if len(errs) != 0 {
+		t.Fatalf("expected no validation errors, got %v", errs)
+	}
+	if parsed.IsClosing {
+		t.Fatal("expected IsClosing false for the 'Not Yet' sentinel")
+	}
+}
+
+var salesTargetHeaderRow = []string{"Bulan", "Target User", "Target Omset"}
+
+func TestParseSalesTargetRow_Valid(t *testing.T) {
+	idx := buildHeaderIndex(salesTargetHeaderRow)
+	row := make([]string, len(salesTargetHeaderRow))
+	row[idx["BULAN"]] = "Juli"
+	row[idx["TARGET USER"]] = "10"
+	row[idx["TARGET OMSET"]] = "10.000.000"
+
+	parsed, errs := parseSalesTargetRow(row, idx, 2026)
+	if len(errs) != 0 {
+		t.Fatalf("expected no validation errors, got %v", errs)
+	}
+	if parsed.PeriodMonth != 7 {
+		t.Fatalf("expected month 7 (Juli), got %d", parsed.PeriodMonth)
+	}
+	if parsed.TargetOmset != "10000000" {
+		t.Fatalf("expected dot-thousands omset parsed to 10000000, got %s", parsed.TargetOmset)
+	}
+}
+
+func TestParseSalesTargetRow_YearMissing(t *testing.T) {
+	idx := buildHeaderIndex(salesTargetHeaderRow)
+	row := make([]string, len(salesTargetHeaderRow))
+	row[idx["BULAN"]] = "Juli"
+	row[idx["TARGET USER"]] = "10"
+	row[idx["TARGET OMSET"]] = "10000000"
+
+	_, errs := parseSalesTargetRow(row, idx, 0)
+	if len(errs) == 0 {
+		t.Fatal("expected validation error when year could not be found in the sheet title rows")
 	}
 }

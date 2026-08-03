@@ -181,6 +181,7 @@ type CreatePackageRequest struct {
 	LevelOrder  int    `json:"level_order" binding:"required"`
 	Description string `json:"description"`
 	Active      *bool  `json:"active"`
+	CreatedAt   *time.Time `json:"created_at,omitempty"`
 }
 
 type UpdatePackageRequest struct {
@@ -201,6 +202,7 @@ type CreatePlanRequest struct {
 	EffectiveFrom string  `json:"effective_from" binding:"required"`
 	EffectiveTo   *string `json:"effective_to"`
 	Active        *bool   `json:"active"`
+	CreatedAt     *time.Time `json:"created_at,omitempty"`
 }
 
 type UpdatePlanRequest struct {
@@ -226,6 +228,7 @@ type CreatePromotionRequest struct {
 	EffectiveFrom    string  `json:"effective_from" binding:"required"`
 	EffectiveTo      *string `json:"effective_to"`
 	Active           *bool   `json:"active"`
+	CreatedAt        *time.Time `json:"created_at,omitempty"`
 }
 
 type UpdatePromotionRequest struct {
@@ -265,6 +268,8 @@ type ListParams struct {
 	ChargeType string
 	Scope      string
 	AsOf       *time.Time
+	CreatedFrom *time.Time
+	CreatedTo   *time.Time
 	All        bool
 	Page       int
 	Limit      int

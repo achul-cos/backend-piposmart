@@ -82,11 +82,61 @@ func (s *Service) CreateTopup(ctx context.Context, actor identity.User, ownerID 
 	if err != nil {
 		return TopupResponse{}, err
 	}
-	wallet := NewWalletAccountResponse(result.Wallet)
-	if wallet.Balance != wallet.LedgerBalance {
+	return newTopupResponse(result), nil
+}
+
+// AcceptTopup confirms a PENDING top-up as a genuine, matched transfer and credits the wallet.
+func (s *Service) AcceptTopup(ctx context.Context, actor identity.User, paymentID int64, req AcceptTopupRequest) (TopupResponse, error) {
+	if actor.RoleCode != RoleAdmin {
+		return TopupResponse{}, ErrForbidden
+	}
+	result, err := s.repo.AcceptTopup(ctx, actor, paymentID, req.UniqueCode, req.TransferDateOverride)
+	if err != nil {
+		return TopupResponse{}, err
+	}
+	if result.Wallet.Balance != result.Wallet.LedgerBalance {
 		return TopupResponse{}, ErrLedgerOutOfSync
 	}
-	return TopupResponse{Payment: NewWalletPaymentResponse(result.Payment), Transaction: NewWalletTransactionResponse(result.Transaction), Wallet: wallet, Idempotent: result.Idempotent}, nil
+	return newTopupResponse(result), nil
+}
+
+// RejectTopup cancels a PENDING top-up — it never touched balance, so there's nothing to reverse.
+func (s *Service) RejectTopup(ctx context.Context, actor identity.User, paymentID int64, req RejectTopupRequest) (WalletPaymentResponse, error) {
+	if actor.RoleCode != RoleAdmin {
+		return WalletPaymentResponse{}, ErrForbidden
+	}
+	payment, err := s.repo.RejectTopup(ctx, actor, paymentID, req.Note)
+	if err != nil {
+		return WalletPaymentResponse{}, err
+	}
+	return NewWalletPaymentResponse(payment), nil
+}
+
+// SetTransferDateOverride lets admin correct a top-up's effective transfer date from the payment
+// proof/receipt, regardless of the top-up's current status.
+func (s *Service) SetTransferDateOverride(ctx context.Context, actor identity.User, paymentID int64, req SetTransferDateOverrideRequest) (WalletPaymentResponse, error) {
+	if actor.RoleCode != RoleAdmin {
+		return WalletPaymentResponse{}, ErrForbidden
+	}
+	payment, err := s.repo.SetTransferDateOverride(ctx, paymentID, req.TransferDate)
+	if err != nil {
+		return WalletPaymentResponse{}, err
+	}
+	return NewWalletPaymentResponse(payment), nil
+}
+
+func newTopupResponse(result TopupResult) TopupResponse {
+	var transaction *WalletTransactionResponse
+	if result.Transaction != nil {
+		resp := NewWalletTransactionResponse(*result.Transaction)
+		transaction = &resp
+	}
+	return TopupResponse{
+		Payment:     NewWalletPaymentResponse(result.Payment),
+		Transaction: transaction,
+		Wallet:      NewWalletAccountResponse(result.Wallet),
+		Idempotent:  result.Idempotent,
+	}
 }
 
 func (s *Service) CreateDebit(ctx context.Context, actor identity.User, ownerID int64, req CreateWalletTransactionRequest) (WalletTransactionResponse, error) {

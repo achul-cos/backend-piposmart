@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"backend_crm_piposmart/internal/identity"
 	"backend_crm_piposmart/internal/platform/httpx"
@@ -39,6 +40,8 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 		imports.GET("/:id/rows/all-deleted", h.ListAllRows)
 		imports.GET("/:id/rejected-rows/export", h.ExportRejectedRows)
 		imports.POST("/:id/commit", h.Commit)
+		imports.POST("/:id/rows/:row_id/relink", h.RelinkRow)
+		imports.GET("/summary", h.GetSummary)
 	}
 }
 
@@ -49,7 +52,9 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 // @Accept multipart/form-data
 // @Produce json
 // @Param file formData file true "Excel (.xlsx) file"
-// @Param profile formData string false "OWNER_OUTLET or NON_REGISTER; omit to auto-detect from headers"
+// @Param profile formData string false "OWNER_OUTLET, NON_REGISTER, NEW_SUBSCRIBE, MONTHLY_ACTIVE, BONUS_MITRA, SALES_CALL_CHAT, or SALES_TARGET; omit to auto-detect from headers"
+// @Param sheet_name formData string false "Required for SALES_CALL_CHAT/SALES_TARGET (workbook has multiple similar sheets); optional/ignored otherwise"
+// @Param target_sales_user_id formData int false "Required for SALES_CALL_CHAT/SALES_TARGET (sales rep is only encoded in the sheet name, not a data column)"
 // @Success 201 {object} ImportBatchResponse
 // @Failure 400 {object} httpx.ErrorEnvelope
 // @Router /imports [post]
@@ -67,8 +72,18 @@ func (h *Handler) Upload(c *gin.Context) {
 	defer file.Close()
 
 	profile := c.PostForm("profile")
+	sheetName := c.PostForm("sheet_name")
+	var targetSalesUserID *int64
+	if raw := c.PostForm("target_sales_user_id"); raw != "" {
+		id, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || id < 1 {
+			httpx.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", "target_sales_user_id tidak valid", nil)
+			return
+		}
+		targetSalesUserID = &id
+	}
 	actor, _ := identity.CurrentUser(c)
-	resp, err := h.service.Upload(c.Request.Context(), actor, file, fileHeader, profile)
+	resp, err := h.service.Upload(c.Request.Context(), actor, file, fileHeader, profile, sheetName, targetSalesUserID)
 	if err != nil {
 		writeImportError(c, err)
 		return
@@ -92,6 +107,15 @@ func (h *Handler) ListBatches(c *gin.Context) {
 		Profile: c.Query("profile"),
 		All:     false,
 	}
+	var ok bool
+	params.CreatedFrom, params.CreatedTo, ok = parseDateRangeQuery(c, "created_from", "created_to")
+	if !ok {
+		return
+	}
+	params.UploadedFrom, params.UploadedTo, ok = parseDateRangeQuery(c, "uploaded_from", "uploaded_to")
+	if !ok {
+		return
+	}
 	params.Page, _ = strconv.Atoi(c.DefaultQuery("page", "1"))
 	params.Limit, _ = strconv.Atoi(c.DefaultQuery("limit", "20"))
 
@@ -109,6 +133,15 @@ func (h *Handler) ListAllBatches(c *gin.Context) {
 		Status:  c.Query("status"),
 		Profile: c.Query("profile"),
 		All:     true,
+	}
+	var ok bool
+	params.CreatedFrom, params.CreatedTo, ok = parseDateRangeQuery(c, "created_from", "created_to")
+	if !ok {
+		return
+	}
+	params.UploadedFrom, params.UploadedTo, ok = parseDateRangeQuery(c, "uploaded_from", "uploaded_to")
+	if !ok {
+		return
 	}
 	params.Page, _ = strconv.Atoi(c.DefaultQuery("page", "1"))
 	params.Limit, _ = strconv.Atoi(c.DefaultQuery("limit", "20"))
@@ -165,6 +198,10 @@ func (h *Handler) ViewOriginalFile(c *gin.Context) {
 		return
 	}
 	c.Header("Content-Disposition", `inline; filename="`+file.OriginalFilename+`"`)
+	if len(file.Content) > 0 {
+		c.Data(http.StatusOK, file.ContentType, file.Content)
+		return
+	}
 	c.File(file.Path)
 }
 
@@ -188,6 +225,11 @@ func (h *Handler) DownloadOriginalFile(c *gin.Context) {
 		writeImportError(c, err)
 		return
 	}
+	if len(file.Content) > 0 {
+		c.Header("Content-Disposition", `attachment; filename="`+file.OriginalFilename+`"`)
+		c.Data(http.StatusOK, file.ContentType, file.Content)
+		return
+	}
 	c.FileAttachment(file.Path, file.OriginalFilename)
 }
 
@@ -207,6 +249,11 @@ func (h *Handler) ListRows(c *gin.Context) {
 		return
 	}
 	params := ListRowsParams{Status: c.Query("status"), All: false}
+	var rangeOK bool
+	params.CreatedFrom, params.CreatedTo, rangeOK = parseDateRangeQuery(c, "created_from", "created_to")
+	if !rangeOK {
+		return
+	}
 	params.Page, _ = strconv.Atoi(c.DefaultQuery("page", "1"))
 	params.Limit, _ = strconv.Atoi(c.DefaultQuery("limit", "50"))
 
@@ -225,6 +272,11 @@ func (h *Handler) ListAllRows(c *gin.Context) {
 		return
 	}
 	params := ListRowsParams{Status: c.Query("status"), All: true}
+	var rangeOK bool
+	params.CreatedFrom, params.CreatedTo, rangeOK = parseDateRangeQuery(c, "created_from", "created_to")
+	if !rangeOK {
+		return
+	}
 	params.Page, _ = strconv.Atoi(c.DefaultQuery("page", "1"))
 	params.Limit, _ = strconv.Atoi(c.DefaultQuery("limit", "50"))
 	actor, _ := identity.CurrentUser(c)
@@ -285,6 +337,59 @@ func (h *Handler) Commit(c *gin.Context) {
 	httpx.Success(c, statusCode, resp)
 }
 
+// RelinkRow godoc
+// @Summary Manually resolve an UNMATCHED reconciliation-candidate row
+// @Description Admin only. Supplies the owner/outlet/lead ID the row's own data couldn't resolve at commit time, moving it back to VALID for the next batch commit to pick up.
+// @Tags imports
+// @Accept json
+// @Produce json
+// @Param id path int64 true "Batch ID"
+// @Param row_id path int64 true "Row ID"
+// @Param request body RelinkRowRequest true "Entity IDs to link"
+// @Success 200 {object} ImportRowResponse
+// @Failure 400 {object} httpx.ErrorEnvelope
+// @Router /imports/{id}/rows/{row_id}/relink [post]
+func (h *Handler) RelinkRow(c *gin.Context) {
+	batchID, ok := parseBatchID(c)
+	if !ok {
+		return
+	}
+	rowID, err := strconv.ParseInt(c.Param("row_id"), 10, 64)
+	if err != nil {
+		httpx.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", "invalid row ID", nil)
+		return
+	}
+	var req RelinkRowRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpx.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", "payload tidak valid", gin.H{"error": err.Error()})
+		return
+	}
+	actor, _ := identity.CurrentUser(c)
+	resp, err := h.service.RelinkRow(c.Request.Context(), actor, batchID, rowID, req)
+	if err != nil {
+		writeImportError(c, err)
+		return
+	}
+	httpx.Success(c, http.StatusOK, resp)
+}
+
+// GetSummary godoc
+// @Summary Aggregate batch counts per status
+// @Description Admin only. Reports how many batches need attention (VALIDATION_FAILED/COMMIT_FAILED) without paging through GET /imports?status=... one status at a time.
+// @Tags imports
+// @Produce json
+// @Success 200 {object} BatchSummaryResponse
+// @Router /imports/summary [get]
+func (h *Handler) GetSummary(c *gin.Context) {
+	actor, _ := identity.CurrentUser(c)
+	resp, err := h.service.GetSummary(c.Request.Context(), actor)
+	if err != nil {
+		writeImportError(c, err)
+		return
+	}
+	httpx.Success(c, http.StatusOK, resp)
+}
+
 func parseBatchID(c *gin.Context) (int64, bool) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
@@ -318,6 +423,14 @@ func writeImportError(c *gin.Context, err error) {
 		httpx.Error(c, http.StatusBadRequest, "PROFILE_HEADER_MISMATCH", err.Error(), importErrorDetails("PROFILE_HEADER_MISMATCH", err, requestID))
 	case errors.Is(err, ErrUnknownProfile):
 		httpx.Error(c, http.StatusBadRequest, "UNKNOWN_PROFILE", err.Error(), importErrorDetails("UNKNOWN_PROFILE", err, requestID))
+	case errors.Is(err, ErrSheetNameRequired):
+		httpx.Error(c, http.StatusBadRequest, "SHEET_NAME_REQUIRED", err.Error(), importErrorDetails("SHEET_NAME_REQUIRED", err, requestID))
+	case errors.Is(err, ErrSheetNameNeedsProfile):
+		httpx.Error(c, http.StatusBadRequest, "SHEET_NAME_NEEDS_PROFILE", err.Error(), importErrorDetails("SHEET_NAME_NEEDS_PROFILE", err, requestID))
+	case errors.Is(err, ErrSheetNotFound):
+		httpx.Error(c, http.StatusBadRequest, "SHEET_NOT_FOUND", err.Error(), importErrorDetails("SHEET_NOT_FOUND", err, requestID))
+	case errors.Is(err, ErrTargetSalesUserRequired):
+		httpx.Error(c, http.StatusBadRequest, "TARGET_SALES_USER_REQUIRED", err.Error(), importErrorDetails("TARGET_SALES_USER_REQUIRED", err, requestID))
 	case errors.As(err, &batchStatusErr):
 		httpx.Error(c, http.StatusBadRequest, "INVALID_BATCH_STATUS", err.Error(), gin.H{
 			"root_cause":       "Frontend memanggil aksi import pada status batch yang belum sesuai alur backend.",
@@ -332,9 +445,38 @@ func writeImportError(c *gin.Context, err error) {
 		})
 	case errors.Is(err, ErrInvalidBatchStatus):
 		httpx.Error(c, http.StatusBadRequest, "INVALID_BATCH_STATUS", err.Error(), importErrorDetails("INVALID_BATCH_STATUS", err, requestID))
+	case errors.Is(err, ErrRowNotUnmatched):
+		httpx.Error(c, http.StatusConflict, "ROW_NOT_UNMATCHED", err.Error(), importErrorDetails("ROW_NOT_UNMATCHED", err, requestID))
+	case errors.Is(err, ErrRelinkEntityRequired):
+		httpx.Error(c, http.StatusBadRequest, "RELINK_ENTITY_REQUIRED", err.Error(), importErrorDetails("RELINK_ENTITY_REQUIRED", err, requestID))
 	default:
 		httpx.Error(c, http.StatusInternalServerError, "INTERNAL_ERROR", "unexpected error", importErrorDetails("INTERNAL_ERROR", err, requestID))
 	}
+}
+
+func parseDateRangeQuery(c *gin.Context, fromKey, toKey string) (*time.Time, *time.Time, bool) {
+	from, err := parseOptionalDate(c.Query(fromKey))
+	if err != nil {
+		httpx.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", fromKey+" harus format YYYY-MM-DD", nil)
+		return nil, nil, false
+	}
+	to, err := parseOptionalDate(c.Query(toKey))
+	if err != nil {
+		httpx.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", toKey+" harus format YYYY-MM-DD", nil)
+		return nil, nil, false
+	}
+	return from, to, true
+}
+
+func parseOptionalDate(value string) (*time.Time, error) {
+	if strings.TrimSpace(value) == "" {
+		return nil, nil
+	}
+	parsed, err := time.Parse("2006-01-02", strings.TrimSpace(value))
+	if err != nil {
+		return nil, err
+	}
+	return &parsed, nil
 }
 
 func logImportError(c *gin.Context, err error) {
@@ -390,6 +532,22 @@ func importErrorDetails(code string, err error, requestID string) gin.H {
 		details["root_cause"] = "Nilai profile yang dikirim frontend tidak dikenal backend."
 		details["solution"] = "Gunakan hanya profile yang didukung backend."
 		details["frontend_prevent"] = "Gunakan enum profile yang dibekukan dari API/OpenAPI, jangan hardcode bebas."
+	case "SHEET_NAME_REQUIRED":
+		details["root_cause"] = "Profile import ini memakai workbook multi-sheet sehingga backend butuh nama sheet yang eksplisit."
+		details["solution"] = "Kirim parameter sheet_name yang sama dengan nama sheet pada file Excel."
+		details["frontend_prevent"] = "Wajibkan user memilih sheet ketika profile adalah SALES_CALL_CHAT atau SALES_TARGET."
+	case "SHEET_NAME_NEEDS_PROFILE":
+		details["root_cause"] = "Frontend mengirim sheet_name tanpa profile eksplisit."
+		details["solution"] = "Kirim profile yang sesuai bersama sheet_name."
+		details["frontend_prevent"] = "Jangan tampilkan input sheet_name bila profile belum dipilih."
+	case "SHEET_NOT_FOUND":
+		details["root_cause"] = "Nama sheet yang dikirim tidak ditemukan di workbook yang diunggah."
+		details["solution"] = "Periksa ejaan, spasi, dan kapitalisasi nama sheet lalu unggah ulang request."
+		details["frontend_prevent"] = "Baca daftar sheet dari file terlebih dahulu atau tampilkan helper nama sheet yang valid ke user."
+	case "TARGET_SALES_USER_REQUIRED":
+		details["root_cause"] = "Profile import ini membutuhkan target_sales_user_id karena sales hanya diketahui dari konteks sheet."
+		details["solution"] = "Kirim target_sales_user_id dari akun Sales yang sesuai."
+		details["frontend_prevent"] = "Wajibkan pemilihan Sales saat profile adalah SALES_CALL_CHAT atau SALES_TARGET."
 	case "INVALID_BATCH_STATUS":
 		details["root_cause"] = "Aksi import dipanggil saat status batch belum sesuai."
 		details["solution"] = "Ikuti state machine batch: upload -> validating -> validated -> committing -> committed."

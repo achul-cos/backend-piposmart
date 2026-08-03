@@ -12,6 +12,11 @@ import (
 const (
 	ProfileOwnerOutlet      = "OWNER_OUTLET"
 	ProfileNonRegister      = "NON_REGISTER"
+	ProfileNewSubscribe     = "NEW_SUBSCRIBE"
+	ProfileMonthlyActive    = "MONTHLY_ACTIVE"
+	ProfileBonusMitra       = "BONUS_MITRA"
+	ProfileSalesCallChat    = "SALES_CALL_CHAT"
+	ProfileSalesTarget      = "SALES_TARGET"
 	ProfilePendingDetection = "PENDING_DETECTION" // profile not yet known; resolved by the IMPORT_VALIDATE job
 
 	BatchStatusUploaded         = "UPLOADED"
@@ -22,9 +27,15 @@ const (
 	BatchStatusCommitted        = "COMMITTED"
 	BatchStatusCommitFailed     = "COMMIT_FAILED"
 
-	RowStatusPending      = "PENDING"
-	RowStatusValid        = "VALID"
-	RowStatusInvalid      = "INVALID"
+	RowStatusPending = "PENDING"
+	RowStatusValid   = "VALID"
+	RowStatusInvalid = "INVALID"
+	// RowStatusUnmatched marks a structurally valid row that references an owner/outlet/partner/
+	// package/sales-user code not found in the DB. Unlike Sprint 14's OWNER_OUTLET/NON_REGISTER
+	// profiles (which auto-create), Sprint 15's transactional profiles assume the referenced entity
+	// should already exist from prior imports/data entry — a miss is a data problem to resolve via
+	// POST /imports/:id/rows/:row_id/relink, not something to silently paper over by creating it.
+	RowStatusUnmatched    = "UNMATCHED"
 	RowStatusCommitted    = "COMMITTED"
 	RowStatusCommitFailed = "COMMIT_FAILED"
 
@@ -36,12 +47,24 @@ const (
 
 // ImportBatch is one uploaded file and its processing lifecycle.
 type ImportBatch struct {
-	ID                 int64
-	Code               string
-	Profile            string
+	ID      int64
+	Code    string
+	Profile string
+	// SheetName is required for SALES_CALL_CHAT/SALES_TARGET (their workbooks have several
+	// structurally-identical sheets — different sales reps, legacy/duplicate copies — so
+	// auto-detecting the right one by header markers alone is unsafe). Empty ("", never NULL —
+	// see migration 20260730000100) for every other profile, meaning "auto-detect across sheets".
+	// Part of the batch dedup key (file_sha256, profile, sheet_name) alongside Profile, since the
+	// same physical file is deliberately re-uploaded once per profile for those two profiles.
+	SheetName string
+	// TargetSalesUserID is required alongside SheetName for SALES_CALL_CHAT/SALES_TARGET — the
+	// sales rep those two profiles belong to is only encoded in the sheet-name suffix (e.g.
+	// "Call & Chat-Lidya"), never a data column.
+	TargetSalesUserID  sql.NullInt64
 	OriginalFilename   string
 	FileSHA256         string
 	FilePath           string
+	FileBlob           []byte
 	Status             string
 	TotalRows          int
 	ValidRows          int
@@ -94,6 +117,8 @@ type ImportBatchResponse struct {
 	ID                 int64                   `json:"id"`
 	Code               string                  `json:"code"`
 	Profile            string                  `json:"profile"`
+	SheetName          string                  `json:"sheet_name,omitempty"`
+	TargetSalesUserID  *int64                  `json:"target_sales_user_id,omitempty"`
 	OriginalFilename   string                  `json:"original_filename"`
 	File               ImportBatchFileResponse `json:"file"`
 	Status             string                  `json:"status"`
@@ -117,6 +142,7 @@ func NewImportBatchResponse(b ImportBatch) ImportBatchResponse {
 		ID:               b.ID,
 		Code:             b.Code,
 		Profile:          b.Profile,
+		SheetName:        b.SheetName,
 		OriginalFilename: b.OriginalFilename,
 		File: ImportBatchFileResponse{
 			OriginalFilename: b.OriginalFilename,
@@ -137,6 +163,9 @@ func NewImportBatchResponse(b ImportBatch) ImportBatchResponse {
 	}
 	if b.ErrorMessage.Valid {
 		resp.ErrorMessage = &b.ErrorMessage.String
+	}
+	if b.TargetSalesUserID.Valid {
+		resp.TargetSalesUserID = &b.TargetSalesUserID.Int64
 	}
 	if b.CommittedByUserID.Valid {
 		resp.CommittedBy = &ActorRef{ID: b.CommittedByUserID.Int64, Name: b.CommittedByName.String}
@@ -186,6 +215,20 @@ type ImportRowResponse struct {
 	CommitError      *string         `json:"commit_error,omitempty"`
 }
 
+// RelinkRowRequest supplies the entity ID(s) an UNMATCHED row's own data couldn't resolve. At
+// least one must be set; any left nil keep whatever the row already has (which may itself be nil).
+type RelinkRowRequest struct {
+	OwnerID  *int64 `json:"owner_id,omitempty"`
+	OutletID *int64 `json:"outlet_id,omitempty"`
+	LeadID   *int64 `json:"lead_id,omitempty"`
+}
+
+type BatchSummaryResponse struct {
+	Total          int64            `json:"total"`
+	CountsByStatus map[string]int64 `json:"counts_by_status"`
+	NeedsAttention int64            `json:"needs_attention"`
+}
+
 func NewImportRowResponse(r ImportRow) ImportRowResponse {
 	resp := ImportRowResponse{
 		ID:         r.ID,
@@ -218,18 +261,24 @@ type ImportRowListResponse struct {
 }
 
 type ListRowsParams struct {
-	Status string
-	All    bool
-	Page   int
-	Limit  int
+	Status      string
+	CreatedFrom *time.Time
+	CreatedTo   *time.Time
+	All         bool
+	Page        int
+	Limit       int
 }
 
 type ListBatchesParams struct {
-	Status  string
-	Profile string
-	All     bool
-	Page    int
-	Limit   int
+	Status       string
+	Profile      string
+	CreatedFrom  *time.Time
+	CreatedTo    *time.Time
+	UploadedFrom *time.Time
+	UploadedTo   *time.Time
+	All          bool
+	Page         int
+	Limit        int
 }
 
 // ValidateJobPayload / CommitJobPayload are the job_queue payloads for the two job types this
