@@ -62,7 +62,7 @@ func (r *Repository) CreateOwners(ctx context.Context, actor Actor, requests []C
 
 func (r *Repository) createOwner(ctx context.Context, q queryExecutor, actor Actor, req CreateOwnerRequest, normalizedPhone string) (Owner, error) {
 	query := `
-		INSERT INTO owners (code, name, phone, email, brand_name, province, city, address, status`
+		INSERT INTO owners (code, name, phone, email, brand_name, province, city, district, sub_district, address, status`
 	args := []any{
 		trim(req.Code),
 		trim(req.Name),
@@ -71,9 +71,11 @@ func (r *Repository) createOwner(ctx context.Context, q queryExecutor, actor Act
 		nullableString(req.BrandName),
 		nullableString(req.Province),
 		nullableString(req.City),
+		nullableString(req.District),
+		nullableString(req.SubDistrict),
 		nullableString(req.Address),
 	}
-	values := `) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE'`
+	values := `) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE'`
 	if req.CreatedAt != nil {
 		query += `, created_at`
 		values += `, ?`
@@ -112,7 +114,7 @@ func (r *Repository) findOwnerByID(ctx context.Context, q queryExecutor, id int6
 	}
 	owner, err := scanOwner(q.QueryRowContext(ctx, `
 		SELECT
-			o.id, o.code, o.name, o.phone, o.email, o.brand_name, o.province, o.city,
+			o.id, o.code, o.name, o.phone, o.email, o.brand_name, o.province, o.city, o.district, o.sub_district,
 			o.address, o.status, COUNT(ot.id) AS outlet_count, o.created_at, o.updated_at
 		FROM owners o
 		LEFT JOIN outlets ot ON ot.owner_id = o.id AND ot.deleted_at IS NULL
@@ -136,7 +138,7 @@ func (r *Repository) findOwnerByIDVisible(ctx context.Context, q queryExecutor, 
 
 	owner, err := scanOwner(q.QueryRowContext(ctx, `
 		SELECT
-			o.id, o.code, o.name, o.phone, o.email, o.brand_name, o.province, o.city,
+			o.id, o.code, o.name, o.phone, o.email, o.brand_name, o.province, o.city, o.district, o.sub_district,
 			o.address, o.status, COUNT(ot.id) AS outlet_count, o.created_at, o.updated_at
 		FROM owners o
 		LEFT JOIN outlets ot ON ot.owner_id = o.id AND ot.deleted_at IS NULL
@@ -163,9 +165,10 @@ func (r *Repository) ListOwners(ctx context.Context, actor Actor, params ListPar
 	query := `
 		SELECT
 			o.id, o.code, o.name, o.phone, o.email, o.brand_name, o.province, o.city,
-			o.address, o.status, COUNT(ot.id) AS outlet_count, o.created_at, o.updated_at
+			o.district, o.sub_district, o.address, o.status, COUNT(ot.id) AS outlet_count, o.created_at, o.updated_at
 		FROM owners o
 		LEFT JOIN outlets ot ON ot.owner_id = o.id AND ot.deleted_at IS NULL
+		LEFT JOIN wallet_accounts wa ON wa.owner_id = o.id
 		WHERE ` + where + `
 		GROUP BY o.id
 		ORDER BY ` + orderBy
@@ -237,6 +240,8 @@ func (r *Repository) updateOwner(ctx context.Context, q queryExecutor, input Own
 	brandName := current.BrandName
 	province := current.Province
 	city := current.City
+	district := current.District
+	subDistrict := current.SubDistrict
 	address := current.Address
 
 	if input.Request.Code != nil {
@@ -263,12 +268,18 @@ func (r *Repository) updateOwner(ctx context.Context, q queryExecutor, input Own
 	if input.Request.Address != nil {
 		address = nullableString(*input.Request.Address)
 	}
+	if input.Request.District != nil {
+		district = nullableString(*input.Request.District)
+	}
+	if input.Request.SubDistrict != nil {
+		subDistrict = nullableString(*input.Request.SubDistrict)
+	}
 
 	_, err = q.ExecContext(ctx, `
 		UPDATE owners
-		SET code = ?, name = ?, phone = ?, email = ?, brand_name = ?, province = ?, city = ?, address = ?
+		SET code = ?, name = ?, phone = ?, email = ?, brand_name = ?, province = ?, city = ?, district = ?, sub_district = ?, address = ?
 		WHERE id = ? AND deleted_at IS NULL`,
-		code, name, phone, email, brandName, province, city, address, input.ID,
+		code, name, phone, email, brandName, province, city, district, subDistrict, address, input.ID,
 	)
 	if err != nil {
 		return Owner{}, mapDuplicateError(err)
@@ -363,7 +374,7 @@ func (r *Repository) CreateOutlets(ctx context.Context, ownerID int64, requests 
 
 func (r *Repository) createOutlet(ctx context.Context, q queryExecutor, ownerID int64, req CreateOutletRequest, normalizedPhone string) (Outlet, error) {
 	query := `
-		INSERT INTO outlets (owner_id, code, name, phone, province, city, address, status`
+		INSERT INTO outlets (owner_id, code, name, phone, province, city, district, sub_district, address, status`
 	args := []any{
 		ownerID,
 		trim(req.Code),
@@ -371,9 +382,11 @@ func (r *Repository) createOutlet(ctx context.Context, q queryExecutor, ownerID 
 		nullableString(normalizedPhone),
 		nullableString(req.Province),
 		nullableString(req.City),
+		nullableString(req.District),
+		nullableString(req.SubDistrict),
 		nullableString(req.Address),
 	}
-	values := `) VALUES (?, ?, ?, ?, ?, ?, ?, 'ACTIVE'`
+	values := `) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE'`
 	if req.CreatedAt != nil {
 		query += `, created_at`
 		values += `, ?`
@@ -404,7 +417,7 @@ func (r *Repository) findOutletByID(ctx context.Context, q queryExecutor, ownerI
 		deletedClause = ""
 	}
 	outlet, err := scanOutlet(q.QueryRowContext(ctx, `
-		SELECT id, owner_id, code, name, phone, province, city, address, status, created_at, updated_at
+		SELECT id, owner_id, code, name, phone, province, city, district, sub_district, address, status, created_at, updated_at
 		FROM outlets
 		WHERE id = ? AND owner_id = ? `+deletedClause, outletID, ownerID))
 	if err == sql.ErrNoRows {
@@ -435,7 +448,7 @@ func (r *Repository) ListOutlets(ctx context.Context, actor Actor, ownerID int64
 		return nil, 0, err
 	}
 	query := `
-		SELECT id, owner_id, code, name, phone, province, city, address, status, created_at, updated_at
+		SELECT id, owner_id, code, name, phone, province, city, district, sub_district, address, status, created_at, updated_at
 		FROM outlets ot
 		WHERE ` + where + `
 		ORDER BY ` + orderBy
@@ -550,6 +563,8 @@ func (r *Repository) updateOutlet(ctx context.Context, q queryExecutor, ownerID 
 	phone := current.Phone
 	province := current.Province
 	city := current.City
+	district := current.District
+	subDistrict := current.SubDistrict
 	address := current.Address
 	if input.Request.Code != nil {
 		code = trim(*input.Request.Code)
@@ -569,12 +584,18 @@ func (r *Repository) updateOutlet(ctx context.Context, q queryExecutor, ownerID 
 	if input.Request.Address != nil {
 		address = nullableString(*input.Request.Address)
 	}
+	if input.Request.District != nil {
+		district = nullableString(*input.Request.District)
+	}
+	if input.Request.SubDistrict != nil {
+		subDistrict = nullableString(*input.Request.SubDistrict)
+	}
 
 	_, err = q.ExecContext(ctx, `
 		UPDATE outlets
-		SET code = ?, name = ?, phone = ?, province = ?, city = ?, address = ?
+		SET code = ?, name = ?, phone = ?, province = ?, city = ?, district = ?, sub_district = ?, address = ?
 		WHERE id = ? AND owner_id = ? AND deleted_at IS NULL`,
-		code, name, phone, province, city, address, input.ID, ownerID,
+		code, name, phone, province, city, district, subDistrict, address, input.ID, ownerID,
 	)
 	if err != nil {
 		return Outlet{}, mapDuplicateError(err)
@@ -686,6 +707,8 @@ func scanOwner(row scanner) (Owner, error) {
 		&owner.BrandName,
 		&owner.Province,
 		&owner.City,
+		&owner.District,
+		&owner.SubDistrict,
 		&owner.Address,
 		&owner.Status,
 		&owner.OutletCount,
@@ -705,6 +728,8 @@ func scanOutlet(row scanner) (Outlet, error) {
 		&outlet.Phone,
 		&outlet.Province,
 		&outlet.City,
+		&outlet.District,
+		&outlet.SubDistrict,
 		&outlet.Address,
 		&outlet.Status,
 		&outlet.CreatedAt,
@@ -743,6 +768,8 @@ func scanOutletOverview(row scanner) (OutletOverview, error) {
 		&item.Phone,
 		&item.Province,
 		&item.City,
+		&item.District,
+		&item.SubDistrict,
 		&item.Address,
 		&item.Status,
 		&item.SubscriptionCount,
@@ -773,6 +800,8 @@ func scanOwnerOverview(row scanner) (OwnerOverview, error) {
 		&item.BrandName,
 		&item.Province,
 		&item.City,
+		&item.District,
+		&item.SubDistrict,
 		&item.Address,
 		&item.Status,
 		&item.AccountCode,
@@ -1026,6 +1055,8 @@ func outletOverviewSelect() string {
 			ot.phone,
 			ot.province,
 			ot.city,
+			ot.district,
+			ot.sub_district,
 			ot.address,
 			ot.status,
 			(
@@ -1084,6 +1115,8 @@ func ownerOverviewSelect() string {
 			o.brand_name,
 			o.province,
 			o.city,
+			o.district,
+			o.sub_district,
 			o.address,
 			o.status,
 			COALESCE(wa.account_code, CONCAT('WALLET-OWNER-', LPAD(o.id, 6, '0'))) AS account_code,
@@ -1131,13 +1164,17 @@ func ownerOverviewSelect() string {
 
 func ownerOrderBy(sort string) (string, error) {
 	return orderBy(sort, map[string]string{
-		"created_at": "o.created_at",
-		"updated_at": "o.updated_at",
-		"code":       "o.code",
-		"name":       "o.name",
-		"brand_name": "o.brand_name",
-		"city":       "o.city",
-		"province":   "o.province",
+		"created_at":   "o.created_at",
+		"updated_at":   "o.updated_at",
+		"code":         "o.code",
+		"name":         "o.name",
+		"brand_name":   "o.brand_name",
+		"city":         "o.city",
+		"province":     "o.province",
+		"phone":        "o.phone",
+		"status":       "o.status",
+		"outlet_count": "outlet_count",
+		"wallet_balance": "CAST(wa.balance AS DECIMAL(20,2))",
 	}, "o.created_at DESC, o.id DESC")
 }
 
