@@ -661,12 +661,19 @@ func (r *Repository) ForceDeleteOutlets(ctx context.Context, ownerID int64, ids 
 
 func (r *Repository) createLeadForOwner(ctx context.Context, q queryExecutor, ownerID int64, actor Actor) error {
 	now := time.Now().UTC()
+	var outletID sql.NullInt64
+	var firstOutletID int64
+	if err := q.QueryRowContext(ctx, "SELECT id FROM outlets WHERE owner_id = ? AND deleted_at IS NULL ORDER BY id LIMIT 1", ownerID).Scan(&firstOutletID); err == nil {
+		outletID = sql.NullInt64{Int64: firstOutletID, Valid: true}
+	}
+
 	result, err := q.ExecContext(ctx, `
 		INSERT INTO customer_leads
-			(code, owner_id, source_type, source_reference, stage, status, current_score, current_owner_user_id, current_owner_role)
-		VALUES (?, ?, 'MANUAL', ?, 'NEW', 'OPEN', 1, ?, ?)`,
+			(code, owner_id, outlet_id, source_type, source_reference, stage, status, current_score, current_owner_user_id, current_owner_role)
+		VALUES (?, ?, ?, 'MANUAL', ?, 'NEW', 'OPEN', 1, ?, ?)`,
 		fmt.Sprintf("LEAD-%06d", ownerID),
 		ownerID,
+		outletID,
 		fmt.Sprintf("owner:%d", ownerID),
 		actor.ID,
 		actor.RoleCode,
