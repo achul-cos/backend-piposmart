@@ -2,6 +2,7 @@ package transfer
 
 import (
 	"errors"
+	"io"
 	"net/http"
 	"strconv"
 
@@ -139,7 +140,9 @@ func (h *Handler) rejectMatch(c *gin.Context) {
 		return
 	}
 	var req RejectMatchRequest
-	_ = c.ShouldBindJSON(&req)
+	if !bindOptionalJSON(c, &req) {
+		return
+	}
 	response, err := h.service.RejectMatch(c.Request.Context(), user, transferID, req)
 	if err != nil {
 		writeError(c, err)
@@ -163,6 +166,17 @@ func listParams(c *gin.Context) ListParams {
 		params.All = true
 	}
 	return params
+}
+
+func bindOptionalJSON(c *gin.Context, target any) bool {
+	if err := c.ShouldBindJSON(target); err != nil {
+		if errors.Is(err, io.EOF) {
+			return true
+		}
+		httpx.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", "payload tidak valid", gin.H{"error": err.Error()})
+		return false
+	}
+	return true
 }
 
 func writeError(c *gin.Context, err error) {

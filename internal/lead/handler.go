@@ -2,6 +2,7 @@ package lead
 
 import (
 	"errors"
+	"io"
 	"net/http"
 	"strconv"
 
@@ -178,7 +179,9 @@ func (h *Handler) release(c *gin.Context) {
 		return
 	}
 	var req ReleaseRequest
-	_ = c.ShouldBindJSON(&req)
+	if !bindOptionalJSON(c, &req) {
+		return
+	}
 	response, err := h.service.Release(c.Request.Context(), user, leadID, req)
 	if err != nil {
 		writeError(c, err)
@@ -208,7 +211,9 @@ func (h *Handler) markInvalid(c *gin.Context) {
 		return
 	}
 	var req MarkInvalidRequest
-	_ = c.ShouldBindJSON(&req)
+	if !bindOptionalJSON(c, &req) {
+		return
+	}
 	response, err := h.service.MarkInvalid(c.Request.Context(), user, leadID, req)
 	if err != nil {
 		writeError(c, err)
@@ -271,6 +276,17 @@ func listParams(c *gin.Context) (ListParams, bool) {
 
 func bindJSON(c *gin.Context, target any) bool {
 	if err := c.ShouldBindJSON(target); err != nil {
+		httpx.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", "Payload request tidak valid", gin.H{"error": err.Error()})
+		return false
+	}
+	return true
+}
+
+func bindOptionalJSON(c *gin.Context, target any) bool {
+	if err := c.ShouldBindJSON(target); err != nil {
+		if errors.Is(err, io.EOF) {
+			return true
+		}
 		httpx.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", "Payload request tidak valid", gin.H{"error": err.Error()})
 		return false
 	}

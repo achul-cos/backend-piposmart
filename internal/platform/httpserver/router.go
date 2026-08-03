@@ -20,6 +20,7 @@ import (
 	"backend_crm_piposmart/internal/platform/config"
 	"backend_crm_piposmart/internal/platform/httpx"
 	"backend_crm_piposmart/internal/platform/jobqueue"
+	"backend_crm_piposmart/internal/reporting"
 	"backend_crm_piposmart/internal/subscription"
 	"backend_crm_piposmart/internal/target"
 	"backend_crm_piposmart/internal/transfer"
@@ -187,6 +188,12 @@ func NewRouter(cfg config.Config, logger *slog.Logger, connection Connection) *g
 		analyticsRoutes := api.Group("")
 		analyticsRoutes.Use(identity.AuthMiddleware(identityService))
 		analytics.NewHandler(analyticsService).RegisterRoutes(analyticsRoutes)
+
+		reportingRepository := reporting.NewRepository(connection.SQLDB())
+		reportingService := reporting.NewService(reportingRepository, jobRepository, cfg.Storage)
+		reportingRoutes := api.Group("")
+		reportingRoutes.Use(identity.AuthMiddleware(identityService))
+		reporting.NewHandler(reportingService).RegisterRoutes(reportingRoutes)
 
 		discussionRepository := discussion.NewRepository(connection.SQLDB())
 		discussionService := discussion.NewService(discussionRepository)

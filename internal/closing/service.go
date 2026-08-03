@@ -145,13 +145,31 @@ func validateCreateClosingRequest(req CreateClosingRequest) error {
 	if req.UniqueTransferCode != nil && (*req.UniqueTransferCode < 0 || *req.UniqueTransferCode > 999) {
 		return ErrInvalidRequest
 	}
-	if _, err := normalizeInteractionType(req.InteractionType); err != nil {
+	if _, err := resolveInteractionChannels(req.InteractionType, req.CallStatus, req.ChatStatus); err != nil {
 		return err
 	}
 	if _, err := parseMoneyToCents(req.DiscountAmount); err != nil {
 		return err
 	}
 	return nil
+}
+
+func resolveInteractionChannels(legacyType string, callStatus string, chatStatus string) (string, error) {
+	call := strings.TrimSpace(callStatus)
+	chat := strings.TrimSpace(chatStatus)
+	if call != "" && chat != "" {
+		return InteractionCallChat, nil
+	}
+	if call != "" {
+		return InteractionCall, nil
+	}
+	if chat != "" {
+		return InteractionChat, nil
+	}
+	if strings.TrimSpace(legacyType) == "" {
+		return "", ErrInvalidRequest
+	}
+	return normalizeInteractionType(legacyType)
 }
 
 func normalizeListParams(params ListParams) ListParams {

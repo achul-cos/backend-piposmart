@@ -69,16 +69,31 @@ func (r *Repository) FindBatchBySHA256AndProfile(ctx context.Context, hash, prof
 // that auto-detect their sheet; required (enforced in Service.Upload) for SALES_CALL_CHAT/
 // SALES_TARGET, whose workbooks have several structurally-identical sheets. targetSalesUserID is
 // nil unless the same two profiles require it (the sales rep is only encoded in the sheet name).
-func (r *Repository) CreateBatch(ctx context.Context, code, profile, sheetName string, targetSalesUserID *int64, originalFilename, sha256, filePath string, uploadedByUserID int64) (int64, error) {
+func (r *Repository) CreateBatch(ctx context.Context, code, profile, sheetName string, targetSalesUserID *int64, originalFilename, sha256, filePath string, fileBlob []byte, uploadedByUserID int64) (int64, error) {
 	result, err := r.db.ExecContext(ctx, `
-		INSERT INTO import_batches (code, profile, sheet_name, target_sales_user_id, original_filename, file_sha256, file_path, uploaded_by_user_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		code, profile, sheetName, targetSalesUserID, originalFilename, sha256, filePath, uploadedByUserID,
+		INSERT INTO import_batches (code, profile, sheet_name, target_sales_user_id, original_filename, file_sha256, file_path, file_blob, uploaded_by_user_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		code, profile, sheetName, targetSalesUserID, originalFilename, sha256, filePath, fileBlob, uploadedByUserID,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("importing: create batch: %w", err)
 	}
 	return result.LastInsertId()
+}
+
+func (r *Repository) GetBatchFileSource(ctx context.Context, id int64) (ImportBatch, error) {
+	var item ImportBatch
+	row := r.db.QueryRowContext(ctx, `
+		SELECT id, original_filename, file_path, file_blob
+		FROM import_batches
+		WHERE id = ?`, id)
+	if err := row.Scan(&item.ID, &item.OriginalFilename, &item.FilePath, &item.FileBlob); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ImportBatch{}, ErrNotFound
+		}
+		return ImportBatch{}, fmt.Errorf("importing: get batch file source %d: %w", id, err)
+	}
+	return item, nil
 }
 
 func (r *Repository) GetBatchByID(ctx context.Context, id int64) (*ImportBatch, error) {

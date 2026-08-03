@@ -20,6 +20,7 @@ import (
 	"backend_crm_piposmart/internal/platform/database"
 	"backend_crm_piposmart/internal/platform/httpserver"
 	"backend_crm_piposmart/internal/platform/jobqueue"
+	"backend_crm_piposmart/internal/reporting"
 	"backend_crm_piposmart/internal/subscription"
 	"backend_crm_piposmart/internal/target"
 	"backend_crm_piposmart/internal/wallet"
@@ -94,6 +95,8 @@ func RunWorker(ctx context.Context, cfg config.Config, logger *slog.Logger) erro
 	targetService := target.NewService(target.NewRepository(connection.SQL))
 	activityService := activity.NewService(activity.NewRepository(connection.SQL))
 	closingService := closing.NewService(closing.NewRepository(connection.SQL))
+	reportingRepository := reporting.NewRepository(connection.SQL)
+	reportingService := reporting.NewService(reportingRepository, jobRepository, cfg.Storage)
 	registry := jobqueue.Registry{
 		kpi.JobTypeRecompute:      kpi.RecomputeHandler(kpiRepository),
 		importing.JobTypeValidate: importing.ValidateHandler(importingRepository),
@@ -102,6 +105,7 @@ func RunWorker(ctx context.Context, cfg config.Config, logger *slog.Logger) erro
 			walletService, subscriptionService, catalogService, targetService,
 			activityService, closingService,
 		),
+		reporting.JobTypeGenerateExport: reporting.GenerateExportHandler(reportingRepository, reportingService),
 	}
 
 	logger.Info("worker started",

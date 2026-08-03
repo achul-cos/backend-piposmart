@@ -139,7 +139,7 @@ func (s *Service) Upload(ctx context.Context, actor identity.User, file multipar
 	contextHash := hex.EncodeToString(contextSum[:])
 	code := fmt.Sprintf("IMPORT-%s-%s-%s", time.Now().Format("20060102"), hash[:8], contextHash[:6])
 
-	batchID, err := s.repo.CreateBatch(ctx, code, profileForRow, sheetName, targetSalesUserID, header.Filename, hash, filePath, actor.ID)
+	batchID, err := s.repo.CreateBatch(ctx, code, profileForRow, sheetName, targetSalesUserID, header.Filename, hash, filePath, content, actor.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -364,27 +364,35 @@ func (s *Service) TriggerCommit(ctx context.Context, actor identity.User, batchI
 type OriginalFilePayload struct {
 	Path             string
 	OriginalFilename string
+	Content          []byte
+	ContentType      string
 }
 
 func (s *Service) GetOriginalFile(ctx context.Context, actor identity.User, batchID int64) (*OriginalFilePayload, error) {
 	if !isAdmin(actor) {
 		return nil, ErrForbidden
 	}
-	batch, err := s.repo.GetBatchByID(ctx, batchID)
+	batch, err := s.repo.GetBatchFileSource(ctx, batchID)
 	if err != nil {
 		return nil, err
 	}
-	if strings.TrimSpace(batch.FilePath) == "" {
+	if strings.TrimSpace(batch.FilePath) != "" {
+		if _, err := os.Stat(batch.FilePath); err == nil {
+			return &OriginalFilePayload{
+				Path:             batch.FilePath,
+				OriginalFilename: batch.OriginalFilename,
+				ContentType:      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+			}, nil
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf("importing: stat original file: %w", err)
+		}
+	}
+	if len(batch.FileBlob) == 0 {
 		return nil, ErrFileUnavailable
 	}
-	if _, err := os.Stat(batch.FilePath); err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil, ErrFileUnavailable
-		}
-		return nil, fmt.Errorf("importing: stat original file: %w", err)
-	}
 	return &OriginalFilePayload{
-		Path:             batch.FilePath,
 		OriginalFilename: batch.OriginalFilename,
+		Content:          batch.FileBlob,
+		ContentType:      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 	}, nil
 }

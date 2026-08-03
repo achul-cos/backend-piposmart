@@ -185,10 +185,10 @@ func (f *Factory) CreateClosing(ctx context.Context, tx *sql.Tx, leadID int64, c
 	}
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO customer_interactions
-			(lead_id, owner_id, outlet_id, sales_id, supervisor_id, interaction_type, interaction_at,
+			(lead_id, owner_id, outlet_id, sales_id, supervisor_id, interaction_type, call_status, chat_status, interaction_at,
 			 remark_reason_id, remark_score, remark_code, remark_label, note, customer_response,
 			 stage_before, stage_after, status_before, status_after, score_before, score_after, created_by_user_id)
-		VALUES (?, ?, ?, ?, ?, 'CALL', ?, ?, 3, ?, ?, ?, ?, ?, 'CLOSING', ?, 'OPEN', ?, 3, ?)`,
+		VALUES (?, ?, ?, ?, ?, 'CALL', 'TERHUBUNG', NULL, ?, ?, 3, ?, ?, ?, ?, ?, 'CLOSING', ?, 'OPEN', ?, 3, ?)`,
 		leadID,
 		state.ownerID,
 		state.outletID,
