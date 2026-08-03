@@ -3,6 +3,7 @@ package closing
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"strings"
 	"time"
 
@@ -127,6 +128,9 @@ func validateCreateClosingRequest(req CreateClosingRequest) error {
 	}
 	if req.UniqueTransferCode != nil && (*req.UniqueTransferCode < 0 || *req.UniqueTransferCode > 999) {
 		return ErrInvalidRequest
+	}
+	if req.ClosedAt != nil && req.ClosedAt.After(time.Now()) {
+		return errors.New("waktu closing tidak valid karena di masa depan")
 	}
 	if _, err := normalizeInteractionType(req.InteractionType); err != nil {
 		return err

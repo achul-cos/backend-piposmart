@@ -181,7 +181,7 @@ func (s *Service) BootstrapAdmin(ctx context.Context) (User, error) {
 }
 
 func (s *Service) ListSales(ctx context.Context, actor User, status string) (SalesListResponse, error) {
-	if !hasPermission(actor, "users.read") && !hasPermission(actor, "users.manage_sales") {
+	if actor.RoleCode != RoleAdmin && actor.RoleCode != RoleSupervisor && actor.RoleCode != RoleSales {
 		return SalesListResponse{}, ErrForbidden
 	}
 	users, total, err := s.repo.ListSales(ctx, status)

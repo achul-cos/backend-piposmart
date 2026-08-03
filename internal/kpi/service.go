@@ -153,9 +153,6 @@ func (s *Service) ListResults(ctx context.Context, actor identity.User, params L
 }
 
 func (s *Service) ListRanking(ctx context.Context, actor identity.User, periodYear, periodMonth int) (*SalesKpiResultListResponse, error) {
-	if !isAdminOrSupervisor(actor) {
-		return nil, ErrForbidden
-	}
 	items, err := s.repo.ListRanking(ctx, periodYear, periodMonth)
 	if err != nil {
 		return nil, err

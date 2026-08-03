@@ -3,6 +3,7 @@ package activity
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"strings"
 	"time"
 
@@ -132,6 +133,9 @@ func validateInteractionRequest(req CreateInteractionRequest) error {
 	}
 	if req.DurationSeconds != nil && *req.DurationSeconds < 0 {
 		return ErrInvalidTransition
+	}
+	if req.InteractionAt != nil && req.InteractionAt.After(time.Now()) {
+		return errors.New("waktu interaksi tidak valid karena di masa depan")
 	}
 	return nil
 }
