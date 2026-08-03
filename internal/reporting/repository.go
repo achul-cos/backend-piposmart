@@ -118,6 +118,24 @@ func buildOwnerVisibilityCondition(actor Actor, ownerColumn string) (string, []a
 	}
 }
 
+func monthNameIDSQL(column string) string {
+	return `CASE
+		WHEN ` + column + ` IS NULL THEN ''
+		WHEN MONTH(` + column + `) = 1 THEN 'Januari'
+		WHEN MONTH(` + column + `) = 2 THEN 'Februari'
+		WHEN MONTH(` + column + `) = 3 THEN 'Maret'
+		WHEN MONTH(` + column + `) = 4 THEN 'April'
+		WHEN MONTH(` + column + `) = 5 THEN 'Mei'
+		WHEN MONTH(` + column + `) = 6 THEN 'Juni'
+		WHEN MONTH(` + column + `) = 7 THEN 'Juli'
+		WHEN MONTH(` + column + `) = 8 THEN 'Agustus'
+		WHEN MONTH(` + column + `) = 9 THEN 'September'
+		WHEN MONTH(` + column + `) = 10 THEN 'Oktober'
+		WHEN MONTH(` + column + `) = 11 THEN 'November'
+		ELSE 'Desember'
+	END`
+}
+
 func buildSalesActorCondition(actor Actor, salesColumn string) (string, []any) {
 	switch actor.RoleCode {
 	case RoleSales:
@@ -372,20 +390,30 @@ func reportColumns(reportKey string) ([]ReportColumn, error) {
 		}, nil
 	case ReportAdminOwnerOutlet:
 		return []ReportColumn{
-			{Key: "date_of_work", Label: "Date of Work", Type: "date"},
-			{Key: "input_name", Label: "Nama Penginput", Type: "string"},
-			{Key: "account_category", Label: "Kategori Akun", Type: "string"},
+			{Key: "owner_year", Label: "Tahun Owner", Type: "number"},
+			{Key: "owner_month", Label: "Bulan Owner", Type: "string"},
+			{Key: "owner_date", Label: "Tanggal Owner", Type: "string"},
 			{Key: "owner_code", Label: "Kode Owner", Type: "string"},
-			{Key: "owner_name", Label: "Nama Owner", Type: "string"},
 			{Key: "owner_email", Label: "Email Owner", Type: "string"},
 			{Key: "owner_phone", Label: "No Hp Owner", Type: "string"},
-			{Key: "outlet_phone", Label: "No Hp Outlet", Type: "string"},
-			{Key: "project_created_date", Label: "Create Date Project", Type: "date"},
-			{Key: "brand_name", Label: "Nama Project/BRAND", Type: "string"},
+			{Key: "brand_name", Label: "Nama Project/Brand", Type: "string"},
 			{Key: "outlet_name", Label: "Nama Outlet", Type: "string"},
-			{Key: "city", Label: "Kota", Type: "string"},
-			{Key: "province", Label: "Provinsi", Type: "string"},
-			{Key: "address", Label: "Alamat Lengkap", Type: "string"},
+			{Key: "outlet_phone", Label: "No Hp Outlet", Type: "string"},
+			{Key: "outlet_year", Label: "Tahun Outlet", Type: "number"},
+			{Key: "outlet_month", Label: "Bulan Outlet", Type: "string"},
+			{Key: "outlet_date", Label: "Tanggal Outlet", Type: "string"},
+			{Key: "outlet_kelurahan", Label: "Kelurahan Outlet", Type: "string"},
+			{Key: "outlet_kecamatan", Label: "Kecamatan Outlet", Type: "string"},
+			{Key: "outlet_city", Label: "Kota/Kabupaten Outlet", Type: "string"},
+			{Key: "outlet_province", Label: "Provinsi Outlet", Type: "string"},
+			{Key: "outlet_address", Label: "Alamat Outlet", Type: "string"},
+			{Key: "pic_lead", Label: "PIC/Lead", Type: "string"},
+			{Key: "shared_at", Label: "Waktu Dibagikan", Type: "datetime"},
+			{Key: "subscription_started_at", Label: "Waktu Mulai Berlangganan", Type: "string"},
+			{Key: "subscription_package_name", Label: "Paket Langganan", Type: "string"},
+			{Key: "subscription_tenor", Label: "Tenor", Type: "string"},
+			{Key: "subscription_ended_at", Label: "Waktu Berakhir Berlangganan", Type: "string"},
+			{Key: "subscription_status", Label: "Status Langganan", Type: "string"},
 		}, nil
 	case ReportAdminNewSubscribe:
 		return []ReportColumn{
@@ -474,8 +502,13 @@ func (r *Repository) ListReport(ctx context.Context, actor Actor, reportKey stri
 		Columns:   columns,
 		Items:     items,
 		Pagination: PaginationMeta{
-			Page:  page,
-			Limit: func() int { if limit <= 0 { return len(items) }; return limit }(),
+			Page: page,
+			Limit: func() int {
+				if limit <= 0 {
+					return len(items)
+				}
+				return limit
+			}(),
 			Total: total,
 		},
 		Insight: insight,
@@ -784,22 +817,74 @@ func (r *Repository) buildReportQuery(actor Actor, reportKey string, params List
 		return query, args, nil
 	case ReportAdminOwnerOutlet:
 		query := `SELECT
-			DATE(o.created_at) AS date_of_work,
-			'System CRM' AS input_name,
-			CASE WHEN ot.id IS NULL THEN 'OWNER_ONLY' ELSE 'OWNER_OUTLET' END AS account_category,
+			YEAR(o.created_at) AS owner_year,
+			` + monthNameIDSQL("o.created_at") + ` AS owner_month,
+			DATE_FORMAT(o.created_at, '%d/%m/%Y') AS owner_date,
 			o.code AS owner_code,
-			o.name AS owner_name,
 			COALESCE(o.email, '') AS owner_email,
 			COALESCE(o.phone, '') AS owner_phone,
-			COALESCE(ot.phone, '') AS outlet_phone,
-			DATE(o.created_at) AS project_created_date,
 			COALESCE(o.brand_name, '') AS brand_name,
 			COALESCE(ot.name, '') AS outlet_name,
-			COALESCE(ot.city, o.city, '') AS city,
-			COALESCE(ot.province, o.province, '') AS province,
-			COALESCE(ot.address, o.address, '') AS address
+			COALESCE(ot.phone, '') AS outlet_phone,
+			CASE WHEN ot.created_at IS NULL THEN '' ELSE YEAR(ot.created_at) END AS outlet_year,
+			` + monthNameIDSQL("ot.created_at") + ` AS outlet_month,
+			CASE WHEN ot.created_at IS NULL THEN '' ELSE DATE_FORMAT(ot.created_at, '%d/%m/%Y') END AS outlet_date,
+			'' AS outlet_kelurahan,
+			'' AS outlet_kecamatan,
+			COALESCE(ot.city, o.city, '') AS outlet_city,
+			COALESCE(ot.province, o.province, '') AS outlet_province,
+			COALESCE(ot.address, o.address, '') AS outlet_address,
+			COALESCE(pic.name, '') AS pic_lead,
+			CASE
+				WHEN active_assignment.started_at IS NULL THEN ''
+				ELSE DATE_FORMAT(active_assignment.started_at, '%d/%m/%Y %H:%i')
+			END AS shared_at,
+			CASE
+				WHEN latest_sub.active_from IS NULL THEN ''
+				ELSE DATE_FORMAT(latest_sub.active_from, '%d/%m/%Y')
+			END AS subscription_started_at,
+			COALESCE(latest_sub.package_name, '') AS subscription_package_name,
+			CASE
+				WHEN latest_sub.tenure_months IS NULL THEN ''
+				ELSE CONCAT(latest_sub.tenure_months, ' Bulan')
+			END AS subscription_tenor,
+			CASE
+				WHEN latest_sub.active_until IS NULL THEN ''
+				ELSE DATE_FORMAT(latest_sub.active_until, '%d/%m/%Y')
+			END AS subscription_ended_at,
+			COALESCE(latest_sub.subscription_status, 'BELUM BERLANGGANAN') AS subscription_status
 		FROM owners o
 		LEFT JOIN outlets ot ON ot.owner_id = o.id AND ot.deleted_at IS NULL
+		LEFT JOIN customer_leads cl ON cl.owner_id = o.id AND cl.deleted_at IS NULL
+		LEFT JOIN users pic ON pic.id = cl.current_owner_user_id
+		LEFT JOIN (
+			SELECT cla.lead_id, cla.started_at
+			FROM customer_lead_assignments cla
+			INNER JOIN (
+				SELECT lead_id, MAX(id) AS max_id
+				FROM customer_lead_assignments
+				WHERE deleted_at IS NULL AND active = TRUE
+				GROUP BY lead_id
+			) active_last ON active_last.max_id = cla.id
+			WHERE cla.deleted_at IS NULL
+		) active_assignment ON active_assignment.lead_id = cl.id
+		LEFT JOIN (
+			SELECT *
+			FROM (
+				SELECT
+					s.outlet_id,
+					s.active_from,
+					s.active_until,
+					s.status AS subscription_status,
+					JSON_UNQUOTE(JSON_EXTRACT(so.package_snapshot_json, '$.name')) AS package_name,
+					so.tenure_months,
+					ROW_NUMBER() OVER (PARTITION BY s.outlet_id ORDER BY s.active_from DESC, s.id DESC) AS rn
+				FROM subscriptions s
+				LEFT JOIN subscription_orders so ON so.id = s.order_id AND so.deleted_at IS NULL
+				WHERE s.deleted_at IS NULL
+			) ranked_sub
+			WHERE ranked_sub.rn = 1
+		) latest_sub ON latest_sub.outlet_id = ot.id
 		WHERE o.deleted_at IS NULL AND o.created_at >= ? AND o.created_at <= ?`
 		args := []any{from, to}
 		if scope, scopeArgs := buildOwnerVisibilityCondition(actor, "o.id"); scope != "" {
@@ -808,8 +893,8 @@ func (r *Repository) buildReportQuery(actor Actor, reportKey string, params List
 		}
 		if params.Query != "" {
 			like := "%" + params.Query + "%"
-			query += ` AND (o.code LIKE ? OR o.name LIKE ? OR COALESCE(ot.name, '') LIKE ? OR COALESCE(o.brand_name, '') LIKE ?)`
-			args = append(args, like, like, like, like)
+			query += ` AND (o.code LIKE ? OR COALESCE(o.email, '') LIKE ? OR COALESCE(o.brand_name, '') LIKE ? OR COALESCE(ot.name, '') LIKE ? OR COALESCE(pic.name, '') LIKE ?)`
+			args = append(args, like, like, like, like, like)
 		}
 		if params.Province != "" {
 			query += ` AND COALESCE(ot.province, o.province, '') = ?`
@@ -823,7 +908,7 @@ func (r *Repository) buildReportQuery(actor Actor, reportKey string, params List
 			query += ` AND o.created_at >= ? AND o.created_at < ?`
 			args = append(args, *createdFrom, *createdTo)
 		}
-		query += ` ORDER BY o.created_at DESC, ot.created_at DESC`
+		query += ` ORDER BY o.created_at DESC, ot.created_at DESC, ot.id DESC`
 		return query, args, nil
 	case ReportAdminNewSubscribe:
 		query := `SELECT

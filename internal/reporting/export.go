@@ -4,7 +4,10 @@ import (
 	"bytes"
 	"encoding/csv"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/go-pdf/fpdf"
 	"github.com/xuri/excelize/v2"
@@ -51,7 +54,10 @@ func buildCSV(columns []ReportColumn, items []map[string]any) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-func buildXLSX(sheetName string, columns []ReportColumn, items []map[string]any) ([]byte, error) {
+func buildXLSX(reportKey, sheetName string, columns []ReportColumn, items []map[string]any, insight map[string]any) ([]byte, error) {
+	if reportKey == ReportAdminOwnerOutlet {
+		return buildAdminOwnerOutletXLSX(sheetName, columns, items)
+	}
 	file := excelize.NewFile()
 	defaultSheet := file.GetSheetName(0)
 	file.SetSheetName(defaultSheet, sheetName)
@@ -70,6 +76,148 @@ func buildXLSX(sheetName string, columns []ReportColumn, items []map[string]any)
 		return nil, err
 	}
 	return buf.Bytes(), nil
+}
+
+func buildAdminOwnerOutletXLSX(sheetName string, columns []ReportColumn, items []map[string]any) ([]byte, error) {
+	file := excelize.NewFile()
+	defaultSheet := file.GetSheetName(0)
+	file.SetSheetName(defaultSheet, sheetName)
+
+	titleStyle, _ := file.NewStyle(&excelize.Style{
+		Font: &excelize.Font{Bold: true, Size: 14, Color: "C92C1E"},
+	})
+	metaLabelStyle, _ := file.NewStyle(&excelize.Style{
+		Font: &excelize.Font{Bold: true, Size: 10},
+	})
+	metaValueStyle, _ := file.NewStyle(&excelize.Style{
+		Font: &excelize.Font{Size: 10},
+	})
+	headerStyle, _ := file.NewStyle(&excelize.Style{
+		Font:      &excelize.Font{Bold: true, Color: "FFFFFF"},
+		Fill:      excelize.Fill{Type: "pattern", Color: []string{"C92C1E"}, Pattern: 1},
+		Alignment: &excelize.Alignment{Horizontal: "center", Vertical: "center", WrapText: true},
+		Border: []excelize.Border{
+			{Type: "left", Color: "D9D9D9", Style: 1},
+			{Type: "right", Color: "D9D9D9", Style: 1},
+			{Type: "top", Color: "D9D9D9", Style: 1},
+			{Type: "bottom", Color: "D9D9D9", Style: 1},
+		},
+	})
+	bodyStyle, _ := file.NewStyle(&excelize.Style{
+		Alignment: &excelize.Alignment{Vertical: "top", WrapText: true},
+		Border: []excelize.Border{
+			{Type: "left", Color: "EAEAEA", Style: 1},
+			{Type: "right", Color: "EAEAEA", Style: 1},
+			{Type: "top", Color: "EAEAEA", Style: 1},
+			{Type: "bottom", Color: "EAEAEA", Style: 1},
+		},
+	})
+
+	_ = file.SetRowHeight(sheetName, 1, 28)
+	for row := 2; row <= 6; row++ {
+		_ = file.SetRowHeight(sheetName, row, 20)
+	}
+
+	_ = file.MergeCell(sheetName, "C1", "H1")
+	_ = file.SetCellValue(sheetName, "C1", "Report Owner & Outlet")
+	_ = file.SetCellStyle(sheetName, "C1", "H1", titleStyle)
+
+	_ = file.SetCellValue(sheetName, "C3", "Tanggal Export")
+	_ = file.SetCellStyle(sheetName, "C3", "C3", metaLabelStyle)
+	_ = file.SetCellValue(sheetName, "D3", time.Now().In(time.Local).Format("02/01/2006"))
+	_ = file.SetCellStyle(sheetName, "D3", "D3", metaValueStyle)
+
+	_ = file.SetCellValue(sheetName, "C4", "Total Baris")
+	_ = file.SetCellStyle(sheetName, "C4", "C4", metaLabelStyle)
+	_ = file.SetCellValue(sheetName, "D4", len(items))
+	_ = file.SetCellStyle(sheetName, "D4", "D4", metaValueStyle)
+
+	if logoPath := findPiposmartLogoPath(); logoPath != "" {
+		_ = file.AddPicture(sheetName, "A1", logoPath, &excelize.GraphicOptions{
+			AutoFit:     false,
+			ScaleX:      0.55,
+			ScaleY:      0.55,
+			Positioning: "oneCell",
+		})
+	}
+
+	headerRow := 7
+	for idx, column := range columns {
+		cell, _ := excelize.CoordinatesToCellName(idx+1, headerRow)
+		_ = file.SetCellValue(sheetName, cell, column.Label)
+		_ = file.SetCellStyle(sheetName, cell, cell, headerStyle)
+		colName, _ := excelize.ColumnNumberToName(idx + 1)
+		_ = file.SetColWidth(sheetName, colName, colName, adminOwnerOutletColumnWidth(column.Key))
+	}
+	_ = file.SetRowHeight(sheetName, headerRow, 34)
+
+	for rowIndex, item := range items {
+		for colIndex, column := range columns {
+			cell, _ := excelize.CoordinatesToCellName(colIndex+1, rowIndex+headerRow+1)
+			_ = file.SetCellValue(sheetName, cell, sanitizeSpreadsheetCell(item[column.Key]))
+			_ = file.SetCellStyle(sheetName, cell, cell, bodyStyle)
+		}
+	}
+
+	lastColumn, _ := excelize.ColumnNumberToName(len(columns))
+	_ = file.SetPanes(sheetName, &excelize.Panes{
+		Freeze:      true,
+		Split:       false,
+		XSplit:      0,
+		YSplit:      headerRow,
+		TopLeftCell: fmt.Sprintf("A%d", headerRow+1),
+		ActivePane:  "bottomLeft",
+	})
+	if len(items) > 0 {
+		_ = file.SetCellStyle(sheetName, "A8", fmt.Sprintf("%s%d", lastColumn, len(items)+headerRow), bodyStyle)
+	}
+	var buf bytes.Buffer
+	if err := file.Write(&buf); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+func findPiposmartLogoPath() string {
+	candidates := []string{
+		filepath.Join("asset", "piposmart-vertical.png"),
+		filepath.Join("assets", "piposmart-vertical.png"),
+		filepath.Join("backend_crm_piposmart", "asset", "piposmart-vertical.png"),
+		filepath.Join("backend_crm_piposmart", "assets", "piposmart-vertical.png"),
+	}
+	for _, candidate := range candidates {
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate
+		}
+	}
+	return ""
+}
+
+func adminOwnerOutletColumnWidth(key string) float64 {
+	switch key {
+	case "owner_year", "outlet_year":
+		return 12
+	case "owner_month", "outlet_month":
+		return 16
+	case "owner_date", "outlet_date", "shared_at", "subscription_started_at", "subscription_ended_at":
+		return 20
+	case "owner_code":
+		return 16
+	case "owner_email":
+		return 26
+	case "owner_phone", "outlet_phone":
+		return 18
+	case "brand_name", "outlet_name", "pic_lead", "subscription_package_name":
+		return 24
+	case "outlet_kelurahan", "outlet_kecamatan", "outlet_city", "outlet_province", "subscription_status":
+		return 18
+	case "outlet_address":
+		return 34
+	case "subscription_tenor":
+		return 14
+	default:
+		return 20
+	}
 }
 
 func buildPDF(title string, columns []ReportColumn, items []map[string]any, insight map[string]any) ([]byte, error) {

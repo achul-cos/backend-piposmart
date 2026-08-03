@@ -21,17 +21,29 @@ func (s *Service) ListOrders(ctx context.Context, actor identity.User, params Li
 	return OrderListResponse{Items: orderResponses(items), Pagination: PaginationMeta{Page: params.Page, Limit: resolveReturnedLimit(params.All, params.Limit, len(items), total), Total: total}}, nil
 }
 
-func (s *Service) GetOrder(ctx context.Context, actor identity.User, id int64) (SubscriptionOrderResponse, error) {
-	item, err := s.repo.FindOrderByID(ctx, actor, id)
+func (s *Service) GetOrder(ctx context.Context, actor identity.User, id int64) (OrderDetailResponse, error) {
+	result, err := s.repo.FindOrderDetailByID(ctx, actor, id)
 	if err != nil {
-		return SubscriptionOrderResponse{}, err
+		return OrderDetailResponse{}, err
 	}
-	response := NewOrderResponse(item)
-	promotions, err := s.repo.ListOrderPromotions(ctx, id)
+	response := OrderDetailResponse{
+		Order:        NewOrderResponse(result.Order),
+		Subscription: NewSubscriptionResponse(result.Subscription),
+		Period:       NewPeriodResponse(result.Period),
+	}
+	promotions, err := s.repo.ListOrderPromotions(ctx, result.Order.ID)
 	if err != nil {
-		return SubscriptionOrderResponse{}, err
+		return OrderDetailResponse{}, err
 	}
-	response.Promotions = promotions
+	response.Order.Promotions = promotions
+	if result.Reconciliation != nil {
+		value := NewReconciliationResponse(*result.Reconciliation)
+		response.Reconciliation = &value
+	}
+	if result.Issue != nil {
+		value := NewIssueResponse(*result.Issue)
+		response.Issue = &value
+	}
 	return response, nil
 }
 
@@ -43,6 +55,34 @@ func (s *Service) CreateOrder(ctx context.Context, actor identity.User, ownerID 
 		return OrderCreateResponse{}, err
 	}
 	result, err := s.repo.CreateOrder(ctx, actor, ownerID, req)
+	if err != nil {
+		return OrderCreateResponse{}, err
+	}
+	response := OrderCreateResponse{Order: NewOrderResponse(result.Order), Subscription: NewSubscriptionResponse(result.Subscription), Period: NewPeriodResponse(result.Period), Idempotent: result.Idempotent}
+	promotions, err := s.repo.ListOrderPromotions(ctx, result.Order.ID)
+	if err != nil {
+		return OrderCreateResponse{}, err
+	}
+	response.Order.Promotions = promotions
+	if result.Reconciliation != nil {
+		value := NewReconciliationResponse(*result.Reconciliation)
+		response.Reconciliation = &value
+	}
+	if result.Issue != nil {
+		value := NewIssueResponse(*result.Issue)
+		response.Issue = &value
+	}
+	return response, nil
+}
+
+func (s *Service) CreateUpgrade(ctx context.Context, actor identity.User, subscriptionID int64, req CreateUpgradeRequest) (OrderCreateResponse, error) {
+	if actor.RoleCode != RoleAdmin {
+		return OrderCreateResponse{}, ErrForbidden
+	}
+	if err := validateCreateUpgradeRequest(req); err != nil {
+		return OrderCreateResponse{}, err
+	}
+	result, err := s.repo.CreateUpgrade(ctx, actor, subscriptionID, req)
 	if err != nil {
 		return OrderCreateResponse{}, err
 	}
@@ -147,6 +187,22 @@ func validateCreateOrderRequest(req CreateOrderRequest) error {
 	return nil
 }
 
+func validateCreateUpgradeRequest(req CreateUpgradeRequest) error {
+	if req.PlanID < 1 {
+		return ErrInvalidRequest
+	}
+	if req.ClosingID != nil && *req.ClosingID < 1 {
+		return ErrInvalidRequest
+	}
+	if _, err := upgradeIdempotencyKey(req); err != nil {
+		return err
+	}
+	if _, err := effectiveUpgradeStartDate(req.EffectiveStartDate, time.Now().UTC()); err != nil {
+		return err
+	}
+	return nil
+}
+
 func validateManualReconcileRequest(req ManualReconcileRequest) error {
 	if req.ClosingID < 1 {
 		return ErrInvalidRequest
@@ -174,6 +230,7 @@ func normalizeListParams(params ListParams) ListParams {
 	}
 	params.Query = strings.TrimSpace(params.Query)
 	params.Status = strings.ToUpper(strings.TrimSpace(params.Status))
+	params.OrderType = strings.ToUpper(strings.TrimSpace(params.OrderType))
 	params.IssueType = strings.ToUpper(strings.TrimSpace(params.IssueType))
 	params.Sort = strings.TrimSpace(params.Sort)
 	return params

@@ -16,6 +16,9 @@ const (
 	OrderStatusRejected   = "REJECTED"
 	OrderStatusCanceled   = "CANCELED"
 
+	OrderTypeNew     = "NEW"
+	OrderTypeUpgrade = "UPGRADE"
+
 	SubscriptionStatusActive   = "ACTIVE"
 	SubscriptionStatusExpired  = "EXPIRED"
 	SubscriptionStatusCanceled = "CANCELED"
@@ -36,9 +39,10 @@ const (
 	IssueAmountMismatch = "AMOUNT_MISMATCH"
 	IssueOwnerMismatch  = "OWNER_MISMATCH"
 
-	WalletDirectionDebit          = "DEBIT"
-	WalletTransactionDebit        = "DEBIT"
-	WalletSourceSubscriptionOrder = "SUBSCRIPTION_ORDER"
+	WalletDirectionDebit            = "DEBIT"
+	WalletTransactionDebit          = "DEBIT"
+	WalletSourceSubscriptionOrder   = "SUBSCRIPTION_ORDER"
+	WalletSourceSubscriptionUpgrade = "SUBSCRIPTION_UPGRADE"
 )
 
 type EntityRef struct {
@@ -134,20 +138,29 @@ type SubscriptionOrder struct {
 	// a self-service purchase already made in the real app) exceeded the owner's CRM-side
 	// balance — CreateOrder still proceeds (clamping the wallet to 0, never negative — the
 	// balance column has a CHECK >= 0), flagging the difference here instead of hard-blocking.
-	BalanceShortfallAmount sql.NullString
-	Currency              string
-	Status                string
-	IdempotencyKey        string
-	ExternalReference     sql.NullString
-	PurchasedAt           time.Time
-	SubscriptionStartDate time.Time
-	Note                  sql.NullString
-	CreatedByUserID       sql.NullInt64
-	CreatedByName         sql.NullString
-	UpdatedByUserID       sql.NullInt64
-	UpdatedByName         sql.NullString
-	CreatedAt             time.Time
-	UpdatedAt             time.Time
+	BalanceShortfallAmount      sql.NullString
+	Currency                    string
+	OrderType                   string
+	Status                      string
+	SourceSubscriptionID        sql.NullInt64
+	SourceSubscriptionCode      sql.NullString
+	UpgradeEffectiveStartDate   sql.NullTime
+	UpgradeOriginalEndDate      sql.NullTime
+	UpgradeRemainingDays        sql.NullInt64
+	UpgradeDailyPrice           sql.NullString
+	PreviousPackageSnapshotJSON sql.NullString
+	PreviousPlanSnapshotJSON    sql.NullString
+	IdempotencyKey              string
+	ExternalReference           sql.NullString
+	PurchasedAt                 time.Time
+	SubscriptionStartDate       time.Time
+	Note                        sql.NullString
+	CreatedByUserID             sql.NullInt64
+	CreatedByName               sql.NullString
+	UpdatedByUserID             sql.NullInt64
+	UpdatedByName               sql.NullString
+	CreatedAt                   time.Time
+	UpdatedAt                   time.Time
 }
 
 type Subscription struct {
@@ -213,15 +226,15 @@ type Reconciliation struct {
 	AdminTenureMonths sql.NullInt64
 	AdminFinalAmount  sql.NullString
 	Note              sql.NullString
-	Reason           sql.NullString
-	ConfirmedAt      sql.NullTime
-	RejectedAt       sql.NullTime
-	CreatedByUserID  sql.NullInt64
-	CreatedByName    sql.NullString
-	UpdatedByUserID  sql.NullInt64
-	UpdatedByName    sql.NullString
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
+	Reason            sql.NullString
+	ConfirmedAt       sql.NullTime
+	RejectedAt        sql.NullTime
+	CreatedByUserID   sql.NullInt64
+	CreatedByName     sql.NullString
+	UpdatedByUserID   sql.NullInt64
+	UpdatedByName     sql.NullString
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
 }
 
 type ReconciliationIssue struct {
@@ -264,6 +277,16 @@ type CreateOrderRequest struct {
 	Note                  string     `json:"note"`
 }
 
+type CreateUpgradeRequest struct {
+	PlanID             int64      `json:"plan_id"`
+	ClosingID          *int64     `json:"closing_id"`
+	IdempotencyKey     string     `json:"idempotency_key"`
+	ExternalReference  string     `json:"external_reference"`
+	PurchasedAt        *time.Time `json:"purchased_at"`
+	EffectiveStartDate string     `json:"effective_start_date"`
+	Note               string     `json:"note"`
+}
+
 type ManualReconcileRequest struct {
 	ClosingID int64  `json:"closing_id" binding:"required,min=1"`
 	Action    string `json:"action" binding:"required"`
@@ -275,26 +298,28 @@ type ManualReconcileRequest struct {
 }
 
 type ListParams struct {
-	Query         string
-	Status        string
-	OwnerID       *int64
-	OutletID      *int64
-	OrderID       *int64
-	ClosingID     *int64
-	SalesID       *int64
-	SupervisorID  *int64
-	PlanID        *int64
-	IssueType     string
-	CreatedFrom   *time.Time
-	CreatedTo     *time.Time
-	PurchasedFrom *time.Time
-	PurchasedTo   *time.Time
-	ActiveFrom    *time.Time
-	ActiveTo      *time.Time
-	All           bool
-	Page          int
-	Limit         int
-	Sort          string
+	Query                string
+	Status               string
+	OrderType            string
+	OwnerID              *int64
+	OutletID             *int64
+	OrderID              *int64
+	SourceSubscriptionID *int64
+	ClosingID            *int64
+	SalesID              *int64
+	SupervisorID         *int64
+	PlanID               *int64
+	IssueType            string
+	CreatedFrom          *time.Time
+	CreatedTo            *time.Time
+	PurchasedFrom        *time.Time
+	PurchasedTo          *time.Time
+	ActiveFrom           *time.Time
+	ActiveTo             *time.Time
+	All                  bool
+	Page                 int
+	Limit                int
+	Sort                 string
 }
 
 type PaginationMeta struct {
@@ -304,40 +329,52 @@ type PaginationMeta struct {
 }
 
 type SubscriptionOrderResponse struct {
-	ID                    int64              `json:"id"`
-	Code                  string             `json:"code"`
-	Owner                 *EntityRef         `json:"owner,omitempty"`
-	OutletID              *int64             `json:"outlet_id,omitempty"`
-	Closing               *EntityRef         `json:"closing,omitempty"`
-	Sales                 *UserBrief         `json:"sales,omitempty"`
-	Supervisor            *UserBrief         `json:"supervisor,omitempty"`
-	WalletAccountID       *int64             `json:"wallet_account_id,omitempty"`
-	WalletTransactionID   *int64             `json:"wallet_transaction_id,omitempty"`
-	Package               *EntityRef         `json:"package,omitempty"`
-	Plan                  *EntityRef         `json:"plan,omitempty"`
-	Promotion             *EntityRef         `json:"promotion,omitempty"`
-	Promotions            []EntityRef       `json:"promotions,omitempty"`
-	PackageSnapshot       PackageSnapshot    `json:"package_snapshot"`
-	PlanSnapshot          PlanSnapshot       `json:"plan_snapshot"`
-	PromotionSnapshot     *PromotionSnapshot `json:"promotion_snapshot,omitempty"`
-	TenureMonths          int                `json:"tenure_months"`
-	DurationDays          int                `json:"duration_days"`
-	BasePrice             string             `json:"base_price"`
-	DiscountAmount        string             `json:"discount_amount"`
-	AdditionalCharge      string             `json:"additional_charge"`
-	FinalAmount           string             `json:"final_amount"`
-	BalanceShortfallAmount *string           `json:"balance_shortfall_amount,omitempty"`
-	Currency              string             `json:"currency"`
-	Status                string             `json:"status"`
-	IdempotencyKey        string             `json:"idempotency_key"`
-	ExternalReference     string             `json:"external_reference,omitempty"`
-	PurchasedAt           time.Time          `json:"purchased_at"`
-	SubscriptionStartDate string             `json:"subscription_start_date"`
-	Note                  string             `json:"note,omitempty"`
-	CreatedBy             *UserBrief         `json:"created_by,omitempty"`
-	UpdatedBy             *UserBrief         `json:"updated_by,omitempty"`
-	CreatedAt             time.Time          `json:"created_at"`
-	UpdatedAt             time.Time          `json:"updated_at"`
+	ID                     int64                   `json:"id"`
+	Code                   string                  `json:"code"`
+	Owner                  *EntityRef              `json:"owner,omitempty"`
+	OutletID               *int64                  `json:"outlet_id,omitempty"`
+	Closing                *EntityRef              `json:"closing,omitempty"`
+	Sales                  *UserBrief              `json:"sales,omitempty"`
+	Supervisor             *UserBrief              `json:"supervisor,omitempty"`
+	WalletAccountID        *int64                  `json:"wallet_account_id,omitempty"`
+	WalletTransactionID    *int64                  `json:"wallet_transaction_id,omitempty"`
+	Package                *EntityRef              `json:"package,omitempty"`
+	Plan                   *EntityRef              `json:"plan,omitempty"`
+	Promotion              *EntityRef              `json:"promotion,omitempty"`
+	Promotions             []EntityRef             `json:"promotions,omitempty"`
+	PackageSnapshot        PackageSnapshot         `json:"package_snapshot"`
+	PlanSnapshot           PlanSnapshot            `json:"plan_snapshot"`
+	PromotionSnapshot      *PromotionSnapshot      `json:"promotion_snapshot,omitempty"`
+	TenureMonths           int                     `json:"tenure_months"`
+	DurationDays           int                     `json:"duration_days"`
+	BasePrice              string                  `json:"base_price"`
+	DiscountAmount         string                  `json:"discount_amount"`
+	AdditionalCharge       string                  `json:"additional_charge"`
+	FinalAmount            string                  `json:"final_amount"`
+	BalanceShortfallAmount *string                 `json:"balance_shortfall_amount,omitempty"`
+	Currency               string                  `json:"currency"`
+	OrderType              string                  `json:"order_type"`
+	Status                 string                  `json:"status"`
+	SourceSubscription     *EntityRef              `json:"source_subscription,omitempty"`
+	Upgrade                *UpgradeContextResponse `json:"upgrade,omitempty"`
+	IdempotencyKey         string                  `json:"idempotency_key"`
+	ExternalReference      string                  `json:"external_reference,omitempty"`
+	PurchasedAt            time.Time               `json:"purchased_at"`
+	SubscriptionStartDate  string                  `json:"subscription_start_date"`
+	Note                   string                  `json:"note,omitempty"`
+	CreatedBy              *UserBrief              `json:"created_by,omitempty"`
+	UpdatedBy              *UserBrief              `json:"updated_by,omitempty"`
+	CreatedAt              time.Time               `json:"created_at"`
+	UpdatedAt              time.Time               `json:"updated_at"`
+}
+
+type UpgradeContextResponse struct {
+	EffectiveStartDate string           `json:"effective_start_date"`
+	OriginalEndDate    string           `json:"original_end_date"`
+	RemainingDays      int              `json:"remaining_days"`
+	DailyPrice         string           `json:"daily_price"`
+	PreviousPackage    *PackageSnapshot `json:"previous_package,omitempty"`
+	PreviousPlan       *PlanSnapshot    `json:"previous_plan,omitempty"`
 }
 
 type SubscriptionResponse struct {
@@ -373,25 +410,25 @@ type SubscriptionPeriodResponse struct {
 }
 
 type ReconciliationResponse struct {
-	ID               int64      `json:"id"`
-	Code             string     `json:"code"`
-	Order            *EntityRef `json:"order,omitempty"`
-	Closing          *EntityRef `json:"closing,omitempty"`
-	Owner            *EntityRef `json:"owner,omitempty"`
-	Status           string     `json:"status"`
-	MatchType        string     `json:"match_type"`
-	IssueCode        string     `json:"issue_code,omitempty"`
-	AmountDifference string     `json:"amount_difference"`
-	AdminTenureMonths *int      `json:"admin_tenure_months,omitempty"`
-	AdminFinalAmount  *string   `json:"admin_final_amount,omitempty"`
-	Note             string     `json:"note,omitempty"`
-	Reason           string     `json:"reason,omitempty"`
-	ConfirmedAt      *time.Time `json:"confirmed_at,omitempty"`
-	RejectedAt       *time.Time `json:"rejected_at,omitempty"`
-	CreatedBy        *UserBrief `json:"created_by,omitempty"`
-	UpdatedBy        *UserBrief `json:"updated_by,omitempty"`
-	CreatedAt        time.Time  `json:"created_at"`
-	UpdatedAt        time.Time  `json:"updated_at"`
+	ID                int64      `json:"id"`
+	Code              string     `json:"code"`
+	Order             *EntityRef `json:"order,omitempty"`
+	Closing           *EntityRef `json:"closing,omitempty"`
+	Owner             *EntityRef `json:"owner,omitempty"`
+	Status            string     `json:"status"`
+	MatchType         string     `json:"match_type"`
+	IssueCode         string     `json:"issue_code,omitempty"`
+	AmountDifference  string     `json:"amount_difference"`
+	AdminTenureMonths *int       `json:"admin_tenure_months,omitempty"`
+	AdminFinalAmount  *string    `json:"admin_final_amount,omitempty"`
+	Note              string     `json:"note,omitempty"`
+	Reason            string     `json:"reason,omitempty"`
+	ConfirmedAt       *time.Time `json:"confirmed_at,omitempty"`
+	RejectedAt        *time.Time `json:"rejected_at,omitempty"`
+	CreatedBy         *UserBrief `json:"created_by,omitempty"`
+	UpdatedBy         *UserBrief `json:"updated_by,omitempty"`
+	CreatedAt         time.Time  `json:"created_at"`
+	UpdatedAt         time.Time  `json:"updated_at"`
 }
 
 type ReconciliationIssueResponse struct {
@@ -418,6 +455,14 @@ type OrderCreateResponse struct {
 	Reconciliation *ReconciliationResponse      `json:"reconciliation,omitempty"`
 	Issue          *ReconciliationIssueResponse `json:"issue,omitempty"`
 	Idempotent     bool                         `json:"idempotent"`
+}
+
+type OrderDetailResponse struct {
+	Order          SubscriptionOrderResponse    `json:"order"`
+	Subscription   SubscriptionResponse         `json:"subscription"`
+	Period         SubscriptionPeriodResponse   `json:"period"`
+	Reconciliation *ReconciliationResponse      `json:"reconciliation,omitempty"`
+	Issue          *ReconciliationIssueResponse `json:"issue,omitempty"`
 }
 
 type ReconciliationActionResponse struct {
@@ -457,40 +502,68 @@ func NewOrderResponse(item SubscriptionOrder) SubscriptionOrderResponse {
 			promotionSnapshot = &value
 		}
 	}
+	var upgrade *UpgradeContextResponse
+	if item.OrderType == OrderTypeUpgrade && item.UpgradeEffectiveStartDate.Valid && item.UpgradeOriginalEndDate.Valid && item.UpgradeRemainingDays.Valid && item.UpgradeDailyPrice.Valid {
+		var previousPackage *PackageSnapshot
+		if item.PreviousPackageSnapshotJSON.Valid && item.PreviousPackageSnapshotJSON.String != "" {
+			var value PackageSnapshot
+			if err := json.Unmarshal([]byte(item.PreviousPackageSnapshotJSON.String), &value); err == nil {
+				previousPackage = &value
+			}
+		}
+		var previousPlan *PlanSnapshot
+		if item.PreviousPlanSnapshotJSON.Valid && item.PreviousPlanSnapshotJSON.String != "" {
+			var value PlanSnapshot
+			if err := json.Unmarshal([]byte(item.PreviousPlanSnapshotJSON.String), &value); err == nil {
+				previousPlan = &value
+			}
+		}
+		upgrade = &UpgradeContextResponse{
+			EffectiveStartDate: formatDate(item.UpgradeEffectiveStartDate.Time),
+			OriginalEndDate:    formatDate(item.UpgradeOriginalEndDate.Time),
+			RemainingDays:      int(item.UpgradeRemainingDays.Int64),
+			DailyPrice:         item.UpgradeDailyPrice.String,
+			PreviousPackage:    previousPackage,
+			PreviousPlan:       previousPlan,
+		}
+	}
 	return SubscriptionOrderResponse{
-		ID:                    item.ID,
-		Code:                  item.Code,
-		Owner:                 nullableEntity(item.OwnerID, item.OwnerCode, item.OwnerName),
-		OutletID:              nullableInt64Ptr(item.OutletID),
-		Closing:               nullableEntity(item.ClosingID, item.ClosingCode, sql.NullString{}),
-		Sales:                 nullableUser(item.SalesID, item.SalesName, RoleSales),
-		Supervisor:            nullableUser(item.SupervisorID, item.SupervisorName, RoleSupervisor),
-		WalletAccountID:       nullableInt64Ptr(item.WalletAccountID),
-		WalletTransactionID:   nullableInt64Ptr(item.WalletTransactionID),
-		Package:               nullableEntity(item.PackageID, item.PackageCode, item.PackageName),
-		Plan:                  nullableEntity(item.PlanID, item.PlanCode, item.PlanName),
-		Promotion:             nullableEntity(item.PromotionID, item.PromotionCode, item.PromotionName),
-		PackageSnapshot:       packageSnapshot,
-		PlanSnapshot:          planSnapshot,
-		PromotionSnapshot:     promotionSnapshot,
-		TenureMonths:          item.TenureMonths,
-		DurationDays:          item.DurationDays,
-		BasePrice:             item.BasePrice,
-		DiscountAmount:        item.DiscountAmount,
-		AdditionalCharge:      item.AdditionalCharge,
-		FinalAmount:           item.FinalAmount,
+		ID:                     item.ID,
+		Code:                   item.Code,
+		Owner:                  nullableEntity(item.OwnerID, item.OwnerCode, item.OwnerName),
+		OutletID:               nullableInt64Ptr(item.OutletID),
+		Closing:                nullableEntity(item.ClosingID, item.ClosingCode, sql.NullString{}),
+		Sales:                  nullableUser(item.SalesID, item.SalesName, RoleSales),
+		Supervisor:             nullableUser(item.SupervisorID, item.SupervisorName, RoleSupervisor),
+		WalletAccountID:        nullableInt64Ptr(item.WalletAccountID),
+		WalletTransactionID:    nullableInt64Ptr(item.WalletTransactionID),
+		Package:                nullableEntity(item.PackageID, item.PackageCode, item.PackageName),
+		Plan:                   nullableEntity(item.PlanID, item.PlanCode, item.PlanName),
+		Promotion:              nullableEntity(item.PromotionID, item.PromotionCode, item.PromotionName),
+		PackageSnapshot:        packageSnapshot,
+		PlanSnapshot:           planSnapshot,
+		PromotionSnapshot:      promotionSnapshot,
+		TenureMonths:           item.TenureMonths,
+		DurationDays:           item.DurationDays,
+		BasePrice:              item.BasePrice,
+		DiscountAmount:         item.DiscountAmount,
+		AdditionalCharge:       item.AdditionalCharge,
+		FinalAmount:            item.FinalAmount,
 		BalanceShortfallAmount: nullableStringPtr(item.BalanceShortfallAmount),
-		Currency:              item.Currency,
-		Status:                item.Status,
-		IdempotencyKey:        item.IdempotencyKey,
-		ExternalReference:     item.ExternalReference.String,
-		PurchasedAt:           item.PurchasedAt,
-		SubscriptionStartDate: formatDate(item.SubscriptionStartDate),
-		Note:                  item.Note.String,
-		CreatedBy:             nullableUser(item.CreatedByUserID, item.CreatedByName, ""),
-		UpdatedBy:             nullableUser(item.UpdatedByUserID, item.UpdatedByName, ""),
-		CreatedAt:             item.CreatedAt,
-		UpdatedAt:             item.UpdatedAt,
+		Currency:               item.Currency,
+		OrderType:              item.OrderType,
+		Status:                 item.Status,
+		SourceSubscription:     nullableEntity(item.SourceSubscriptionID, item.SourceSubscriptionCode, sql.NullString{}),
+		Upgrade:                upgrade,
+		IdempotencyKey:         item.IdempotencyKey,
+		ExternalReference:      item.ExternalReference.String,
+		PurchasedAt:            item.PurchasedAt,
+		SubscriptionStartDate:  formatDate(item.SubscriptionStartDate),
+		Note:                   item.Note.String,
+		CreatedBy:              nullableUser(item.CreatedByUserID, item.CreatedByName, ""),
+		UpdatedBy:              nullableUser(item.UpdatedByUserID, item.UpdatedByName, ""),
+		CreatedAt:              item.CreatedAt,
+		UpdatedAt:              item.UpdatedAt,
 	}
 }
 
@@ -532,25 +605,25 @@ func NewPeriodResponse(item SubscriptionPeriod) SubscriptionPeriodResponse {
 
 func NewReconciliationResponse(item Reconciliation) ReconciliationResponse {
 	return ReconciliationResponse{
-		ID:               item.ID,
-		Code:             item.Code,
-		Order:            nullableEntity(item.OrderID, item.OrderCode, sql.NullString{}),
-		Closing:          nullableEntity(item.ClosingID, item.ClosingCode, sql.NullString{}),
-		Owner:            nullableEntity(item.OwnerID, item.OwnerCode, item.OwnerName),
-		Status:           item.Status,
+		ID:                item.ID,
+		Code:              item.Code,
+		Order:             nullableEntity(item.OrderID, item.OrderCode, sql.NullString{}),
+		Closing:           nullableEntity(item.ClosingID, item.ClosingCode, sql.NullString{}),
+		Owner:             nullableEntity(item.OwnerID, item.OwnerCode, item.OwnerName),
+		Status:            item.Status,
 		MatchType:         item.MatchType,
 		IssueCode:         item.IssueCode.String,
 		AmountDifference:  item.AmountDifference,
 		AdminTenureMonths: nullableIntPtr(item.AdminTenureMonths),
 		AdminFinalAmount:  nullableStringPtr(item.AdminFinalAmount),
 		Note:              item.Note.String,
-		Reason:           item.Reason.String,
-		ConfirmedAt:      nullableTimePtr(item.ConfirmedAt),
-		RejectedAt:       nullableTimePtr(item.RejectedAt),
-		CreatedBy:        nullableUser(item.CreatedByUserID, item.CreatedByName, ""),
-		UpdatedBy:        nullableUser(item.UpdatedByUserID, item.UpdatedByName, ""),
-		CreatedAt:        item.CreatedAt,
-		UpdatedAt:        item.UpdatedAt,
+		Reason:            item.Reason.String,
+		ConfirmedAt:       nullableTimePtr(item.ConfirmedAt),
+		RejectedAt:        nullableTimePtr(item.RejectedAt),
+		CreatedBy:         nullableUser(item.CreatedByUserID, item.CreatedByName, ""),
+		UpdatedBy:         nullableUser(item.UpdatedByUserID, item.UpdatedByName, ""),
+		CreatedAt:         item.CreatedAt,
+		UpdatedAt:         item.UpdatedAt,
 	}
 }
 

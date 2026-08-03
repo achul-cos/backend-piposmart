@@ -2436,7 +2436,7 @@ paths:
       tags: [Subscription]
       summary: List subscription order
       operationId: listSubscriptionOrders
-      description: Admin melihat seluruh order. Supervisor dan Sales hanya melihat order pada owner/lead dalam cakupan ownership mereka. Revenue top-up tetap dihitung dari wallet payment, sedangkan order dipakai untuk aktivasi subscription dan performa closing setelah reconciliation.
+      description: Admin melihat seluruh order. Supervisor dan Sales hanya melihat order pada owner/lead dalam cakupan ownership mereka. Revenue top-up tetap dihitung dari wallet payment, sedangkan order dipakai untuk aktivasi subscription dan performa closing setelah reconciliation. Sprint 16b menambahkan `order_type=UPGRADE` untuk pencatatan upgrade paket prorata sisa hari.
       security:
         - bearerAuth: []
       parameters:
@@ -2471,6 +2471,18 @@ paths:
           schema:
             type: string
             enum: [PAID, RECONCILED, REJECTED, CANCELED]
+        - name: order_type
+          in: query
+          schema:
+            type: string
+            enum: [NEW, UPGRADE]
+          description: Filter jenis order. `UPGRADE` berarti order hasil upgrade paket dari subscription yang masih aktif.
+        - name: source_subscription_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+          description: Filter order upgrade berdasarkan subscription sumber yang dipotong.
         - name: purchased_from
           in: query
           schema:
@@ -2534,7 +2546,7 @@ paths:
       tags: [Subscription]
       summary: Membuat subscription order dari wallet owner
       operationId: createOwnerSubscriptionOrder
-      description: Admin-only. Order mendebit wallet secara atomic, membuat subscription dan period, lalu otomatis membuat reconciliation jika closing_id dikirim. Wajib mengirim idempotency_key atau external_reference.
+      description: Admin-only. Order mendebit wallet secara atomic, membuat subscription dan period, lalu otomatis membuat reconciliation jika closing_id dikirim. Wajib mengirim idempotency_key atau external_reference. `subscription_start_date` dapat diatur manual oleh Admin untuk backfill pembelian lama yang baru direkap hari ini.
       security:
         - bearerAuth: []
       parameters:
@@ -2566,6 +2578,52 @@ paths:
                 $ref: "#/components/schemas/ErrorEnvelope"
         "404":
           description: Owner, wallet, plan, promo, outlet, atau closing tidak ditemukan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+  /api/v1/subscriptions/{subscription_id}/upgrades:
+    post:
+      tags: [Subscription]
+      summary: Upgrade paket subscription aktif secara prorata
+      operationId: createSubscriptionUpgrade
+      description: Admin-only. Subscription aktif dipotong pada `effective_start_date`, lalu backend membuat order upgrade dan subscription baru untuk sisa hari yang masih berjalan. Nilai tagihan dihitung prorata dari harga plan target berdasarkan `remaining_days`.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateSubscriptionUpgradeRequest"
+      responses:
+        "201":
+          description: Upgrade subscription berhasil dibuat
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+        "400":
+          description: Subscription tidak aktif, effective_start_date tidak valid, plan target bukan upgrade, atau saldo wallet tidak mencukupi
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "403":
+          description: User bukan Admin
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "404":
+          description: Subscription sumber atau plan target tidak ditemukan
           content:
             application/json:
               schema:
@@ -9030,6 +9088,41 @@ components:
         note:
           type: string
           example: Pembelian paket dari saldo top-up April.
+    CreateSubscriptionUpgradeRequest:
+      type: object
+      required: [plan_id]
+      properties:
+        plan_id:
+          type: integer
+          format: int64
+          description: Plan target upgrade. Harus berasal dari package dengan level lebih tinggi dari subscription aktif saat ini.
+          example: 7
+        closing_id:
+          type: integer
+          format: int64
+          nullable: true
+          description: Opsional. Jika dikirim, backend akan mencoba auto reconcile upgrade ke closing sales. Plan closing harus sama dengan plan target upgrade. Jika nominal closing berbeda dengan nominal prorata upgrade, backend akan membuat partial confirm otomatis dan mem-pin omset closing ke nominal upgrade yang benar.
+          example: 22
+        idempotency_key:
+          type: string
+          example: subscription-upgrade-sub-15-20260803-001
+          description: Wajib jika external_reference kosong.
+        external_reference:
+          type: string
+          example: ADMIN-UPGRADE-20260803-001
+        purchased_at:
+          type: string
+          format: date-time
+          example: "2026-08-03T10:30:00Z"
+          description: Waktu pembayaran upgrade yang sebenarnya jika Admin sedang backfill data.
+        effective_start_date:
+          type: string
+          format: date
+          example: "2026-08-01"
+          description: Tanggal mulai efektif upgrade. Subscription lama akan dipotong mulai tanggal ini dan sisa harinya menjadi dasar prorata tagihan upgrade.
+        note:
+          type: string
+          example: Upgrade dari Basic ke Pro untuk sisa masa aktif subscription.
     ManualReconcileRequest:
       type: object
       required: [action]
