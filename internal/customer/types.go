@@ -32,6 +32,8 @@ type Owner struct {
 	BrandName   sql.NullString
 	Province    sql.NullString
 	City        sql.NullString
+	District    sql.NullString
+	SubDistrict sql.NullString
 	Address     sql.NullString
 	Status      string
 	OutletCount int64
@@ -47,6 +49,8 @@ type Outlet struct {
 	Phone     sql.NullString
 	Province  sql.NullString
 	City      sql.NullString
+	District    sql.NullString
+	SubDistrict sql.NullString
 	Address   sql.NullString
 	Status    string
 	CreatedAt time.Time
@@ -66,6 +70,8 @@ type OutletOverview struct {
 	Phone                    sql.NullString
 	Province                 sql.NullString
 	City                     sql.NullString
+	District                 sql.NullString
+	SubDistrict              sql.NullString
 	Address                  sql.NullString
 	Status                   string
 	SubscriptionCount        int64
@@ -97,6 +103,8 @@ type OwnerOverview struct {
 	BrandName             sql.NullString
 	Province              sql.NullString
 	City                  sql.NullString
+	District              sql.NullString
+	SubDistrict           sql.NullString
 	Address               sql.NullString
 	Status                string
 	AccountCode           string
@@ -126,6 +134,8 @@ type OwnerResponse struct {
 	BrandName   string    `json:"brand_name,omitempty"`
 	Province    string    `json:"province,omitempty"`
 	City        string    `json:"city,omitempty"`
+	District    string    `json:"district,omitempty"`
+	SubDistrict string    `json:"sub_district,omitempty"`
 	Address     string    `json:"address,omitempty"`
 	Status      string    `json:"status"`
 	OutletCount int64     `json:"outlet_count,omitempty"`
@@ -141,6 +151,8 @@ type OutletResponse struct {
 	Phone     string    `json:"phone,omitempty"`
 	Province  string    `json:"province,omitempty"`
 	City      string    `json:"city,omitempty"`
+	District    string    `json:"district,omitempty"`
+	SubDistrict string    `json:"sub_district,omitempty"`
 	Address   string    `json:"address,omitempty"`
 	Status    string    `json:"status"`
 	CreatedAt time.Time `json:"created_at"`
@@ -184,6 +196,8 @@ type OutletOverviewResponse struct {
 	Phone               string                      `json:"phone,omitempty"`
 	Province            string                      `json:"province,omitempty"`
 	City                string                      `json:"city,omitempty"`
+	District            string                      `json:"district,omitempty"`
+	SubDistrict         string                      `json:"sub_district,omitempty"`
 	Address             string                      `json:"address,omitempty"`
 	Status              string                      `json:"status"`
 	SubscriptionSummary SubscriptionSummaryResponse `json:"subscription_summary"`
@@ -199,6 +213,8 @@ type OutletDetailResponse struct {
 	Phone               string                      `json:"phone,omitempty"`
 	Province            string                      `json:"province,omitempty"`
 	City                string                      `json:"city,omitempty"`
+	District            string                      `json:"district,omitempty"`
+	SubDistrict         string                      `json:"sub_district,omitempty"`
 	Address             string                      `json:"address,omitempty"`
 	Status              string                      `json:"status"`
 	SubscriptionSummary SubscriptionSummaryResponse `json:"subscription_summary"`
@@ -231,6 +247,8 @@ type OwnerOverviewResponse struct {
 	BrandName   string               `json:"brand_name,omitempty"`
 	Province    string               `json:"province,omitempty"`
 	City        string               `json:"city,omitempty"`
+	District    string               `json:"district,omitempty"`
+	SubDistrict string               `json:"sub_district,omitempty"`
 	Address     string               `json:"address,omitempty"`
 	Status      string               `json:"status"`
 	Balance     OwnerBalanceResponse `json:"balance"`
@@ -247,6 +265,8 @@ type CreateOwnerRequest struct {
 	BrandName string `json:"brand_name"`
 	Province  string `json:"province"`
 	City      string `json:"city"`
+	District    string `json:"district"`
+	SubDistrict string `json:"sub_district"`
 	Address   string `json:"address"`
 	CreatedAt *time.Time `json:"created_at,omitempty"`
 }
@@ -259,6 +279,8 @@ type UpdateOwnerRequest struct {
 	BrandName *string `json:"brand_name"`
 	Province  *string `json:"province"`
 	City      *string `json:"city"`
+	District    *string `json:"district"`
+	SubDistrict *string `json:"sub_district"`
 	Address   *string `json:"address"`
 }
 
@@ -268,6 +290,8 @@ type CreateOutletRequest struct {
 	Phone    string `json:"phone"`
 	Province string `json:"province"`
 	City     string `json:"city"`
+	District    string `json:"district"`
+	SubDistrict string `json:"sub_district"`
 	Address  string `json:"address"`
 	CreatedAt *time.Time `json:"created_at,omitempty"`
 }
@@ -278,6 +302,8 @@ type UpdateOutletRequest struct {
 	Phone    *string `json:"phone"`
 	Province *string `json:"province"`
 	City     *string `json:"city"`
+	District    *string `json:"district"`
+	SubDistrict *string `json:"sub_district"`
 	Address  *string `json:"address"`
 }
 
@@ -401,6 +427,8 @@ func NewOwnerResponse(owner Owner) OwnerResponse {
 		BrandName:   owner.BrandName.String,
 		Province:    owner.Province.String,
 		City:        owner.City.String,
+		District:    owner.District.String,
+		SubDistrict: owner.SubDistrict.String,
 		Address:     owner.Address.String,
 		Status:      owner.Status,
 		OutletCount: owner.OutletCount,
@@ -423,6 +451,8 @@ func NewOutletResponse(outlet Outlet) OutletResponse {
 		Phone:     outlet.Phone.String,
 		Province:  outlet.Province.String,
 		City:      outlet.City.String,
+		District:  outlet.District.String,
+		SubDistrict: outlet.SubDistrict.String,
 		Address:   outlet.Address.String,
 		Status:    outlet.Status,
 		CreatedAt: outlet.CreatedAt,
@@ -439,6 +469,8 @@ func NewOutletOverviewResponse(item OutletOverview) OutletOverviewResponse {
 		Phone:    item.Phone.String,
 		Province: item.Province.String,
 		City:     item.City.String,
+		District: item.District.String,
+		SubDistrict: item.SubDistrict.String,
 		Address:  item.Address.String,
 		Status:   item.Status,
 		SubscriptionSummary: SubscriptionSummaryResponse{
@@ -463,6 +495,8 @@ func NewOutletDetailResponse(item OutletOverview) OutletDetailResponse {
 		Phone:               overview.Phone,
 		Province:            overview.Province,
 		City:                overview.City,
+		District:            overview.District,
+		SubDistrict:         overview.SubDistrict,
 		Address:             overview.Address,
 		Status:              overview.Status,
 		SubscriptionSummary: overview.SubscriptionSummary,
@@ -481,6 +515,8 @@ func NewOwnerOverviewResponse(item OwnerOverview) OwnerOverviewResponse {
 		BrandName: item.BrandName.String,
 		Province:  item.Province.String,
 		City:      item.City.String,
+		District:  item.District.String,
+		SubDistrict: item.SubDistrict.String,
 		Address:   item.Address.String,
 		Status:    item.Status,
 		Balance: OwnerBalanceResponse{
