@@ -97,12 +97,17 @@ func (r *Repository) CreateLead(ctx context.Context, actor identity.User, req Cr
 
 func (r *Repository) ListLeads(ctx context.Context, actor identity.User, params ListParams) ([]Lead, int64, error) {
 	where, args := leadWhere(actor, params)
+
+	countArgs := make([]any, len(args))
+	copy(countArgs, args)
+
 	var total int64
 	if err := r.db.QueryRowContext(ctx, `
 		SELECT COUNT(*)
-		FROM customer_leads cl
-		LEFT JOIN owners o ON o.id = cl.owner_id AND o.deleted_at IS NULL
-		WHERE `+where, args...).Scan(&total); err != nil {
+		FROM outlets ot
+		JOIN owners o ON o.id = ot.owner_id AND o.deleted_at IS NULL
+		LEFT JOIN customer_leads cl ON (cl.outlet_id = ot.id OR (cl.owner_id = ot.owner_id AND cl.outlet_id IS NULL)) AND cl.deleted_at IS NULL
+		WHERE `+where, countArgs...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 
@@ -110,16 +115,20 @@ func (r *Repository) ListLeads(ctx context.Context, actor identity.User, params 
 	if err != nil {
 		return nil, 0, err
 	}
+
+	selectArgs := make([]any, len(args))
+	copy(selectArgs, args)
+
 	query := leadSelect() + `
 		WHERE ` + where + `
 		ORDER BY ` + orderBy
 	if !params.All {
 		offset := (params.Page - 1) * params.Limit
-		args = append(args, params.Limit, offset)
+		selectArgs = append(selectArgs, params.Limit, offset)
 		query += `
 		LIMIT ? OFFSET ?`
 	}
-	rows, err := r.db.QueryContext(ctx, query, args...)
+	rows, err := r.db.QueryContext(ctx, query, selectArgs...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -515,16 +524,30 @@ func (r *Repository) firstActiveAdminID(ctx context.Context) (int64, error) {
 func leadSelect() string {
 	return `
 		SELECT
-			cl.id, cl.code, cl.owner_id,
+			COALESCE(cl.id, ot.id) AS id,
+			COALESCE(cl.code, CONCAT('LEAD-', ot.code)) AS code,
+			ot.owner_id,
 			o.code, o.name, o.phone, o.brand_name, o.province, o.city,
-			cl.outlet_id, cl.active_sales_id, sales.name,
-			cl.current_owner_user_id, current_owner.name, cl.current_owner_role,
+			ot.id AS outlet_id,
+			ot.code AS outlet_code,
+			ot.name AS outlet_name,
+			ot.phone AS outlet_phone,
+			cl.active_sales_id, sales.name,
+			COALESCE(cl.current_owner_user_id, o.id) AS current_owner_user_id,
+			COALESCE(current_owner.name, o.name) AS current_owner_user_name,
+			COALESCE(cl.current_owner_role, 'ADMIN') AS current_owner_role,
 			cl.supervisor_id, supervisor.name,
-			cl.source_type, cl.source_reference, cl.stage, cl.status, cl.current_score,
+			COALESCE(cl.source_type, 'MANUAL') AS source_type,
+			COALESCE(cl.source_reference, '') AS source_reference,
+			COALESCE(cl.stage, 'NEW') AS stage,
+			COALESCE(cl.status, 'OPEN') AS status,
+			COALESCE(cl.current_score, 1) AS current_score,
 			cl.last_interaction_at, cl.next_follow_up_at, cl.invalidated_at, cl.invalidated_by_sales_id,
-			cl.created_at, cl.updated_at
-		FROM customer_leads cl
-		LEFT JOIN owners o ON o.id = cl.owner_id AND o.deleted_at IS NULL
+			COALESCE(cl.created_at, ot.created_at) AS created_at,
+			COALESCE(cl.updated_at, ot.updated_at) AS updated_at
+		FROM outlets ot
+		JOIN owners o ON o.id = ot.owner_id AND o.deleted_at IS NULL
+		LEFT JOIN customer_leads cl ON (cl.outlet_id = ot.id OR (cl.owner_id = ot.owner_id AND cl.outlet_id IS NULL)) AND cl.deleted_at IS NULL
 		LEFT JOIN users current_owner ON current_owner.id = cl.current_owner_user_id
 		LEFT JOIN users supervisor ON supervisor.id = cl.supervisor_id
 		LEFT JOIN users sales ON sales.id = cl.active_sales_id
@@ -532,7 +555,7 @@ func leadSelect() string {
 }
 
 func leadWhere(actor identity.User, params ListParams) (string, []any) {
-	where := []string{"cl.deleted_at IS NULL"}
+	where := []string{"ot.deleted_at IS NULL", "o.deleted_at IS NULL"}
 	args := []any{}
 	visibility, visibilityArgs := leadVisibilityWhere(actor)
 	where = append(where, visibility)
@@ -540,23 +563,23 @@ func leadWhere(actor identity.User, params ListParams) (string, []any) {
 
 	if params.Query != "" {
 		pattern := like(params.Query)
-		where = append(where, "(cl.code LIKE ? OR o.code LIKE ? OR o.name LIKE ? OR o.phone LIKE ? OR o.brand_name LIKE ? OR o.city LIKE ? OR o.province LIKE ?)")
-		args = append(args, pattern, pattern, pattern, pattern, pattern, pattern, pattern)
+		where = append(where, "(COALESCE(cl.code, ot.code) LIKE ? OR o.code LIKE ? OR o.name LIKE ? OR o.phone LIKE ? OR o.brand_name LIKE ? OR o.city LIKE ? OR o.province LIKE ? OR ot.name LIKE ? OR ot.code LIKE ?)")
+		args = append(args, pattern, pattern, pattern, pattern, pattern, pattern, pattern, pattern, pattern)
 	}
 	if params.Ownership != "" {
-		where = append(where, "cl.current_owner_role = ?")
+		where = append(where, "COALESCE(cl.current_owner_role, 'ADMIN') = ?")
 		args = append(args, strings.ToUpper(strings.TrimSpace(params.Ownership)))
 	}
 	if params.Stage != "" {
-		where = append(where, "cl.stage = ?")
+		where = append(where, "COALESCE(cl.stage, 'NEW') = ?")
 		args = append(args, strings.ToUpper(strings.TrimSpace(params.Stage)))
 	}
 	if params.Status != "" {
-		where = append(where, "cl.status = ?")
+		where = append(where, "COALESCE(cl.status, 'OPEN') = ?")
 		args = append(args, strings.ToUpper(strings.TrimSpace(params.Status)))
 	}
 	if params.Score != nil {
-		where = append(where, "cl.current_score = ?")
+		where = append(where, "COALESCE(cl.current_score, 1) = ?")
 		args = append(args, *params.Score)
 	}
 	if params.SupervisorID != nil {
@@ -568,11 +591,11 @@ func leadWhere(actor identity.User, params ListParams) (string, []any) {
 		args = append(args, *params.SalesID)
 	}
 	if params.CreatedFrom != nil {
-		where = append(where, "cl.created_at >= ?")
+		where = append(where, "COALESCE(cl.created_at, ot.created_at) >= ?")
 		args = append(args, *params.CreatedFrom)
 	}
 	if params.CreatedTo != nil {
-		where = append(where, "cl.created_at < ?")
+		where = append(where, "COALESCE(cl.created_at, ot.created_at) < ?")
 		args = append(args, params.CreatedTo.AddDate(0, 0, 1))
 	}
 	if params.FollowUpFrom != nil {
@@ -601,15 +624,16 @@ func leadVisibilityWhere(actor identity.User) (string, []any) {
 
 func leadOrderBy(sort string) (string, error) {
 	return orderBy(sort, map[string]string{
-		"created_at":        "cl.created_at",
-		"updated_at":        "cl.updated_at",
-		"code":              "cl.code",
-		"stage":             "cl.stage",
-		"status":            "cl.status",
-		"score":             "cl.current_score",
+		"created_at":        "COALESCE(cl.created_at, ot.created_at)",
+		"updated_at":        "COALESCE(cl.updated_at, ot.updated_at)",
+		"code":              "COALESCE(cl.code, ot.code)",
+		"stage":             "COALESCE(cl.stage, 'NEW')",
+		"status":            "COALESCE(cl.status, 'OPEN')",
+		"score":             "COALESCE(cl.current_score, 1)",
 		"next_follow_up_at": "cl.next_follow_up_at",
 		"owner_name":        "o.name",
-	}, "cl.created_at DESC, cl.id DESC")
+		"outlet_name":       "ot.name",
+	}, "COALESCE(cl.created_at, ot.created_at) DESC, ot.id DESC")
 }
 
 func scanLeads(rows *sql.Rows, total int64) ([]Lead, int64, error) {
@@ -644,6 +668,9 @@ func scanLead(row scanner) (Lead, error) {
 		&item.OwnerProvince,
 		&item.OwnerCity,
 		&item.OutletID,
+		&item.OutletCode,
+		&item.OutletName,
+		&item.OutletPhone,
 		&item.ActiveSalesID,
 		&item.ActiveSalesName,
 		&item.CurrentOwnerUserID,

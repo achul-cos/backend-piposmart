@@ -38,6 +38,9 @@ type Lead struct {
 	OwnerProvince        sql.NullString
 	OwnerCity            sql.NullString
 	OutletID             sql.NullInt64
+	OutletCode           sql.NullString
+	OutletName           sql.NullString
+	OutletPhone          sql.NullString
 	ActiveSalesID        sql.NullInt64
 	ActiveSalesName      sql.NullString
 	CurrentOwnerUserID   sql.NullInt64
@@ -99,11 +102,19 @@ type LeadOwnerResponse struct {
 	Message   string `json:"message,omitempty"`
 }
 
+type LeadOutletResponse struct {
+	ID    *int64 `json:"id,omitempty"`
+	Code  string `json:"code,omitempty"`
+	Name  string `json:"name,omitempty"`
+	Phone string `json:"phone,omitempty"`
+}
+
 type LeadResponse struct {
-	ID                int64             `json:"id"`
-	Code              string            `json:"code"`
-	Owner             LeadOwnerResponse `json:"owner"`
-	OutletID          *int64            `json:"outlet_id,omitempty"`
+	ID                int64               `json:"id"`
+	Code              string              `json:"code"`
+	Owner             LeadOwnerResponse   `json:"owner"`
+	OutletID          *int64              `json:"outlet_id,omitempty"`
+	Outlet            *LeadOutletResponse `json:"outlet,omitempty"`
 	CurrentOwner      *UserSummary      `json:"current_owner,omitempty"`
 	CurrentOwnerRole  string            `json:"current_owner_role"`
 	Supervisor        *UserSummary      `json:"supervisor,omitempty"`
@@ -241,9 +252,16 @@ func NewLeadResponse(item Lead) LeadResponse {
 		owner.Message = "data owner tidak tersedia"
 	}
 	var outletID *int64
+	var outlet *LeadOutletResponse
 	if item.OutletID.Valid {
 		value := item.OutletID.Int64
 		outletID = &value
+		outlet = &LeadOutletResponse{
+			ID:    &value,
+			Code:  item.OutletCode.String,
+			Name:  item.OutletName.String,
+			Phone: item.OutletPhone.String,
+		}
 	}
 	var score *int64
 	if item.CurrentScore.Valid {
@@ -255,6 +273,7 @@ func NewLeadResponse(item Lead) LeadResponse {
 		Code:              item.Code,
 		Owner:             owner,
 		OutletID:          outletID,
+		Outlet:            outlet,
 		CurrentOwner:      nullableUser(item.CurrentOwnerUserID, item.CurrentOwnerUserName, item.CurrentOwnerRole),
 		CurrentOwnerRole:  item.CurrentOwnerRole,
 		Supervisor:        nullableUser(item.SupervisorID, item.SupervisorName, RoleSupervisor),
