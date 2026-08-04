@@ -115,7 +115,14 @@ func (r *Repository) findOwnerByID(ctx context.Context, q queryExecutor, id int6
 	owner, err := scanOwner(q.QueryRowContext(ctx, `
 		SELECT
 			o.id, o.code, o.name, o.phone, o.email, o.brand_name, o.province, o.city, o.district, o.sub_district,
-			o.address, o.status, COUNT(ot.id) AS outlet_count, o.created_at, o.updated_at
+			o.address, o.status, COUNT(ot.id) AS outlet_count,
+			(
+				SELECT COUNT(DISTINCT s.outlet_id)
+				FROM subscriptions s
+				JOIN outlets ot4 ON ot4.id = s.outlet_id
+				WHERE ot4.owner_id = o.id AND s.deleted_at IS NULL
+			) AS subscribed_outlet_count,
+			o.created_at, o.updated_at
 		FROM owners o
 		LEFT JOIN outlets ot ON ot.owner_id = o.id AND ot.deleted_at IS NULL
 		WHERE o.id = ? `+deletedClause+`
@@ -139,7 +146,14 @@ func (r *Repository) findOwnerByIDVisible(ctx context.Context, q queryExecutor, 
 	owner, err := scanOwner(q.QueryRowContext(ctx, `
 		SELECT
 			o.id, o.code, o.name, o.phone, o.email, o.brand_name, o.province, o.city, o.district, o.sub_district,
-			o.address, o.status, COUNT(ot.id) AS outlet_count, o.created_at, o.updated_at
+			o.address, o.status, COUNT(ot.id) AS outlet_count,
+			(
+				SELECT COUNT(DISTINCT s.outlet_id)
+				FROM subscriptions s
+				JOIN outlets ot4 ON ot4.id = s.outlet_id
+				WHERE ot4.owner_id = o.id AND s.deleted_at IS NULL
+			) AS subscribed_outlet_count,
+			o.created_at, o.updated_at
 		FROM owners o
 		LEFT JOIN outlets ot ON ot.owner_id = o.id AND ot.deleted_at IS NULL
 		WHERE `+strings.Join(where, " AND ")+`
@@ -165,7 +179,14 @@ func (r *Repository) ListOwners(ctx context.Context, actor Actor, params ListPar
 	query := `
 		SELECT
 			o.id, o.code, o.name, o.phone, o.email, o.brand_name, o.province, o.city,
-			o.district, o.sub_district, o.address, o.status, COUNT(ot.id) AS outlet_count, o.created_at, o.updated_at
+			o.district, o.sub_district, o.address, o.status, COUNT(ot.id) AS outlet_count,
+			(
+				SELECT COUNT(DISTINCT s.outlet_id)
+				FROM subscriptions s
+				JOIN outlets ot4 ON ot4.id = s.outlet_id
+				WHERE ot4.owner_id = o.id AND s.deleted_at IS NULL
+			) AS subscribed_outlet_count,
+			o.created_at, o.updated_at
 		FROM owners o
 		LEFT JOIN outlets ot ON ot.owner_id = o.id AND ot.deleted_at IS NULL
 		LEFT JOIN wallet_accounts wa ON wa.owner_id = o.id
@@ -719,10 +740,15 @@ func scanOwner(row scanner) (Owner, error) {
 		&owner.Address,
 		&owner.Status,
 		&owner.OutletCount,
+		&owner.SubscribedOutletCount,
 		&owner.CreatedAt,
 		&owner.UpdatedAt,
 	)
-	return owner, err
+	if err != nil {
+		return Owner{}, err
+	}
+	owner.SubscriptionStatus = CalculateOwnerSubscriptionStatus(owner.CreatedAt, owner.SubscribedOutletCount)
+	return owner, nil
 }
 
 func scanOutlet(row scanner) (Outlet, error) {
@@ -834,11 +860,7 @@ func scanOwnerOverview(row scanner) (OwnerOverview, error) {
 	} else {
 		item.AgeStatus = OwnerAgeNew
 	}
-	if item.SubscribedOutletCount > 0 {
-		item.SubscriptionStatus = OwnerSubscriptionStatusSubscribed
-	} else {
-		item.SubscriptionStatus = OwnerSubscriptionStatusNotSubscribed
-	}
+	item.SubscriptionStatus = CalculateOwnerSubscriptionStatus(item.CreatedAt, item.SubscribedOutletCount)
 	return item, nil
 }
 
@@ -1179,7 +1201,7 @@ func ownerOrderBy(sort string) (string, error) {
 		"city":         "o.city",
 		"province":     "o.province",
 		"phone":        "o.phone",
-		"status":       "o.status",
+		"status":       "CASE WHEN (SELECT COUNT(DISTINCT s.outlet_id) FROM subscriptions s JOIN outlets ot4 ON ot4.id = s.outlet_id WHERE ot4.owner_id = o.id AND s.deleted_at IS NULL) > 0 THEN 1 WHEN o.created_at >= DATE_SUB(NOW(), INTERVAL 14 DAY) THEN 2 ELSE 3 END",
 		"outlet_count": "outlet_count",
 		"wallet_balance": "CAST(wa.balance AS DECIMAL(20,2))",
 	}, "o.created_at DESC, o.id DESC")

@@ -106,7 +106,17 @@ func (r *Repository) ListLeads(ctx context.Context, actor identity.User, params 
 		SELECT COUNT(*)
 		FROM outlets ot
 		JOIN owners o ON o.id = ot.owner_id AND o.deleted_at IS NULL
-		LEFT JOIN customer_leads cl ON (cl.outlet_id = ot.id OR (cl.owner_id = ot.owner_id AND cl.outlet_id IS NULL)) AND cl.deleted_at IS NULL
+		LEFT JOIN customer_leads cl ON (
+			cl.outlet_id = ot.id
+			OR (
+				cl.owner_id = ot.owner_id
+				AND cl.outlet_id IS NULL
+				AND ot.id = (
+					SELECT MIN(ot2.id) FROM outlets ot2
+					WHERE ot2.owner_id = ot.owner_id AND ot2.deleted_at IS NULL
+				)
+			)
+		) AND cl.deleted_at IS NULL
 		WHERE `+where, countArgs...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
@@ -533,8 +543,8 @@ func leadSelect() string {
 			ot.name AS outlet_name,
 			ot.phone AS outlet_phone,
 			cl.active_sales_id, sales.name,
-			COALESCE(cl.current_owner_user_id, o.id) AS current_owner_user_id,
-			COALESCE(current_owner.name, o.name) AS current_owner_user_name,
+			COALESCE(cl.current_owner_user_id, default_admin.id) AS current_owner_user_id,
+			COALESCE(current_owner.name, default_admin.name) AS current_owner_user_name,
 			COALESCE(cl.current_owner_role, 'ADMIN') AS current_owner_role,
 			cl.supervisor_id, supervisor.name,
 			COALESCE(cl.source_type, 'MANUAL') AS source_type,
@@ -547,8 +557,24 @@ func leadSelect() string {
 			COALESCE(cl.updated_at, ot.updated_at) AS updated_at
 		FROM outlets ot
 		JOIN owners o ON o.id = ot.owner_id AND o.deleted_at IS NULL
-		LEFT JOIN customer_leads cl ON (cl.outlet_id = ot.id OR (cl.owner_id = ot.owner_id AND cl.outlet_id IS NULL)) AND cl.deleted_at IS NULL
+		LEFT JOIN customer_leads cl ON (
+			cl.outlet_id = ot.id
+			OR (
+				cl.owner_id = ot.owner_id
+				AND cl.outlet_id IS NULL
+				AND ot.id = (
+					SELECT MIN(ot2.id) FROM outlets ot2
+					WHERE ot2.owner_id = ot.owner_id AND ot2.deleted_at IS NULL
+				)
+			)
+		) AND cl.deleted_at IS NULL
 		LEFT JOIN users current_owner ON current_owner.id = cl.current_owner_user_id
+		LEFT JOIN users default_admin ON default_admin.id = (
+			SELECT u2.id FROM users u2
+			JOIN roles r2 ON r2.id = u2.role_id
+			WHERE r2.code = 'ADMIN' AND u2.status = 'ACTIVE' AND u2.deleted_at IS NULL
+			ORDER BY u2.id LIMIT 1
+		)
 		LEFT JOIN users supervisor ON supervisor.id = cl.supervisor_id
 		LEFT JOIN users sales ON sales.id = cl.active_sales_id
 	`

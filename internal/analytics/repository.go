@@ -136,7 +136,7 @@ func (r *Repository) OutletPerOwnerHistogram(ctx context.Context, actor identity
 
 func (r *Repository) OutletSubscriptionStatusRecap(ctx context.Context, actor identity.User, req QueryRequest, tf ResolvedTimeFilter) (queryData, error) {
 	months := monthRange(tf)
-	statuses := []string{"NEW", "BERLANGGANAN", "JATUH_TEMPO", "EXPIRED", "NOT_SUBSCRIBE"}
+	statuses := []string{"NEW", "BERLANGGANAN", "AKAN_JATUH_TEMPO", "JATUH_TEMPO", "TELAH_JATUH_TEMPO", "EXPIRED", "NOT_SUBSCRIBE"}
 	seriesMap := map[string]*ChartSeries{}
 	for _, status := range statuses {
 		seriesMap[status] = &ChartSeries{Key: strings.ToLower(status), Label: status}
@@ -758,7 +758,9 @@ func (r *Repository) outletSubscriptionStatusCounts(ctx context.Context, actor i
 				WHEN ls.active_until IS NULL OR ls.active_from IS NULL OR ls.active_until < ? THEN 'NOT_SUBSCRIBE'
 				WHEN ls.active_until >= ? AND ls.active_until < ? THEN 'EXPIRED'
 				WHEN ls.active_from IS NOT NULL AND ls.active_until IS NOT NULL AND ls.active_until >= ? AND ls.active_from >= ? AND NOT (COALESCE(ls.tenure_months, 0) = 1 AND YEAR(ls.active_until) = ? AND MONTH(ls.active_until) = ?) THEN 'NEW'
-				WHEN ls.active_until IS NOT NULL AND YEAR(ls.active_until) = ? AND MONTH(ls.active_until) = ? AND COALESCE(ls.tenure_months, 0) <> 1 THEN 'JATUH_TEMPO'
+				WHEN ls.active_until IS NOT NULL AND ls.active_until > ? AND ls.active_until <= ? THEN 'AKAN_JATUH_TEMPO'
+				WHEN ls.active_until IS NOT NULL AND DATE(ls.active_until) = DATE(?) THEN 'JATUH_TEMPO'
+				WHEN ls.active_until IS NOT NULL AND ls.active_until < ? AND ls.active_until >= ? THEN 'TELAH_JATUH_TEMPO'
 				ELSE 'BERLANGGANAN'
 			END AS status_code,
 			COUNT(*) AS total
@@ -767,7 +769,7 @@ func (r *Repository) outletSubscriptionStatusCounts(ctx context.Context, actor i
 		WHERE ` + strings.Join(where, " AND ") + `
 		GROUP BY status_code`
 	fullArgs := []any{monthEnd}
-	fullArgs = append(fullArgs, threshold, threshold, monthStart, monthStart, recentStart, year, monthNum, year, monthNum)
+	fullArgs = append(fullArgs, threshold, monthStart.AddDate(0, 0, -30), monthStart, recentStart, year, monthNum, monthEnd, monthEnd.AddDate(0, 0, 30), monthEnd, monthEnd, monthEnd.AddDate(0, 0, -30))
 	fullArgs = append(fullArgs, args...)
 	rows, err := r.db.QueryContext(ctx, query, fullArgs...)
 	if err != nil {
@@ -775,11 +777,13 @@ func (r *Repository) outletSubscriptionStatusCounts(ctx context.Context, actor i
 	}
 	defer rows.Close()
 	counts := map[string]float64{
-		"NEW":           0,
-		"BERLANGGANAN":  0,
-		"JATUH_TEMPO":   0,
-		"EXPIRED":       0,
-		"NOT_SUBSCRIBE": 0,
+		"NEW":               0,
+		"BERLANGGANAN":      0,
+		"AKAN_JATUH_TEMPO":  0,
+		"JATUH_TEMPO":       0,
+		"TELAH_JATUH_TEMPO": 0,
+		"EXPIRED":           0,
+		"NOT_SUBSCRIBE":     0,
 	}
 	total := 0.0
 	for rows.Next() {

@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -136,6 +137,20 @@ func attachPartnerType(p *Partner, pt *PartnerType) {
 	p.PartnerTypeCommissionValue = sql.NullString{String: pt.CommissionValue, Valid: true}
 }
 
+func generatePartnerTypeCode(name string) string {
+	cleanName := strings.ToUpper(strings.TrimSpace(name))
+	cleanName = regexp.MustCompile(`[^A-Z0-9]`).ReplaceAllString(cleanName, "_")
+	cleanName = regexp.MustCompile(`_+`).ReplaceAllString(cleanName, "_")
+	cleanName = strings.Trim(cleanName, "_")
+	if cleanName == "" {
+		cleanName = "MITRA"
+	}
+	if len(cleanName) > 20 {
+		cleanName = cleanName[:20]
+	}
+	return fmt.Sprintf("%s_%d", cleanName, time.Now().Unix()%10000)
+}
+
 /* ---------- PartnerType ---------- */
 
 func (s *Service) CreatePartnerType(ctx context.Context, req CreatePartnerTypeRequest) (*PartnerTypeResponse, error) {
@@ -146,8 +161,12 @@ func (s *Service) CreatePartnerType(ctx context.Context, req CreatePartnerTypeRe
 	if req.CreatedAt != nil {
 		createdAt = req.CreatedAt.UTC()
 	}
+	code := strings.ToUpper(strings.TrimSpace(req.Code))
+	if code == "" {
+		code = generatePartnerTypeCode(req.Name)
+	}
 	pt := PartnerType{
-		Code:            req.Code,
+		Code:            code,
 		Name:            req.Name,
 		CommissionMode:  req.CommissionMode,
 		CommissionValue: req.CommissionValue,
