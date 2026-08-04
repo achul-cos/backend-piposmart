@@ -3,6 +3,7 @@ package lead
 import (
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"strconv"
 
@@ -315,6 +316,7 @@ func parseLeadID(c *gin.Context) (int64, bool) {
 }
 
 func writeError(c *gin.Context, err error) {
+	slog.Error("lead handler error", "error", err, "path", c.Request.URL.Path)
 	switch {
 	case errors.Is(err, ErrNotFound):
 		httpx.Error(c, http.StatusNotFound, "NOT_FOUND", err.Error(), nil)
