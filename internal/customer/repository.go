@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -173,7 +174,11 @@ func (r *Repository) ListOwners(ctx context.Context, actor Actor, params ListPar
 		GROUP BY o.id
 		ORDER BY ` + orderBy
 	if !params.All {
-		offset := (params.Page - 1) * params.Limit
+		page := params.Page
+		if page < 1 {
+			page = 1
+		}
+		offset := (page - 1) * params.Limit
 		args = append(args, params.Limit, offset)
 		query += `
 		LIMIT ? OFFSET ?`
@@ -863,8 +868,8 @@ func ownerWhere(actor Actor, params ListParams) (string, []any) {
 	where = append(where, visibility)
 	args = append(args, visibilityArgs...)
 	if params.Query != "" {
-		pattern := like(params.Query)
-		where = append(where, "(o.code LIKE ? OR o.name LIKE ? OR o.phone LIKE ? OR o.brand_name LIKE ? OR o.city LIKE ? OR o.province LIKE ?)")
+		pattern := wordBoundaryRegexp(params.Query)
+		where = append(where, "(o.code REGEXP ? OR o.name REGEXP ? OR o.phone REGEXP ? OR o.brand_name REGEXP ? OR o.city REGEXP ? OR o.province REGEXP ?)")
 		args = append(args, pattern, pattern, pattern, pattern, pattern, pattern)
 	}
 	if params.Code != "" {
@@ -936,8 +941,8 @@ func outletWhere(ownerID int64, params ListParams) (string, []any) {
 	where := []string{"ot.owner_id = ?", scopeCondition("ot.deleted_at", params.Scope)}
 	args := []any{ownerID}
 	if params.Query != "" {
-		pattern := like(params.Query)
-		where = append(where, "(ot.code LIKE ? OR ot.name LIKE ? OR ot.phone LIKE ? OR ot.city LIKE ? OR ot.province LIKE ?)")
+		pattern := wordBoundaryRegexp(params.Query)
+		where = append(where, "(ot.code REGEXP ? OR ot.name REGEXP ? OR ot.phone REGEXP ? OR ot.city REGEXP ? OR ot.province REGEXP ?)")
 		args = append(args, pattern, pattern, pattern, pattern, pattern)
 	}
 	if params.Code != "" {
@@ -978,8 +983,8 @@ func globalOutletWhere(actor Actor, params ListParams) (string, []any) {
 	where = append(where, visibility)
 	args = append(args, visibilityArgs...)
 	if params.Query != "" {
-		pattern := like(params.Query)
-		where = append(where, "(ot.code LIKE ? OR ot.name LIKE ? OR ot.phone LIKE ? OR ot.city LIKE ? OR ot.province LIKE ? OR o.code LIKE ? OR o.name LIKE ? OR o.brand_name LIKE ?)")
+		pattern := wordBoundaryRegexp(params.Query)
+		where = append(where, "(ot.code REGEXP ? OR ot.name REGEXP ? OR ot.phone REGEXP ? OR ot.city REGEXP ? OR ot.province REGEXP ? OR o.code REGEXP ? OR o.name REGEXP ? OR o.brand_name REGEXP ?)")
 		args = append(args, pattern, pattern, pattern, pattern, pattern, pattern, pattern, pattern)
 	}
 	if params.OwnerID != nil {
@@ -1227,6 +1232,19 @@ func trim(value string) string {
 
 func like(value string) string {
 	return "%" + trim(value) + "%"
+}
+
+func wordBoundaryRegexp(value string) string {
+	val := strings.TrimSpace(value)
+	if val == "" {
+		return ""
+	}
+	words := strings.Fields(val)
+	var parts []string
+	for _, w := range words {
+		parts = append(parts, "\\b"+regexp.QuoteMeta(w)+"\\b")
+	}
+	return strings.Join(parts, ".*")
 }
 
 func placeholders(count int) string {

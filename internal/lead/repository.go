@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -562,8 +563,8 @@ func leadWhere(actor identity.User, params ListParams) (string, []any) {
 	args = append(args, visibilityArgs...)
 
 	if params.Query != "" {
-		pattern := like(params.Query)
-		where = append(where, "(COALESCE(cl.code, ot.code) LIKE ? OR o.code LIKE ? OR o.name LIKE ? OR o.phone LIKE ? OR o.brand_name LIKE ? OR o.city LIKE ? OR o.province LIKE ? OR ot.name LIKE ? OR ot.code LIKE ?)")
+		pattern := wordBoundaryRegexp(params.Query)
+		where = append(where, "(COALESCE(cl.code, ot.code) REGEXP ? OR o.code REGEXP ? OR o.name REGEXP ? OR o.phone REGEXP ? OR o.brand_name REGEXP ? OR o.city REGEXP ? OR o.province REGEXP ? OR ot.name REGEXP ? OR ot.code REGEXP ?)")
 		args = append(args, pattern, pattern, pattern, pattern, pattern, pattern, pattern, pattern, pattern)
 	}
 	if params.Ownership != "" {
@@ -820,4 +821,17 @@ func mapCreateLeadError(err error) error {
 		return ErrLeadAlreadyExists
 	}
 	return err
+}
+
+func wordBoundaryRegexp(value string) string {
+	val := strings.TrimSpace(value)
+	if val == "" {
+		return ""
+	}
+	words := strings.Fields(val)
+	var parts []string
+	for _, w := range words {
+		parts = append(parts, "\\b"+regexp.QuoteMeta(w)+"\\b")
+	}
+	return strings.Join(parts, ".*")
 }

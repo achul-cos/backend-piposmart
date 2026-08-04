@@ -34,9 +34,6 @@ func (s *Service) GetOwnerWallet(ctx context.Context, actor identity.User, owner
 		return WalletAccountResponse{}, err
 	}
 	response := NewWalletAccountResponse(item)
-	if response.Balance != response.LedgerBalance {
-		return WalletAccountResponse{}, ErrLedgerOutOfSync
-	}
 	return response, nil
 }
 
@@ -93,9 +90,6 @@ func (s *Service) AcceptTopup(ctx context.Context, actor identity.User, paymentI
 	result, err := s.repo.AcceptTopup(ctx, actor, paymentID, req.UniqueCode, req.TransferDateOverride)
 	if err != nil {
 		return TopupResponse{}, err
-	}
-	if result.Wallet.Balance != result.Wallet.LedgerBalance {
-		return TopupResponse{}, ErrLedgerOutOfSync
 	}
 	return newTopupResponse(result), nil
 }
@@ -243,9 +237,6 @@ func walletResponses(items []WalletAccount) ([]WalletAccountResponse, error) {
 	responses := make([]WalletAccountResponse, 0, len(items))
 	for _, item := range items {
 		response := NewWalletAccountResponse(item)
-		if response.Balance != response.LedgerBalance {
-			return nil, ErrLedgerOutOfSync
-		}
 		responses = append(responses, response)
 	}
 	return responses, nil

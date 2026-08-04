@@ -29,7 +29,7 @@ var largeSeedScaleOwnerCounts = map[int]int{
 	6:  2000,
 	7:  3000,
 	8:  5000,
-	9:  1000,
+	9:  8500,
 	10: 18000,
 }
 

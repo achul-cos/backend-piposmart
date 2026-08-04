@@ -306,8 +306,8 @@ func outletSubscriptionStatusWhere(actor Actor, params OutletSubscriptionStatusP
 	where = append(where, visibility)
 	args = append(args, visibilityArgs...)
 	if params.Query != "" {
-		pattern := like(params.Query)
-		where = append(where, "(ot.code LIKE ? OR ot.name LIKE ? OR ot.phone LIKE ? OR ot.city LIKE ? OR ot.province LIKE ? OR o.code LIKE ? OR o.name LIKE ? OR o.brand_name LIKE ?)")
+		pattern := wordBoundaryRegexp(params.Query)
+		where = append(where, "(ot.code REGEXP ? OR ot.name REGEXP ? OR ot.phone REGEXP ? OR ot.city REGEXP ? OR ot.province REGEXP ? OR o.code REGEXP ? OR o.name REGEXP ? OR o.brand_name REGEXP ?)")
 		args = append(args, pattern, pattern, pattern, pattern, pattern, pattern, pattern, pattern)
 	}
 	if params.OwnerID != nil {

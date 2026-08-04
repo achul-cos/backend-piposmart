@@ -114,8 +114,8 @@ func Parse(args []string) (Options, error) {
 			return Options{}, errors.New("--variation harus bernilai antara 0 sampai 1")
 		}
 		options.AsOf = options.To
-		if options.Preset != "minimal" && options.Preset != "large" {
-			return Options{}, fmt.Errorf("preset demo %q belum tersedia; gunakan minimal atau large", options.Preset)
+		if options.Preset != "minimal" && options.Preset != "large" && options.Preset != "real" {
+			return Options{}, fmt.Errorf("preset demo %q belum tersedia; gunakan minimal, large, atau real", options.Preset)
 		}
 		if options.Preset == "large" {
 			if options.Scale == 0 {
@@ -125,8 +125,13 @@ func Parse(args []string) (Options, error) {
 				return Options{}, err
 			}
 		}
-		if options.Preset != "large" && options.Scale != 0 {
-			return Options{}, errors.New("--scale hanya didukung untuk seed demo --preset=large")
+		if options.Preset == "real" && options.Scale != 0 {
+			if _, err := largeSeedOwnerCountForScale(options.Scale); err != nil {
+				return Options{}, err
+			}
+		}
+		if options.Preset != "large" && options.Preset != "real" && options.Scale != 0 {
+			return Options{}, errors.New("--scale hanya didukung untuk seed demo --preset=large atau --preset=real")
 		}
 	default:
 		return Options{}, fmt.Errorf("mode seed %q tidak dikenal\n\n%s", options.Mode, seedUsage)
@@ -178,7 +183,7 @@ func Run(ctx context.Context, cfg config.Config, args []string, output io.Writer
 	fmt.Fprintf(output, "seed %s selesai", options.Mode)
 	if options.Mode == ModeDemo {
 		fmt.Fprintf(output, " (preset=%s, seed=%d, from=%s, to=%s", options.Preset, options.Seed, options.From.Format("2006-01-02"), options.To.Format("2006-01-02"))
-		if options.Preset == "large" {
+		if options.Preset == "large" || options.Preset == "real" {
 			fmt.Fprintf(output, ", scale=%d, variation=%.2f", options.Scale, options.Variation)
 		}
 		fmt.Fprintf(output, ")")
@@ -207,6 +212,10 @@ func runWithTransaction(ctx context.Context, db *sql.DB, options Options) error 
 	if options.Mode == ModeDemo {
 		if options.Preset == "large" {
 			if err := seedDemoLarge(ctx, tx, options); err != nil {
+				return err
+			}
+		} else if options.Preset == "real" {
+			if err := seedDemoReal(ctx, tx, options); err != nil {
 				return err
 			}
 		} else {
@@ -1438,13 +1447,20 @@ func ensurePartnerDemoConfirmedClosings(ctx context.Context, tx *sql.Tx, fake *f
 		return items, nil
 	}
 
+	excelRows := readAllRealOwnerExcelFiles()
 	startIndex := 90000 + len(items) + 1
 	for len(items) < minimum {
 		index := startIndex + len(items)
 		owner := fake.BuildOwner(index)
-		owner.Name = fmt.Sprintf("Owner Mitra Demo %03d", index)
-		owner.BrandName = fmt.Sprintf("Laundry Mitra Demo %03d", index)
-		owner.Email = fmt.Sprintf("owner.mitra.demo.%03d@example.test", index)
+		if len(excelRows) > 0 {
+			r := excelRows[index%len(excelRows)]
+			if strings.TrimSpace(r.OwnerName) != "" {
+				owner.Name = strings.TrimSpace(r.OwnerName)
+			}
+			if strings.TrimSpace(r.BrandName) != "" {
+				owner.BrandName = strings.TrimSpace(r.BrandName)
+			}
+		}
 		ownerID, err := fake.CreateOwner(ctx, tx, owner)
 		if err != nil {
 			return nil, err

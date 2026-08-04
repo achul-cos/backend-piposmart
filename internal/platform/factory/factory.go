@@ -126,7 +126,7 @@ func (f *Factory) BuildOwner(index int) Owner {
 
 	return Owner{
 		Code:      fmt.Sprintf("OWN-%05d", index),
-		Name:      fmt.Sprintf("Owner Laundry %03d", index),
+		Name:      fmt.Sprintf("Owner %03d", index),
 		Phone:     fmt.Sprintf("62813%08d", 200000+index),
 		Email:     fmt.Sprintf("owner%03d@example.test", index),
 		BrandName: fmt.Sprintf("Laundry Cerah %03d", index),
@@ -218,14 +218,14 @@ func (f *Factory) CreateUser(ctx context.Context, tx *sql.Tx, user User) (int64,
 
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO users (role_id, code, name, email, phone, password_hash, status, must_change_password)
-		VALUES (?, ?, ?, ?, ?, ?, 'ACTIVE', TRUE)
+		VALUES (?, ?, ?, ?, ?, ?, 'ACTIVE', FALSE)
 		ON DUPLICATE KEY UPDATE
 			role_id = VALUES(role_id),
 			name = VALUES(name),
 			phone = VALUES(phone),
 			password_hash = VALUES(password_hash),
 			status = 'ACTIVE',
-			must_change_password = TRUE`,
+			must_change_password = FALSE`,
 		roleID, user.Code, user.Name, user.Email, user.Phone, user.PasswordHash,
 	)
 	if err != nil {
