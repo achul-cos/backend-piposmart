@@ -35,10 +35,12 @@ type Owner struct {
 	District    sql.NullString
 	SubDistrict sql.NullString
 	Address     sql.NullString
-	Status      string
-	OutletCount int64
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	Status                string
+	OutletCount           int64
+	SubscribedOutletCount int64
+	SubscriptionStatus    string
+	CreatedAt             time.Time
+	UpdatedAt             time.Time
 }
 
 type Outlet struct {
@@ -65,6 +67,7 @@ type OutletOverview struct {
 	OwnerPhone               sql.NullString
 	OwnerEmail               sql.NullString
 	OwnerBrandName           sql.NullString
+	OwnerCreatedAt           sql.NullTime
 	Code                     string
 	Name                     string
 	Phone                    sql.NullString
@@ -90,9 +93,20 @@ const (
 	OwnerAgeNew = "NEW"
 	OwnerAgeOld = "OLD"
 
-	OwnerSubscriptionStatusSubscribed    = "BERLANGGANAN"
+	OwnerSubscriptionStatusSubscribed    = "SUBSCRIBE"
 	OwnerSubscriptionStatusNotSubscribed = "NOT_SUBSCRIBE"
+	OwnerSubscriptionStatusTrial         = "TRIAL"
 )
+
+func CalculateOwnerSubscriptionStatus(createdAt time.Time, subscribedOutletCount int64) string {
+	if subscribedOutletCount > 0 {
+		return OwnerSubscriptionStatusSubscribed
+	}
+	if time.Since(createdAt) <= 14*24*time.Hour {
+		return OwnerSubscriptionStatusTrial
+	}
+	return OwnerSubscriptionStatusNotSubscribed
+}
 
 type OwnerOverview struct {
 	ID                    int64
@@ -137,10 +151,12 @@ type OwnerResponse struct {
 	District    string    `json:"district,omitempty"`
 	SubDistrict string    `json:"sub_district,omitempty"`
 	Address     string    `json:"address,omitempty"`
-	Status      string    `json:"status"`
-	OutletCount int64     `json:"outlet_count,omitempty"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	Status                string    `json:"status"`
+	SubscriptionStatus    string    `json:"subscription_status,omitempty"`
+	SubscribedOutletCount int64     `json:"subscribed_outlet_count,omitempty"`
+	OutletCount           int64     `json:"outlet_count,omitempty"`
+	CreatedAt             time.Time `json:"created_at"`
+	UpdatedAt             time.Time `json:"updated_at"`
 }
 
 type OutletResponse struct {
@@ -160,13 +176,14 @@ type OutletResponse struct {
 }
 
 type OwnerBriefResponse struct {
-	ID        *int64 `json:"id,omitempty"`
-	Code      string `json:"code,omitempty"`
-	Name      string `json:"name,omitempty"`
-	Phone     string `json:"phone,omitempty"`
-	Email     string `json:"email,omitempty"`
-	BrandName string `json:"brand_name,omitempty"`
-	Message   string `json:"message,omitempty"`
+	ID        *int64     `json:"id,omitempty"`
+	Code      string     `json:"code,omitempty"`
+	Name      string     `json:"name,omitempty"`
+	Phone     string     `json:"phone,omitempty"`
+	Email     string     `json:"email,omitempty"`
+	BrandName string     `json:"brand_name,omitempty"`
+	CreatedAt *time.Time `json:"created_at,omitempty"`
+	Message   string     `json:"message,omitempty"`
 }
 
 type WalletBriefResponse struct {
@@ -285,7 +302,7 @@ type UpdateOwnerRequest struct {
 }
 
 type CreateOutletRequest struct {
-	Code     string `json:"code" binding:"required"`
+	Code     string `json:"code"`
 	Name     string `json:"name" binding:"required"`
 	Phone    string `json:"phone"`
 	Province string `json:"province"`
@@ -418,22 +435,28 @@ type BulkActionResponse struct {
 }
 
 func NewOwnerResponse(owner Owner) OwnerResponse {
+	subStatus := owner.SubscriptionStatus
+	if subStatus == "" {
+		subStatus = CalculateOwnerSubscriptionStatus(owner.CreatedAt, owner.SubscribedOutletCount)
+	}
 	return OwnerResponse{
-		ID:          owner.ID,
-		Code:        owner.Code,
-		Name:        owner.Name,
-		Phone:       owner.Phone.String,
-		Email:       owner.Email.String,
-		BrandName:   owner.BrandName.String,
-		Province:    owner.Province.String,
-		City:        owner.City.String,
-		District:    owner.District.String,
-		SubDistrict: owner.SubDistrict.String,
-		Address:     owner.Address.String,
-		Status:      owner.Status,
-		OutletCount: owner.OutletCount,
-		CreatedAt:   owner.CreatedAt,
-		UpdatedAt:   owner.UpdatedAt,
+		ID:                    owner.ID,
+		Code:                  owner.Code,
+		Name:                  owner.Name,
+		Phone:                 owner.Phone.String,
+		Email:                 owner.Email.String,
+		BrandName:             owner.BrandName.String,
+		Province:              owner.Province.String,
+		City:                  owner.City.String,
+		District:              owner.District.String,
+		SubDistrict:           owner.SubDistrict.String,
+		Address:               owner.Address.String,
+		Status:                subStatus,
+		SubscriptionStatus:    subStatus,
+		SubscribedOutletCount: owner.SubscribedOutletCount,
+		OutletCount:           owner.OutletCount,
+		CreatedAt:             owner.CreatedAt,
+		UpdatedAt:             owner.UpdatedAt,
 	}
 }
 
@@ -550,7 +573,7 @@ func newOwnerBriefResponse(item OutletOverview) OwnerBriefResponse {
 		return OwnerBriefResponse{Message: "Data owner tidak tersedia"}
 	}
 	id := item.OwnerID.Int64
-	return OwnerBriefResponse{
+	resp := OwnerBriefResponse{
 		ID:        &id,
 		Code:      item.OwnerCode.String,
 		Name:      item.OwnerName.String,
@@ -558,6 +581,11 @@ func newOwnerBriefResponse(item OutletOverview) OwnerBriefResponse {
 		Email:     item.OwnerEmail.String,
 		BrandName: item.OwnerBrandName.String,
 	}
+	if item.OwnerCreatedAt.Valid {
+		t := item.OwnerCreatedAt.Time
+		resp.CreatedAt = &t
+	}
+	return resp
 }
 
 func formatNullDate(value sql.NullTime) string {

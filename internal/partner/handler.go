@@ -31,6 +31,7 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 		partnerTypes.GET("/:id/histories", h.ListPartnerTypeHistories)
 		partnerTypes.GET("", h.ListPartnerTypes)
 		partnerTypes.PUT("/:id", h.UpdatePartnerType)
+		partnerTypes.DELETE("/:id", h.DeletePartnerType)
 
 		partnerTypeGroup := partnerTypes.Group("/:id")
 		{
@@ -137,6 +138,35 @@ func (h *Handler) CreatePartnerType(c *gin.Context) {
 // @Success 200 {object} PartnerTypeResponse
 // @Failure 404 {object} httpx.ErrorEnvelope
 // @Router /partner-types/{id} [get]
+// DeletePartnerType godoc
+// @Summary Delete a partner type
+// @Description Delete a partner type by ID. Fails if there are active partners using this type.
+// @Tags partner-types
+// @Param id path int64 true "Partner type ID"
+// @Success 204
+// @Failure 400 {object} httpx.ErrorEnvelope
+// @Failure 404 {object} httpx.ErrorEnvelope
+// @Router /partner-types/{id} [delete]
+func (h *Handler) DeletePartnerType(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		httpx.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", "ID tidak valid", nil)
+		return
+	}
+	if err := h.service.DeletePartnerType(c.Request.Context(), id); err != nil {
+		switch err {
+		case ErrNotFound:
+			httpx.Error(c, http.StatusNotFound, "NOT_FOUND", "jenis mitra tidak ditemukan", nil)
+		case ErrPartnerTypeInUse:
+			httpx.Error(c, http.StatusBadRequest, "TYPE_IN_USE", err.Error(), nil)
+		default:
+			httpx.Error(c, http.StatusInternalServerError, "INTERNAL_ERROR", "gagal menghapus jenis mitra", nil)
+		}
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
 func (h *Handler) GetPartnerTypeByID(c *gin.Context) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
@@ -755,7 +785,7 @@ func (h *Handler) CreateReferral(c *gin.Context) {
 		case ErrDuplicateReferral:
 			httpx.Error(c, http.StatusConflict, "DUPLICATE_REFERRAL", "referral already exists for this partner-lead pair", nil)
 		default:
-			httpx.Error(c, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to create referral", nil)
+			httpx.Error(c, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to create referral: "+err.Error(), nil)
 		}
 		return
 	}

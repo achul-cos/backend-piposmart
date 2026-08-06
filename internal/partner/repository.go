@@ -42,6 +42,38 @@ func (r *Repository) CreatePartnerType(ctx context.Context, pt PartnerType) (int
 	return id, nil
 }
 
+func (r *Repository) CountPartnerTypes(ctx context.Context) (int64, error) {
+	var count int64
+	err := r.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM partner_types").Scan(&count)
+	return count, err
+}
+
+func (r *Repository) DeletePartnerType(ctx context.Context, id int64) error {
+	// Block delete if any partners still reference this type
+	var count int64
+	if err := r.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM partners WHERE partner_type_id = ?", id).Scan(&count); err != nil {
+		return err
+	}
+	if count > 0 {
+		return ErrPartnerTypeInUse
+	}
+
+	// Delete commission rules first
+	if _, err := r.db.ExecContext(ctx, "DELETE FROM commission_rules WHERE partner_type_id = ?", id); err != nil {
+		return err
+	}
+
+	result, err := r.db.ExecContext(ctx, "DELETE FROM partner_types WHERE id = ?", id)
+	if err != nil {
+		return err
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func (r *Repository) GetPartnerTypeByID(ctx context.Context, id int64) (*PartnerType, error) {
 	query := `
 		SELECT id, code, name, commission_mode, commission_value, description, created_at, updated_at
@@ -1013,7 +1045,15 @@ func (r *Repository) CreateCommissionRule(ctx context.Context, rule CommissionRu
 	if err != nil {
 		return 0, err
 	}
-	defer tx.Rollback()
+	if rule.PlanID.Valid {
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE commission_rules
+			SET active = FALSE, effective_to = COALESCE(effective_to, CURDATE()), updated_at = NOW()
+			WHERE partner_type_id = ? AND plan_id = ? AND active = TRUE`,
+			rule.PartnerTypeID, rule.PlanID.Int64); err != nil {
+			return 0, fmt.Errorf("database partner: %w", err)
+		}
+	}
 
 	result, err := tx.ExecContext(ctx, `
 		INSERT INTO commission_rules (

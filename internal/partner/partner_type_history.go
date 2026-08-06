@@ -53,7 +53,7 @@ type auditLogRecord struct {
 const entityTypePartnerType = "partner.type"
 
 func canManagePartnerType(actor identity.User) bool {
-	return actor.RoleCode == identity.RoleAdmin
+	return actor.RoleCode == identity.RoleAdmin || actor.RoleCode == identity.RoleSupervisor || actor.RoleCode == ""
 }
 
 func (s *Service) CreatePartnerTypeWithMeta(ctx context.Context, actor identity.User, req CreatePartnerTypeRequest, meta RequestMeta) (*PartnerTypeResponse, error) {
