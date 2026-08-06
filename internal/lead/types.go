@@ -57,6 +57,8 @@ type Lead struct {
 	NextFollowUpAt       sql.NullTime
 	InvalidatedAt        sql.NullTime
 	InvalidatedBySalesID sql.NullInt64
+	PreviousPIC          sql.NullString
+	AssignedAt           sql.NullTime
 	CreatedAt            time.Time
 	UpdatedAt            time.Time
 }
@@ -127,6 +129,8 @@ type LeadResponse struct {
 	LastInteractionAt *time.Time        `json:"last_interaction_at,omitempty"`
 	NextFollowUpAt    *time.Time        `json:"next_follow_up_at,omitempty"`
 	InvalidatedAt     *time.Time        `json:"invalidated_at,omitempty"`
+	PreviousPIC       string            `json:"previous_pic,omitempty"`
+	AssignedAt        *time.Time        `json:"assigned_at,omitempty"`
 	CreatedAt         time.Time         `json:"created_at"`
 	UpdatedAt         time.Time         `json:"updated_at"`
 }
@@ -286,6 +290,8 @@ func NewLeadResponse(item Lead) LeadResponse {
 		LastInteractionAt: nullableTimePtr(item.LastInteractionAt),
 		NextFollowUpAt:    nullableTimePtr(item.NextFollowUpAt),
 		InvalidatedAt:     nullableTimePtr(item.InvalidatedAt),
+		PreviousPIC:       item.PreviousPIC.String,
+		AssignedAt:        nullableTimePtr(item.AssignedAt),
 		CreatedAt:         item.CreatedAt,
 		UpdatedAt:         item.UpdatedAt,
 	}

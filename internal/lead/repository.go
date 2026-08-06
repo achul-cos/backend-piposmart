@@ -148,10 +148,11 @@ func (r *Repository) ListLeads(ctx context.Context, actor identity.User, params 
 
 func (r *Repository) FindLeadByID(ctx context.Context, actor identity.User, id int64) (Lead, error) {
 	where, args := leadWhere(actor, ListParams{})
-	args = append([]any{id}, args...)
+	selectArgs := append([]any{id, id, id}, args...)
 	lead, err := scanLead(r.db.QueryRowContext(ctx, leadSelect()+`
-		WHERE cl.id = ? AND `+where+`
-		LIMIT 1`, args...))
+		WHERE (cl.id = ? OR ot.id = ?) AND `+where+`
+		ORDER BY CASE WHEN cl.id = ? THEN 0 ELSE 1 END
+		LIMIT 1`, selectArgs...))
 	if err == sql.ErrNoRows {
 		return Lead{}, ErrNotFound
 	}
@@ -160,8 +161,9 @@ func (r *Repository) FindLeadByID(ctx context.Context, actor identity.User, id i
 
 func (r *Repository) findLeadByIDRaw(ctx context.Context, id int64) (Lead, error) {
 	lead, err := scanLead(r.db.QueryRowContext(ctx, leadSelect()+`
-		WHERE cl.id = ? AND cl.deleted_at IS NULL
-		LIMIT 1`, id))
+		WHERE (cl.id = ? OR ot.id = ?) AND ot.deleted_at IS NULL
+		ORDER BY CASE WHEN cl.id = ? THEN 0 ELSE 1 END
+		LIMIT 1`, id, id, id))
 	if err == sql.ErrNoRows {
 		return Lead{}, ErrNotFound
 	}
@@ -347,6 +349,7 @@ func (r *Repository) applyBulk(ctx context.Context, actor identity.User, leadIDs
 	}
 	defer tx.Rollback()
 
+	appliedLeadIDs := make([]int64, 0, len(leadIDs))
 	for _, id := range leadIDs {
 		current, err := r.lockLead(ctx, tx, id)
 		if err != nil {
@@ -358,12 +361,13 @@ func (r *Repository) applyBulk(ctx context.Context, actor identity.User, leadIDs
 		if err := mutate(ctx, tx, current); err != nil {
 			return nil, err
 		}
+		appliedLeadIDs = append(appliedLeadIDs, current.ID)
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
-	items := make([]Lead, 0, len(leadIDs))
-	for _, id := range leadIDs {
+	items := make([]Lead, 0, len(appliedLeadIDs))
+	for _, id := range appliedLeadIDs {
 		item, err := r.findLeadByIDRaw(ctx, id)
 		if err != nil {
 			return nil, err
@@ -483,8 +487,10 @@ func (r *Repository) lockLead(ctx context.Context, tx *sql.Tx, id int64) (locked
 		SELECT id, owner_id, current_owner_user_id, current_owner_role, supervisor_id,
 			active_sales_id, stage, status, current_score
 		FROM customer_leads
-		WHERE id = ? AND deleted_at IS NULL
-		FOR UPDATE`, id).
+		WHERE (id = ? OR outlet_id = ? OR owner_id = ?) AND deleted_at IS NULL
+		ORDER BY CASE WHEN id = ? THEN 0 WHEN outlet_id = ? THEN 1 ELSE 2 END
+		LIMIT 1
+		FOR UPDATE`, id, id, id, id, id).
 		Scan(
 			&item.ID,
 			&item.OwnerID,
@@ -496,9 +502,131 @@ func (r *Repository) lockLead(ctx context.Context, tx *sql.Tx, id int64) (locked
 			&item.Status,
 			&item.CurrentScore,
 		)
-	if err == sql.ErrNoRows {
-		return lockedLead{}, ErrNotFound
+	if err == nil {
+		return item, nil
 	}
+	if err != sql.ErrNoRows {
+		return lockedLead{}, err
+	}
+
+	var otID, ownerID int64
+	err = tx.QueryRowContext(ctx, `
+		SELECT id, owner_id
+		FROM outlets
+		WHERE id = ? AND deleted_at IS NULL
+		LIMIT 1`, id).Scan(&otID, &ownerID)
+	if err == sql.ErrNoRows {
+		err = tx.QueryRowContext(ctx, `
+			SELECT id, owner_id
+			FROM outlets
+			WHERE owner_id = ? AND deleted_at IS NULL
+			ORDER BY id ASC
+			LIMIT 1`, id).Scan(&otID, &ownerID)
+		if err == sql.ErrNoRows {
+			return lockedLead{}, ErrNotFound
+		}
+	}
+	if err != nil {
+		return lockedLead{}, err
+	}
+
+	err = tx.QueryRowContext(ctx, `
+		SELECT id, owner_id, current_owner_user_id, current_owner_role, supervisor_id,
+			active_sales_id, stage, status, current_score
+		FROM customer_leads
+		WHERE (outlet_id = ? OR owner_id = ?) AND deleted_at IS NULL
+		ORDER BY CASE WHEN outlet_id = ? THEN 0 ELSE 1 END
+		LIMIT 1
+		FOR UPDATE`, otID, ownerID, otID).
+		Scan(
+			&item.ID,
+			&item.OwnerID,
+			&item.CurrentOwnerUserID,
+			&item.CurrentOwnerRole,
+			&item.SupervisorID,
+			&item.ActiveSalesID,
+			&item.Stage,
+			&item.Status,
+			&item.CurrentScore,
+		)
+	if err == nil {
+		return item, nil
+	}
+	if err != sql.ErrNoRows {
+		return lockedLead{}, err
+	}
+
+	adminID, err := r.firstActiveAdminID(ctx)
+	if err != nil {
+		return lockedLead{}, err
+	}
+
+	res, err := tx.ExecContext(ctx, `
+		INSERT INTO customer_leads
+			(code, owner_id, outlet_id, source_type, stage, status, current_score, current_owner_user_id, current_owner_role)
+		VALUES (?, ?, ?, 'MANUAL', 'NEW', 'OPEN', 1, ?, 'ADMIN')`,
+		fmt.Sprintf("LEAD-%06d", ownerID), ownerID, otID, adminID)
+	if err != nil {
+		// Fallback re-query if lead was created in parallel or duplicate key
+		errSelect := tx.QueryRowContext(ctx, `
+			SELECT id, owner_id, current_owner_user_id, current_owner_role, supervisor_id,
+				active_sales_id, stage, status, current_score
+			FROM customer_leads
+			WHERE owner_id = ? AND deleted_at IS NULL
+			LIMIT 1
+			FOR UPDATE`, ownerID).
+			Scan(
+				&item.ID,
+				&item.OwnerID,
+				&item.CurrentOwnerUserID,
+				&item.CurrentOwnerRole,
+				&item.SupervisorID,
+				&item.ActiveSalesID,
+				&item.Stage,
+				&item.Status,
+				&item.CurrentScore,
+			)
+		if errSelect == nil {
+			return item, nil
+		}
+		return lockedLead{}, err
+	}
+	newLeadID, err := res.LastInsertId()
+	if err != nil {
+		return lockedLead{}, err
+	}
+
+	if err := r.insertAssignment(ctx, tx, assignmentInput{
+		LeadID:           newLeadID,
+		OwnerID:          sql.NullInt64{Int64: ownerID, Valid: true},
+		ToUserID:         sql.NullInt64{Int64: adminID, Valid: true},
+		ToRole:           RoleAdmin,
+		AssignedByUserID: sql.NullInt64{Int64: adminID, Valid: true},
+		Action:           ActionCreatedExistingOwner,
+		Score:            sql.NullInt64{Int64: 1, Valid: true},
+		Active:           true,
+		StartedAt:        time.Now().UTC(),
+	}); err != nil {
+		return lockedLead{}, err
+	}
+
+	err = tx.QueryRowContext(ctx, `
+		SELECT id, owner_id, current_owner_user_id, current_owner_role, supervisor_id,
+			active_sales_id, stage, status, current_score
+		FROM customer_leads
+		WHERE id = ? AND deleted_at IS NULL
+		FOR UPDATE`, newLeadID).
+		Scan(
+			&item.ID,
+			&item.OwnerID,
+			&item.CurrentOwnerUserID,
+			&item.CurrentOwnerRole,
+			&item.SupervisorID,
+			&item.ActiveSalesID,
+			&item.Stage,
+			&item.Status,
+			&item.CurrentScore,
+		)
 	return item, err
 }
 
@@ -553,6 +681,23 @@ func leadSelect() string {
 			COALESCE(cl.status, 'OPEN') AS status,
 			COALESCE(cl.current_score, 1) AS current_score,
 			cl.last_interaction_at, cl.next_follow_up_at, cl.invalidated_at, cl.invalidated_by_sales_id,
+			COALESCE((
+				SELECT GROUP_CONCAT(u_prev.name ORDER BY la_prev.id ASC SEPARATOR ', ')
+				FROM lead_assignments la_prev
+				JOIN users u_prev ON u_prev.id = la_prev.to_user_id
+				WHERE la_prev.lead_id = cl.id
+				  AND la_prev.to_role = 'SALES'
+				  AND la_prev.active = FALSE
+				  AND la_prev.deleted_at IS NULL
+			), '') AS previous_pic,
+			COALESCE((
+				SELECT la_act.started_at
+				FROM lead_assignments la_act
+				WHERE la_act.lead_id = cl.id
+				  AND la_act.deleted_at IS NULL
+				ORDER BY la_act.started_at DESC, la_act.id DESC
+				LIMIT 1
+			), cl.created_at, ot.created_at) AS assigned_at,
 			COALESCE(cl.created_at, ot.created_at) AS created_at,
 			COALESCE(cl.updated_at, ot.updated_at) AS updated_at
 		FROM outlets ot
@@ -713,6 +858,8 @@ func scanLead(row scanner) (Lead, error) {
 		&item.NextFollowUpAt,
 		&item.InvalidatedAt,
 		&item.InvalidatedBySalesID,
+		&item.PreviousPIC,
+		&item.AssignedAt,
 		&item.CreatedAt,
 		&item.UpdatedAt,
 	)
