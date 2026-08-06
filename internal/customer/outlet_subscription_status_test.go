@@ -8,7 +8,7 @@ import (
 
 func TestClassifyOutletSubscription_NeverSubscribed(t *testing.T) {
 	referenceMonth := time.Date(2026, time.June, 1, 0, 0, 0, 0, time.UTC)
-	code, label, remaining, remainingDisplay, lastDisplay := classifyOutletSubscription(OutletSubscriptionSnapshot{}, referenceMonth)
+	code, label, remaining, remainingDisplay, lastDisplay := classifyOutletSubscription(OutletSubscriptionSnapshot{}, referenceMonth, false)
 	if code != OutletSubscriptionStatusNotSubscribe || label != OutletSubscriptionStatusNotSubscribe {
 		t.Fatalf("unexpected status: %s %s", code, label)
 	}
@@ -27,7 +27,7 @@ func TestClassifyOutletSubscription_Expired(t *testing.T) {
 		SubscriptionEnd:   sql.NullTime{Time: time.Date(2026, time.May, 15, 0, 0, 0, 0, time.UTC), Valid: true},
 		TenureMonths:      sql.NullInt64{Int64: 1, Valid: true},
 	}
-	code, _, remaining, _, _ := classifyOutletSubscription(snapshot, referenceMonth)
+	code, _, remaining, _, _ := classifyOutletSubscription(snapshot, referenceMonth, false)
 	if code != OutletSubscriptionStatusExpired {
 		t.Fatalf("expected expired, got %s", code)
 	}
@@ -44,7 +44,7 @@ func TestClassifyOutletSubscription_WillBeDue(t *testing.T) {
 		SubscriptionEnd:   sql.NullTime{Time: time.Date(2026, time.July, 10, 0, 0, 0, 0, time.UTC), Valid: true},
 		TenureMonths:      sql.NullInt64{Int64: 2, Valid: true},
 	}
-	code, label, remaining, remainingDisplay, _ := classifyOutletSubscription(snapshot, referenceMonth)
+	code, label, remaining, remainingDisplay, _ := classifyOutletSubscription(snapshot, referenceMonth, false)
 	if code != OutletSubscriptionStatusWillBeDue || label != "AKAN JATUH TEMPO" {
 		t.Fatalf("expected akan jatuh tempo, got %s (%s)", code, label)
 	}
@@ -64,7 +64,7 @@ func TestClassifyOutletSubscription_Due(t *testing.T) {
 		SubscriptionEnd:   sql.NullTime{Time: time.Date(2026, time.June, 30, 0, 0, 0, 0, time.UTC), Valid: true},
 		TenureMonths:      sql.NullInt64{Int64: 2, Valid: true},
 	}
-	code, label, remaining, remainingDisplay, _ := classifyOutletSubscription(snapshot, referenceMonth)
+	code, label, remaining, remainingDisplay, _ := classifyOutletSubscription(snapshot, referenceMonth, false)
 	if code != OutletSubscriptionStatusDue || label != "JATUH TEMPO" {
 		t.Fatalf("expected jatuh tempo, got %s (%s)", code, label)
 	}
@@ -84,7 +84,7 @@ func TestClassifyOutletSubscription_PassedDue(t *testing.T) {
 		SubscriptionEnd:   sql.NullTime{Time: time.Date(2026, time.June, 20, 0, 0, 0, 0, time.UTC), Valid: true},
 		TenureMonths:      sql.NullInt64{Int64: 2, Valid: true},
 	}
-	code, label, remaining, remainingDisplay, _ := classifyOutletSubscription(snapshot, referenceMonth)
+	code, label, remaining, remainingDisplay, _ := classifyOutletSubscription(snapshot, referenceMonth, false)
 	if code != OutletSubscriptionStatusPassedDue || label != "TELAH JATUH TEMPO" {
 		t.Fatalf("expected telah jatuh tempo, got %s (%s)", code, label)
 	}
@@ -103,7 +103,7 @@ func TestClassifyOutletSubscription_New(t *testing.T) {
 		SubscriptionEnd:   sql.NullTime{Time: time.Date(2026, time.August, 9, 0, 0, 0, 0, time.UTC), Valid: true},
 		TenureMonths:      sql.NullInt64{Int64: 2, Valid: true},
 	}
-	code, _, remaining, _, _ := classifyOutletSubscription(snapshot, referenceMonth)
+	code, _, remaining, _, _ := classifyOutletSubscription(snapshot, referenceMonth, false)
 	if code != OutletSubscriptionStatusNew {
 		t.Fatalf("expected new, got %s", code)
 	}

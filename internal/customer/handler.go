@@ -540,7 +540,12 @@ func listParams(c *gin.Context) (ListParams, error) {
 		BrandName:          c.Query("brand_name"),
 		Province:           c.Query("province"),
 		City:               c.Query("city"),
-		SubscriptionStatus: c.Query("subscription_status"),
+		SubscriptionStatus: func() string {
+			if s := c.Query("subscription_status"); s != "" {
+				return s
+			}
+			return c.Query("status")
+		}(),
 		SubscriptionMonth:  c.Query("subscription_month"),
 		All:                false,
 		Page:               page,
@@ -551,11 +556,19 @@ func listParams(c *gin.Context) (ListParams, error) {
 		params.OwnerID = &ownerID
 	}
 	var err error
-	params.CreatedFrom, err = parseDateOnly(c.Query("created_from"))
+	createdFromVal := c.Query("created_from")
+	if createdFromVal == "" {
+		createdFromVal = c.Query("start_date")
+	}
+	createdToVal := c.Query("created_to")
+	if createdToVal == "" {
+		createdToVal = c.Query("end_date")
+	}
+	params.CreatedFrom, err = parseDateOnly(createdFromVal)
 	if err != nil {
 		return ListParams{}, err
 	}
-	params.CreatedTo, err = parseDateOnly(c.Query("created_to"))
+	params.CreatedTo, err = parseDateOnly(createdToVal)
 	if err != nil {
 		return ListParams{}, err
 	}
@@ -566,11 +579,15 @@ func parseDateOnly(value string) (*time.Time, error) {
 	if value == "" {
 		return nil, nil
 	}
-	parsed, err := time.ParseInLocation("2006-01-02", value, time.UTC)
-	if err != nil {
-		return nil, errors.New("format tanggal harus YYYY-MM-DD")
+	parsed, err := time.ParseInLocation("2006-01-02", value, time.Local)
+	if err == nil {
+		return &parsed, nil
 	}
-	return &parsed, nil
+	parsedRFC, errRFC := time.Parse(time.RFC3339, value)
+	if errRFC == nil {
+		return &parsedRFC, nil
+	}
+	return nil, errors.New("format tanggal harus YYYY-MM-DD")
 }
 
 func currentActor(c *gin.Context) Actor {

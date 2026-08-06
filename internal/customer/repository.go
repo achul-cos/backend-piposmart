@@ -394,11 +394,15 @@ func (r *Repository) CreateOutlets(ctx context.Context, ownerID int64, requests 
 }
 
 func (r *Repository) createOutlet(ctx context.Context, q queryExecutor, ownerID int64, req CreateOutletRequest, normalizedPhone string) (Outlet, error) {
+	code := trim(req.Code)
+	if code == "" {
+		code = fmt.Sprintf("OTL-%d", time.Now().UnixNano()/1e6)
+	}
 	query := `
 		INSERT INTO outlets (owner_id, code, name, phone, province, city, district, sub_district, address, status`
 	args := []any{
 		ownerID,
-		trim(req.Code),
+		code,
 		trim(req.Name),
 		nullableString(normalizedPhone),
 		nullableString(req.Province),
@@ -796,6 +800,7 @@ func scanOutletOverview(row scanner) (OutletOverview, error) {
 		&item.OwnerPhone,
 		&item.OwnerEmail,
 		&item.OwnerBrandName,
+		&item.OwnerCreatedAt,
 		&item.Code,
 		&item.Name,
 		&item.Phone,
@@ -912,6 +917,32 @@ func ownerWhere(actor Actor, params ListParams) (string, []any) {
 	if params.City != "" {
 		where = append(where, "o.city LIKE ?")
 		args = append(args, like(params.City))
+	}
+	if params.SubscriptionStatus != "" {
+		st := strings.ToUpper(strings.TrimSpace(params.SubscriptionStatus))
+		switch st {
+		case "SUBSCRIBE", "BERLANGGANAN", "ACTIVE":
+			where = append(where, `EXISTS (
+				SELECT 1 FROM subscriptions s
+				JOIN outlets ot4 ON ot4.id = s.outlet_id
+				WHERE ot4.owner_id = o.id AND s.deleted_at IS NULL
+			)`)
+		case "TRIAL":
+			where = append(where, `NOT EXISTS (
+				SELECT 1 FROM subscriptions s
+				JOIN outlets ot4 ON ot4.id = s.outlet_id
+				WHERE ot4.owner_id = o.id AND s.deleted_at IS NULL
+			) AND o.created_at >= NOW() - INTERVAL 14 DAY`)
+		case "NOT_SUBSCRIBE", "TIDAK BERLANGGANAN", "NOT SUBSCRIBE", "TIDAK_BERLANGGANAN":
+			where = append(where, `NOT EXISTS (
+				SELECT 1 FROM subscriptions s
+				JOIN outlets ot4 ON ot4.id = s.outlet_id
+				WHERE ot4.owner_id = o.id AND s.deleted_at IS NULL
+			) AND o.created_at < NOW() - INTERVAL 14 DAY`)
+		default:
+			where = append(where, "(o.status = ? OR o.status LIKE ?)")
+			args = append(args, st, like(st))
+		}
 	}
 	if params.CreatedFrom != nil {
 		where = append(where, "o.created_at >= ?")
@@ -1048,9 +1079,14 @@ func globalOutletWhere(actor Actor, params ListParams) (string, []any) {
 			subArgs = append(subArgs, params.SubscriptionStatus)
 		}
 		if params.SubscriptionMonth != "" {
-			subQuery = append(subQuery, "STR_TO_DATE(CONCAT(?, '-01'), '%Y-%m-%d') <= s.active_until")
-			subQuery = append(subQuery, "LAST_DAY(STR_TO_DATE(CONCAT(?, '-01'), '%Y-%m-%d')) >= s.active_from")
-			subArgs = append(subArgs, params.SubscriptionMonth, params.SubscriptionMonth)
+			if len(params.SubscriptionMonth) == 10 {
+				subQuery = append(subQuery, "s.active_until = ?")
+				subArgs = append(subArgs, params.SubscriptionMonth)
+			} else {
+				subQuery = append(subQuery, "STR_TO_DATE(CONCAT(?, '-01'), '%Y-%m-%d') <= s.active_until")
+				subQuery = append(subQuery, "LAST_DAY(STR_TO_DATE(CONCAT(?, '-01'), '%Y-%m-%d')) >= s.active_from")
+				subArgs = append(subArgs, params.SubscriptionMonth, params.SubscriptionMonth)
+			}
 		}
 		where = append(where, "EXISTS (SELECT 1 FROM subscriptions s WHERE "+strings.Join(subQuery, " AND ")+")")
 		args = append(args, subArgs...)
@@ -1079,6 +1115,7 @@ func outletOverviewSelect() string {
 			o.phone,
 			o.email,
 			o.brand_name,
+			o.created_at AS owner_created_at,
 			ot.code,
 			ot.name,
 			ot.phone,
@@ -1201,7 +1238,8 @@ func ownerOrderBy(sort string) (string, error) {
 		"city":         "o.city",
 		"province":     "o.province",
 		"phone":        "o.phone",
-		"status":       "CASE WHEN (SELECT COUNT(DISTINCT s.outlet_id) FROM subscriptions s JOIN outlets ot4 ON ot4.id = s.outlet_id WHERE ot4.owner_id = o.id AND s.deleted_at IS NULL) > 0 THEN 1 WHEN o.created_at >= DATE_SUB(NOW(), INTERVAL 14 DAY) THEN 2 ELSE 3 END",
+		"status":              "(CASE WHEN (SELECT COUNT(DISTINCT s.outlet_id) FROM subscriptions s JOIN outlets ot4 ON ot4.id = s.outlet_id WHERE ot4.owner_id = o.id AND s.deleted_at IS NULL) > 0 THEN 1 WHEN o.created_at >= NOW() - INTERVAL 14 DAY THEN 2 ELSE 3 END)",
+		"subscription_status": "(CASE WHEN (SELECT COUNT(DISTINCT s.outlet_id) FROM subscriptions s JOIN outlets ot4 ON ot4.id = s.outlet_id WHERE ot4.owner_id = o.id AND s.deleted_at IS NULL) > 0 THEN 1 WHEN o.created_at >= NOW() - INTERVAL 14 DAY THEN 2 ELSE 3 END)",
 		"outlet_count": "outlet_count",
 		"wallet_balance": "CAST(wa.balance AS DECIMAL(20,2))",
 	}, "o.created_at DESC, o.id DESC")

@@ -67,6 +67,7 @@ type OutletOverview struct {
 	OwnerPhone               sql.NullString
 	OwnerEmail               sql.NullString
 	OwnerBrandName           sql.NullString
+	OwnerCreatedAt           sql.NullTime
 	Code                     string
 	Name                     string
 	Phone                    sql.NullString
@@ -175,13 +176,14 @@ type OutletResponse struct {
 }
 
 type OwnerBriefResponse struct {
-	ID        *int64 `json:"id,omitempty"`
-	Code      string `json:"code,omitempty"`
-	Name      string `json:"name,omitempty"`
-	Phone     string `json:"phone,omitempty"`
-	Email     string `json:"email,omitempty"`
-	BrandName string `json:"brand_name,omitempty"`
-	Message   string `json:"message,omitempty"`
+	ID        *int64     `json:"id,omitempty"`
+	Code      string     `json:"code,omitempty"`
+	Name      string     `json:"name,omitempty"`
+	Phone     string     `json:"phone,omitempty"`
+	Email     string     `json:"email,omitempty"`
+	BrandName string     `json:"brand_name,omitempty"`
+	CreatedAt *time.Time `json:"created_at,omitempty"`
+	Message   string     `json:"message,omitempty"`
 }
 
 type WalletBriefResponse struct {
@@ -300,7 +302,7 @@ type UpdateOwnerRequest struct {
 }
 
 type CreateOutletRequest struct {
-	Code     string `json:"code" binding:"required"`
+	Code     string `json:"code"`
 	Name     string `json:"name" binding:"required"`
 	Phone    string `json:"phone"`
 	Province string `json:"province"`
@@ -571,7 +573,7 @@ func newOwnerBriefResponse(item OutletOverview) OwnerBriefResponse {
 		return OwnerBriefResponse{Message: "Data owner tidak tersedia"}
 	}
 	id := item.OwnerID.Int64
-	return OwnerBriefResponse{
+	resp := OwnerBriefResponse{
 		ID:        &id,
 		Code:      item.OwnerCode.String,
 		Name:      item.OwnerName.String,
@@ -579,6 +581,11 @@ func newOwnerBriefResponse(item OutletOverview) OwnerBriefResponse {
 		Email:     item.OwnerEmail.String,
 		BrandName: item.OwnerBrandName.String,
 	}
+	if item.OwnerCreatedAt.Valid {
+		t := item.OwnerCreatedAt.Time
+		resp.CreatedAt = &t
+	}
+	return resp
 }
 
 func formatNullDate(value sql.NullTime) string {
