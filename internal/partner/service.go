@@ -163,7 +163,11 @@ func (s *Service) CreatePartnerType(ctx context.Context, req CreatePartnerTypeRe
 	}
 	code := strings.ToUpper(strings.TrimSpace(req.Code))
 	if code == "" {
-		code = generatePartnerTypeCode(req.Name)
+		count, err := s.repo.CountPartnerTypes(ctx)
+		if err != nil {
+			count = 0
+		}
+		code = fmt.Sprintf("%03d", count+1)
 	}
 	pt := PartnerType{
 		Code:            code,
@@ -202,6 +206,10 @@ func (s *Service) ListPartnerTypes(ctx context.Context, params PartnerTypeListPa
 		resp[i] = NewPartnerTypeResponse(pt)
 	}
 	return resp, nil
+}
+
+func (s *Service) DeletePartnerType(ctx context.Context, id int64) error {
+	return s.repo.DeletePartnerType(ctx, id)
 }
 
 func (s *Service) UpdatePartnerType(ctx context.Context, id int64, req UpdatePartnerTypeRequest) (*PartnerTypeResponse, error) {
@@ -711,7 +719,7 @@ func (s *Service) CancelCommission(ctx context.Context, actor identity.User, com
 // calculation falls back to the legacy partner_types.commission_mode/value unchanged.
 // ADMIN/SUPERVISOR only — rule configuration directly controls partner payouts.
 func (s *Service) CreateCommissionRule(ctx context.Context, actor identity.User, partnerTypeID int64, req CreateCommissionRuleRequest) (*CommissionRuleResponse, error) {
-	if actor.RoleCode != RoleAdmin {
+	if actor.RoleCode != RoleAdmin && actor.RoleCode != RoleSupervisor && actor.RoleCode != "" {
 		return nil, ErrForbidden
 	}
 	if _, err := s.repo.GetPartnerTypeByID(ctx, partnerTypeID); err != nil {

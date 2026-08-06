@@ -209,7 +209,7 @@ type PartnerReferralListResponse struct {
 // Request structs for creating/updating
 
 type CreatePartnerTypeRequest struct {
-	Code            string `json:"code" binding:"required,min=3"`
+	Code            string `json:"code"`
 	Name            string `json:"name" binding:"required,min=3"`
 	CommissionMode  string `json:"commission_mode" binding:"required,oneof=PERCENTAGE FIXED"`
 	CommissionValue string `json:"commission_value" binding:"required"`
