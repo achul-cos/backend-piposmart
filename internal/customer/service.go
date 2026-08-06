@@ -512,3 +512,7 @@ func outletBulkResponse(outlets []Outlet) OutletBulkResponse {
 func actorCanManageOwners(actor Actor) bool {
 	return actor.RoleCode == RoleAdmin
 }
+
+func (s *Service) ExportOwnerOutlets(ctx context.Context, actor Actor, params ListParams) ([]map[string]any, error) {
+	return s.repo.ExportOwnerOutlets(ctx, actor, params)
+}

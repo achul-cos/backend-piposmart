@@ -20,6 +20,7 @@ const (
 	ReportSubscriptions = "subscriptions"
 	ReportPartners      = "partners"
 	ReportTargetsKPI    = "targets_kpi"
+	ReportAdminOwner    = "admin_owner"
 	ReportAdminOwnerOutlet = "admin_owner_outlet"
 	ReportAdminNewSubscribe = "admin_new_subscribe"
 	ReportAdminNasabahProvinsi = "admin_nasabah_baru_provinsi"

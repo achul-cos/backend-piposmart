@@ -1321,3 +1321,69 @@ func mapDuplicateError(err error) error {
 	}
 	return fmt.Errorf("database customer: %w", err)
 }
+
+func (r *Repository) ExportOwnerOutlets(ctx context.Context, actor Actor, params ListParams) ([]map[string]any, error) {
+	query := `SELECT
+		CAST(o.id AS CHAR) AS row_code,
+		o.code AS owner_code,
+		CASE WHEN COALESCE(o.name,'') LIKE '%#REF!%' OR COALESCE(o.name,'') LIKE '%#VALUE!%' THEN '' ELSE COALESCE(o.name, '') END AS owner_name,
+		COALESCE(o.email, '') AS owner_email,
+		CASE
+			WHEN COALESCE(o.phone,'') REGEXP '^62[0-9]'
+			THEN CONCAT('0', SUBSTRING(o.phone, 3))
+			ELSE COALESCE(o.phone, '')
+		END AS owner_phone,
+		CASE WHEN COALESCE(o.brand_name,'') LIKE '%#REF!%' OR COALESCE(o.brand_name,'') LIKE '%#VALUE!%' THEN '' ELSE COALESCE(o.brand_name, '') END AS brand_name,
+		DATE_FORMAT(o.created_at, '%Y-%m-%dT%H:%i:%sZ') AS owner_created_at,
+		COALESCE(ot.code, '') AS outlet_code,
+		CASE WHEN COALESCE(ot.name,'') LIKE '%#REF!%' OR COALESCE(ot.name,'') LIKE '%#VALUE!%' THEN '' ELSE COALESCE(ot.name, '') END AS outlet_name,
+		CASE
+			WHEN COALESCE(ot.phone,'') REGEXP '^62[0-9]'
+			THEN CONCAT('0', SUBSTRING(ot.phone, 3))
+			ELSE COALESCE(ot.phone, '')
+		END AS outlet_phone,
+		COALESCE(ot.city, o.city, '') AS outlet_city,
+		COALESCE(ot.province, o.province, '') AS outlet_province,
+		COALESCE(ot.address, o.address, '') AS outlet_address,
+		(SELECT COUNT(*) FROM outlets ot2 WHERE ot2.owner_id = o.id AND ot2.deleted_at IS NULL) AS outlet_count,
+		COALESCE((SELECT wa.balance FROM wallet_accounts wa WHERE wa.owner_id = o.id AND wa.deleted_at IS NULL ORDER BY wa.id LIMIT 1), 0) AS owner_balance
+	FROM owners o
+	LEFT JOIN outlets ot ON ot.owner_id = o.id AND ot.deleted_at IS NULL
+	WHERE o.deleted_at IS NULL
+	ORDER BY o.created_at DESC`
+
+	rows, err := r.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	cols, _ := rows.Columns()
+	var results []map[string]any
+	for rows.Next() {
+		columns := make([]any, len(cols))
+		columnPointers := make([]any, len(cols))
+		for i := range columns {
+			columnPointers[i] = &columns[i]
+		}
+		if err := rows.Scan(columnPointers...); err != nil {
+			return nil, err
+		}
+		rowMap := make(map[string]any)
+		for i, colName := range cols {
+			val := columnPointers[i].(*any)
+			if *val != nil {
+				switch v := (*val).(type) {
+				case []byte:
+					rowMap[colName] = string(v)
+				default:
+					rowMap[colName] = v
+				}
+			} else {
+				rowMap[colName] = ""
+			}
+		}
+		results = append(results, rowMap)
+	}
+	return results, nil
+}

@@ -292,7 +292,7 @@ func (f *Factory) CreateLead(ctx context.Context, tx *sql.Tx, ownerID, outletID 
 	}
 	score := scoreForStage(lead.Stage)
 
-	_, err = tx.ExecContext(ctx, `
+	res, err := tx.ExecContext(ctx, `
 		INSERT INTO customer_leads
 			(code, owner_id, outlet_id, active_sales_id, current_owner_user_id, current_owner_role, supervisor_id, source_type, source_reference, stage, status, current_score, next_follow_up_at)
 		VALUES (?, ?, ?, ?, ?, 'SALES', ?, ?, ?, ?, ?, ?, ?)
@@ -315,9 +315,22 @@ func (f *Factory) CreateLead(ctx context.Context, tx *sql.Tx, ownerID, outletID 
 	if err != nil {
 		return 0, fmt.Errorf("seed lead %s: %w", lead.Code, err)
 	}
-	leadID, err := lookupID(ctx, tx, "customer_leads", "code", lead.Code)
-	if err != nil {
-		return 0, err
+
+	leadID, err := res.LastInsertId()
+	if err != nil || leadID == 0 {
+		// ON DUPLICATE KEY UPDATE → LastInsertId = 0, fallback ke SELECT
+		if err2 := tx.QueryRowContext(ctx,
+			`SELECT id FROM customer_leads WHERE code = ? AND deleted_at IS NULL`,
+			lead.Code,
+		).Scan(&leadID); err2 != nil {
+			// juga coba tanpa filter deleted_at
+			if err3 := tx.QueryRowContext(ctx,
+				`SELECT id FROM customer_leads WHERE code = ?`,
+				lead.Code,
+			).Scan(&leadID); err3 != nil {
+				return 0, fmt.Errorf("lookup customer_leads.code=%s: %w", lead.Code, err3)
+			}
+		}
 	}
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE lead_assignments

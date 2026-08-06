@@ -186,29 +186,31 @@ func paginateQuery(base string, page, limit int) string {
 }
 
 func scanRows(rows *sql.Rows, columns []string) ([]map[string]any, error) {
-	defer rows.Close()
-	items := make([]map[string]any, 0)
-	for rows.Next() {
-		values := make([]any, len(columns))
-		dest := make([]any, len(columns))
-		for i := range values {
-			dest[i] = &values[i]
-		}
-		if err := rows.Scan(dest...); err != nil {
-			return nil, err
-		}
-		row := make(map[string]any, len(columns))
-		for i, col := range columns {
-			switch v := values[i].(type) {
-			case []byte:
-				row[col] = string(v)
-			default:
-				row[col] = v
-			}
-		}
-		items = append(items, row)
-	}
-	return items, rows.Err()
+    defer rows.Close()
+    items := make([]map[string]any, 0)
+    for rows.Next() {
+        values := make([]any, len(columns))
+        dest := make([]any, len(columns))
+        for i := range values {
+            dest[i] = &values[i]
+        }
+        if err := rows.Scan(dest...); err != nil {
+            return nil, err
+        }
+        row := make(map[string]any, len(columns))
+        for i, col := range columns {
+            switch v := values[i].(type) {
+            case []byte:
+                row[col] = string(v)
+            case nil:                  // ← TAMBAH INI
+                row[col] = ""
+            default:
+                row[col] = v
+            }
+        }
+        items = append(items, row)
+    }
+    return items, rows.Err()
 }
 
 func countFromSubquery(ctx context.Context, db *sql.DB, query string, args ...any) (int64, error) {
@@ -388,32 +390,49 @@ func reportColumns(reportKey string) ([]ReportColumn, error) {
 			{Key: "classification", Label: "Klasifikasi", Type: "string"},
 			{Key: "rank_position", Label: "Peringkat", Type: "number"},
 		}, nil
-	case ReportAdminOwnerOutlet:
+	case ReportAdminOwner:
 		return []ReportColumn{
-			{Key: "owner_year", Label: "Tahun Owner", Type: "number"},
-			{Key: "owner_month", Label: "Bulan Owner", Type: "string"},
-			{Key: "owner_date", Label: "Tanggal Owner", Type: "string"},
+			{Key: "no", Label: "No", Type: "number"},
+			{Key: "date_of_work", Label: "Date of Work", Type: "string"},
+			{Key: "nama_penginput", Label: "Nama Penginput", Type: "string"},
+			{Key: "kategori_akun", Label: "Kategori Akun", Type: "string"},
+			{Key: "kode_baris", Label: "Kode Baris", Type: "string"},
 			{Key: "owner_code", Label: "Kode Owner", Type: "string"},
+			{Key: "owner_name", Label: "Nama Owner", Type: "string"},
 			{Key: "owner_email", Label: "Email Owner", Type: "string"},
 			{Key: "owner_phone", Label: "No Hp Owner", Type: "string"},
-			{Key: "brand_name", Label: "Nama Project/Brand", Type: "string"},
+			{Key: "create_date_project", Label: "Create Date Project", Type: "string"},
+			{Key: "bulan", Label: "Bulan", Type: "string"},
+			{Key: "brand_name", Label: "Nama Project/BRAND", Type: "string"},
+			{Key: "kelurahan", Label: "Kelurahan", Type: "string"},
+			{Key: "kecamatan", Label: "Kecamatan", Type: "string"},
+			{Key: "kota", Label: "Kota", Type: "string"},
+			{Key: "provinsi", Label: "Provinsi", Type: "string"},
+			{Key: "alamat_lengkap", Label: "Alamat Lengkap", Type: "string"},
+			{Key: "jumlah_outlet", Label: "Jumlah Outlet", Type: "number"},
+		}, nil
+	case ReportAdminOwnerOutlet:
+		return []ReportColumn{
+			{Key: "no", Label: "No", Type: "number"},
+			{Key: "date_of_work", Label: "Date of Work", Type: "string"},
+			{Key: "nama_penginput", Label: "Nama Penginput", Type: "string"},
+			{Key: "kategori_akun", Label: "Kategori Akun", Type: "string"},
+			{Key: "kode_baris", Label: "Kode Baris", Type: "string"},
+			{Key: "owner_code", Label: "Kode Owner", Type: "string"},
+			{Key: "owner_name", Label: "Nama Owner", Type: "string"},
+			{Key: "owner_email", Label: "Email Owner", Type: "string"},
+			{Key: "owner_phone", Label: "No Hp Owner", Type: "string"},
+			{Key: "outlet_phone", Label: "No. Hp Outlet", Type: "string"},
+			{Key: "create_date_project", Label: "Create Date Project", Type: "string"},
+			{Key: "bulan", Label: "Bulan", Type: "string"},
+			{Key: "brand_name", Label: "Nama Project/BRAND", Type: "string"},
 			{Key: "outlet_name", Label: "Nama Outlet", Type: "string"},
-			{Key: "outlet_phone", Label: "No Hp Outlet", Type: "string"},
-			{Key: "outlet_year", Label: "Tahun Outlet", Type: "number"},
-			{Key: "outlet_month", Label: "Bulan Outlet", Type: "string"},
-			{Key: "outlet_date", Label: "Tanggal Outlet", Type: "string"},
-			{Key: "outlet_kelurahan", Label: "Kelurahan Outlet", Type: "string"},
-			{Key: "outlet_kecamatan", Label: "Kecamatan Outlet", Type: "string"},
-			{Key: "outlet_city", Label: "Kota/Kabupaten Outlet", Type: "string"},
-			{Key: "outlet_province", Label: "Provinsi Outlet", Type: "string"},
-			{Key: "outlet_address", Label: "Alamat Outlet", Type: "string"},
-			{Key: "pic_lead", Label: "PIC/Lead", Type: "string"},
-			{Key: "shared_at", Label: "Waktu Dibagikan", Type: "datetime"},
-			{Key: "subscription_started_at", Label: "Waktu Mulai Berlangganan", Type: "string"},
-			{Key: "subscription_package_name", Label: "Paket Langganan", Type: "string"},
-			{Key: "subscription_tenor", Label: "Tenor", Type: "string"},
-			{Key: "subscription_ended_at", Label: "Waktu Berakhir Berlangganan", Type: "string"},
-			{Key: "subscription_status", Label: "Status Langganan", Type: "string"},
+			{Key: "kelurahan", Label: "Kelurahan", Type: "string"},
+			{Key: "kecamatan", Label: "Kecamatan", Type: "string"},
+			{Key: "kota", Label: "Kota", Type: "string"},
+			{Key: "provinsi", Label: "Provinsi", Type: "string"},
+			{Key: "alamat_lengkap", Label: "Alamat Lengkap", Type: "string"},
+			{Key: "jumlah_outlet", Label: "Jumlah Outlet", Type: "number"},
 		}, nil
 	case ReportAdminNewSubscribe:
 		return []ReportColumn{
@@ -555,6 +574,7 @@ func (r *Repository) buildReportQuery(actor Actor, reportKey string, params List
 		}
 		query += ` GROUP BY o.id, o.code, o.name, o.brand_name, o.province, o.city ORDER BY o.created_at DESC`
 		return query, args, nil
+
 	case ReportActivities:
 		query := `SELECT
 			ci.interaction_at AS interaction_at,
@@ -601,6 +621,7 @@ func (r *Repository) buildReportQuery(actor Actor, reportKey string, params List
 		}
 		query += ` ORDER BY ci.interaction_at DESC`
 		return query, args, nil
+
 	case ReportTopups:
 		query := `SELECT
 			wp.code AS payment_code,
@@ -643,6 +664,7 @@ func (r *Repository) buildReportQuery(actor Actor, reportKey string, params List
 		}
 		query += ` ORDER BY effective_transfer_at DESC, wp.created_at DESC`
 		return query, args, nil
+
 	case ReportClosings:
 		query := `SELECT
 			sc.code AS closing_code,
@@ -690,6 +712,7 @@ func (r *Repository) buildReportQuery(actor Actor, reportKey string, params List
 		}
 		query += ` ORDER BY sc.closed_at DESC`
 		return query, args, nil
+
 	case ReportSubscriptions:
 		query := `SELECT
 			s.code AS subscription_code,
@@ -735,6 +758,7 @@ func (r *Repository) buildReportQuery(actor Actor, reportKey string, params List
 		}
 		query += ` ORDER BY s.active_until ASC`
 		return query, args, nil
+
 	case ReportPartners:
 		query := `SELECT
 			COALESCE(p.code, '') AS partner_code,
@@ -775,6 +799,7 @@ func (r *Repository) buildReportQuery(actor Actor, reportKey string, params List
 		}
 		query += ` ORDER BY c.created_at DESC`
 		return query, args, nil
+
 	case ReportTargetsKPI:
 		query := `SELECT
 			COALESCE(u.code, '') AS sales_code,
@@ -815,76 +840,31 @@ func (r *Repository) buildReportQuery(actor Actor, reportKey string, params List
 		}
 		query += ` ORDER BY skr.period_year DESC, skr.period_month DESC, skr.rank_position ASC`
 		return query, args, nil
-	case ReportAdminOwnerOutlet:
+
+	case ReportAdminOwner:
+		// ✅ PERBAIKAN: 1 row per OWNER (tidak per outlet)
+		// Tidak ada LEFT JOIN outlets, hanya count outlets
 		query := `SELECT
-			YEAR(o.created_at) AS owner_year,
-			` + monthNameIDSQL("o.created_at") + ` AS owner_month,
-			DATE_FORMAT(o.created_at, '%d/%m/%Y') AS owner_date,
+			0 AS no,
+			DATE_FORMAT(o.created_at, '%d/%m/%Y') AS date_of_work,
+			'-' AS nama_penginput,
+			'OWNER' AS kategori_akun,
+			CAST(o.id AS CHAR) AS kode_baris,
 			o.code AS owner_code,
+			o.name AS owner_name,
 			COALESCE(o.email, '') AS owner_email,
 			COALESCE(o.phone, '') AS owner_phone,
+			DATE_FORMAT(o.created_at, '%d/%m/%Y') AS create_date_project,
+			` + monthNameIDSQL("o.created_at") + ` AS bulan,
 			COALESCE(o.brand_name, '') AS brand_name,
-			COALESCE(ot.name, '') AS outlet_name,
-			COALESCE(ot.phone, '') AS outlet_phone,
-			CASE WHEN ot.created_at IS NULL THEN '' ELSE YEAR(ot.created_at) END AS outlet_year,
-			` + monthNameIDSQL("ot.created_at") + ` AS outlet_month,
-			CASE WHEN ot.created_at IS NULL THEN '' ELSE DATE_FORMAT(ot.created_at, '%d/%m/%Y') END AS outlet_date,
-			'' AS outlet_kelurahan,
-			'' AS outlet_kecamatan,
-			COALESCE(ot.city, o.city, '') AS outlet_city,
-			COALESCE(ot.province, o.province, '') AS outlet_province,
-			COALESCE(ot.address, o.address, '') AS outlet_address,
-			COALESCE(pic.name, '') AS pic_lead,
-			CASE
-				WHEN active_assignment.started_at IS NULL THEN ''
-				ELSE DATE_FORMAT(active_assignment.started_at, '%d/%m/%Y %H:%i')
-			END AS shared_at,
-			CASE
-				WHEN latest_sub.active_from IS NULL THEN ''
-				ELSE DATE_FORMAT(latest_sub.active_from, '%d/%m/%Y')
-			END AS subscription_started_at,
-			COALESCE(latest_sub.package_name, '') AS subscription_package_name,
-			CASE
-				WHEN latest_sub.tenure_months IS NULL THEN ''
-				ELSE CONCAT(latest_sub.tenure_months, ' Bulan')
-			END AS subscription_tenor,
-			CASE
-				WHEN latest_sub.active_until IS NULL THEN ''
-				ELSE DATE_FORMAT(latest_sub.active_until, '%d/%m/%Y')
-			END AS subscription_ended_at,
-			COALESCE(latest_sub.subscription_status, 'BELUM BERLANGGANAN') AS subscription_status
+			COALESCE(o.sub_district, '') AS kelurahan,
+			COALESCE(o.district, '') AS kecamatan,
+			COALESCE(o.city, '') AS kota,
+			COALESCE(o.province, '') AS provinsi,
+			COALESCE(o.address, '') AS alamat_lengkap,
+			COALESCE(outlets_count.total, 0) AS jumlah_outlet,
 		FROM owners o
-		LEFT JOIN outlets ot ON ot.owner_id = o.id AND ot.deleted_at IS NULL
-		LEFT JOIN customer_leads cl ON cl.owner_id = o.id AND cl.deleted_at IS NULL
-		LEFT JOIN users pic ON pic.id = cl.current_owner_user_id
-		LEFT JOIN (
-			SELECT cla.lead_id, cla.started_at
-			FROM lead_assignments cla
-			INNER JOIN (
-				SELECT lead_id, MAX(id) AS max_id
-				FROM lead_assignments
-				WHERE deleted_at IS NULL AND active = TRUE
-				GROUP BY lead_id
-			) active_last ON active_last.max_id = cla.id
-			WHERE cla.deleted_at IS NULL
-		) active_assignment ON active_assignment.lead_id = cl.id
-		LEFT JOIN (
-			SELECT *
-			FROM (
-				SELECT
-					s.outlet_id,
-					s.active_from,
-					s.active_until,
-					s.status AS subscription_status,
-					JSON_UNQUOTE(JSON_EXTRACT(so.package_snapshot_json, '$.name')) AS package_name,
-					so.tenure_months,
-					ROW_NUMBER() OVER (PARTITION BY s.outlet_id ORDER BY s.active_from DESC, s.id DESC) AS rn
-				FROM subscriptions s
-				LEFT JOIN subscription_orders so ON so.id = s.order_id AND so.deleted_at IS NULL
-				WHERE s.deleted_at IS NULL
-			) ranked_sub
-			WHERE ranked_sub.rn = 1
-		) latest_sub ON latest_sub.outlet_id = ot.id
+		LEFT JOIN (SELECT owner_id, COUNT(id) AS total FROM outlets WHERE deleted_at IS NULL GROUP BY owner_id) outlets_count ON outlets_count.owner_id = o.id
 		WHERE o.deleted_at IS NULL AND o.created_at >= ? AND o.created_at <= ?`
 		args := []any{from, to}
 		if scope, scopeArgs := buildOwnerVisibilityCondition(actor, "o.id"); scope != "" {
@@ -893,8 +873,61 @@ func (r *Repository) buildReportQuery(actor Actor, reportKey string, params List
 		}
 		if params.Query != "" {
 			like := "%" + params.Query + "%"
-			query += ` AND (o.code LIKE ? OR COALESCE(o.email, '') LIKE ? OR COALESCE(o.brand_name, '') LIKE ? OR COALESCE(ot.name, '') LIKE ? OR COALESCE(pic.name, '') LIKE ?)`
-			args = append(args, like, like, like, like, like)
+			query += ` AND (o.code LIKE ? OR COALESCE(o.email, '') LIKE ? OR COALESCE(o.brand_name, '') LIKE ?)`
+			args = append(args, like, like, like)
+		}
+		if params.Province != "" {
+			query += ` AND COALESCE(o.province, '') = ?`
+			args = append(args, params.Province)
+		}
+		if params.City != "" {
+			query += ` AND COALESCE(o.city, '') = ?`
+			args = append(args, params.City)
+		}
+		if createdFrom != nil && createdTo != nil {
+			query += ` AND o.created_at >= ? AND o.created_at < ?`
+			args = append(args, *createdFrom, *createdTo)
+		}
+		query += ` ORDER BY o.created_at DESC`
+		return query, args, nil
+
+	case ReportAdminOwnerOutlet:
+		// ✅ PERBAIKAN: 1 row per OUTLET (per outlet, owner bisa repeat)
+		// Ada LEFT JOIN ke outlets untuk ambil outlet details
+		query := `SELECT
+			0 AS no,
+			DATE_FORMAT(o.created_at, '%d/%m/%Y') AS date_of_work,
+			'-' AS nama_penginput,
+			'OWNER' AS kategori_akun,
+			CAST(o.id AS CHAR) AS kode_baris,
+			o.code AS owner_code,
+			o.name AS owner_name,
+			COALESCE(o.email, '') AS owner_email,
+			COALESCE(o.phone, '') AS owner_phone,
+			COALESCE(ot.phone, '') AS outlet_phone,
+			DATE_FORMAT(o.created_at, '%d/%m/%Y') AS create_date_project,
+			` + monthNameIDSQL("o.created_at") + ` AS bulan,
+			COALESCE(o.brand_name, '') AS brand_name,
+			COALESCE(ot.name, '') AS outlet_name,
+			COALESCE(ot.sub_district, o.sub_district, '') AS kelurahan,
+			COALESCE(ot.district, o.district, '') AS kecamatan,
+			COALESCE(ot.city, o.city, '') AS kota,
+			COALESCE(ot.province, o.province, '') AS provinsi,
+			COALESCE(ot.address, o.address, '') AS alamat_lengkap,
+			COALESCE(outlets_count.total, 0) AS jumlah_outlet,
+		FROM owners o
+		LEFT JOIN outlets ot ON ot.owner_id = o.id AND ot.deleted_at IS NULL
+		LEFT JOIN (SELECT owner_id, COUNT(id) AS total FROM outlets WHERE deleted_at IS NULL GROUP BY owner_id) outlets_count ON outlets_count.owner_id = o.id
+		WHERE o.deleted_at IS NULL AND o.created_at >= ? AND o.created_at <= ?`
+		args := []any{from, to}
+		if scope, scopeArgs := buildOwnerVisibilityCondition(actor, "o.id"); scope != "" {
+			query += scope
+			args = append(args, scopeArgs...)
+		}
+		if params.Query != "" {
+			like := "%" + params.Query + "%"
+			query += ` AND (o.code LIKE ? OR COALESCE(o.email, '') LIKE ? OR COALESCE(o.brand_name, '') LIKE ? OR COALESCE(ot.name, '') LIKE ?)`
+			args = append(args, like, like, like, like)
 		}
 		if params.Province != "" {
 			query += ` AND COALESCE(ot.province, o.province, '') = ?`
@@ -910,6 +943,7 @@ func (r *Repository) buildReportQuery(actor Actor, reportKey string, params List
 		}
 		query += ` ORDER BY o.created_at DESC, ot.created_at DESC, ot.id DESC`
 		return query, args, nil
+
 	case ReportAdminNewSubscribe:
 		query := `SELECT
 			DATE(COALESCE(sc.confirmed_at, sc.closed_at, so.purchased_at)) AS date_of_work,
@@ -970,6 +1004,7 @@ func (r *Repository) buildReportQuery(actor Actor, reportKey string, params List
 		}
 		query += ` GROUP BY so.id ORDER BY activation_date DESC`
 		return query, args, nil
+
 	case ReportAdminNasabahProvinsi:
 		query := `SELECT
 			YEAR(o.created_at) AS year_member,
@@ -1010,6 +1045,7 @@ func (r *Repository) buildReportQuery(actor Actor, reportKey string, params List
 		}
 		query += ` ORDER BY province ASC, city ASC, o.created_at DESC`
 		return query, args, nil
+
 	default:
 		return "", nil, ErrInvalidReportKey
 	}

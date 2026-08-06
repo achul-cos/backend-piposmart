@@ -176,7 +176,9 @@ func (s *Service) GenerateExport(ctx context.Context, exportID int64) error {
 		mimeType = "text/csv"
 		extension = ".csv"
 	case ExportFormatXLSX:
-		content, err = BuildXLSX(report.ReportKey, "Report", report.Columns, report.Items, report.Insight)
+		// PERBAIKAN: Gunakan report.ReportKey untuk routing ke function yang benar
+		// Biarkan sheet name di-generate di dalam BuildXLSX sesuai dengan reportKey
+		content, err = BuildXLSX(report.ReportKey, report.ReportKey, report.Columns, report.Items, report.Insight)
 		mimeType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 		extension = ".xlsx"
 	case ExportFormatPDF:

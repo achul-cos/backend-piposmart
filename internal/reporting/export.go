@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -14,9 +15,12 @@ import (
 )
 
 func sanitizeSpreadsheetCell(value any) any {
+	if value == nil {
+		return ""
+	}
 	text := fmt.Sprint(value)
-	if text == "" {
-		return text
+	if text == "" || text == "<nil>" {
+		return ""
 	}
 	switch text[0] {
 	case '=', '+', '-', '@':
@@ -55,9 +59,26 @@ func BuildCSV(columns []ReportColumn, items []map[string]any) ([]byte, error) {
 }
 
 func BuildXLSX(reportKey, sheetName string, columns []ReportColumn, items []map[string]any, insight map[string]any) ([]byte, error) {
-	if reportKey == ReportAdminOwnerOutlet {
-		return buildAdminOwnerOutletXLSX(sheetName, columns, items)
+	title := "Report Owner & Outlet"
+	if reportKey == ReportAdminOwner {
+		title = "Report Data Owner"
 	}
+
+	dateFrom := ""
+	dateTo := ""
+	if insight != nil {
+		if df, ok := insight["date_from"].(string); ok {
+			dateFrom = df
+		}
+		if dt, ok := insight["date_to"].(string); ok {
+			dateTo = dt
+		}
+	}
+
+	if reportKey == ReportAdminOwnerOutlet || reportKey == ReportAdminOwner {
+		return buildAdminOwnerOutletXLSX(title, sheetName, columns, items, dateFrom, dateTo)
+	}
+
 	file := excelize.NewFile()
 	defaultSheet := file.GetSheetName(0)
 	file.SetSheetName(defaultSheet, sheetName)
@@ -78,21 +99,58 @@ func BuildXLSX(reportKey, sheetName string, columns []ReportColumn, items []map[
 	return buf.Bytes(), nil
 }
 
+// GetAdminOwnerOutletColumns - Kolom lengkap untuk Data Owner-Outlet
+func GetAdminOwnerOutletColumns() []ReportColumn {
+	return []ReportColumn{
+		{Key: "no", Label: "No", Type: "number"},
+		{Key: "date_of_work", Label: "Date of Work", Type: "string"},
+		{Key: "nama_penginput", Label: "Nama Penginput", Type: "string"},
+		{Key: "kategori_akun", Label: "Kategori Akun", Type: "string"},
+		{Key: "kode_baris", Label: "Kode Baris", Type: "string"},
+		{Key: "owner_code", Label: "Kode Owner", Type: "string"},
+		{Key: "owner_name", Label: "Nama Owner", Type: "string"},
+		{Key: "owner_email", Label: "Email Owner", Type: "string"},
+		{Key: "owner_phone", Label: "No Hp Owner", Type: "string"},
+		{Key: "outlet_phone", Label: "No. Hp Outlet", Type: "string"},
+		{Key: "create_date_project", Label: "Create Date", Type: "string"},
+		{Key: "brand_name", Label: "Nama Project/BRAND", Type: "string"},
+		{Key: "outlet_name", Label: "Nama Outlet", Type: "string"},
+		{Key: "kelurahan", Label: "Kelurahan", Type: "string"},
+		{Key: "kecamatan", Label: "Kecamatan", Type: "string"},
+		{Key: "kota", Label: "Kota", Type: "string"},
+		{Key: "provinsi", Label: "Provinsi", Type: "string"},
+		{Key: "alamat_lengkap", Label: "Alamat Lengkap", Type: "string"},
+		{Key: "jumlah_outlet", Label: "Jumlah Outlet", Type: "number"},
+	}
+}
 
-func buildAdminOwnerOutletXLSX(sheetName string, columns []ReportColumn, items []map[string]any) ([]byte, error) {
+// GetAdminOwnerColumns - Kolom khusus Data Owner (Penginput, Kategori Akun, Hp Outlet, Bulan, & Outlet Name DAHUS/DIHAPUS)
+func GetAdminOwnerColumns() []ReportColumn {
+	return []ReportColumn{
+		{Key: "no", Label: "No", Type: "number"},
+		{Key: "date_of_work", Label: "Date of Work", Type: "string"},
+		{Key: "kode_baris", Label: "Kode Baris", Type: "string"},
+		{Key: "owner_code", Label: "Kode Owner", Type: "string"},
+		{Key: "owner_name", Label: "Nama Owner", Type: "string"},
+		{Key: "owner_email", Label: "Email Owner", Type: "string"},
+		{Key: "owner_phone", Label: "No Hp Owner", Type: "string"},
+		{Key: "create_date_project", Label: "Create Date Project", Type: "string"},
+		{Key: "brand_name", Label: "Nama Project/BRAND", Type: "string"},
+		{Key: "kelurahan", Label: "Kelurahan", Type: "string"},
+		{Key: "kecamatan", Label: "Kecamatan", Type: "string"},
+		{Key: "kota", Label: "Kota", Type: "string"},
+		{Key: "provinsi", Label: "Provinsi", Type: "string"},
+		{Key: "alamat_lengkap", Label: "Alamat Lengkap", Type: "string"},
+		{Key: "jumlah_outlet", Label: "Jumlah Outlet", Type: "number"},
+		{Key: "saldo_owner", Label: "Saldo Owner", Type: "currency"},
+	}
+}
+
+func buildAdminOwnerOutletXLSX(reportTitle, sheetName string, columns []ReportColumn, items []map[string]any, dateFrom, dateTo string) ([]byte, error) {
 	file := excelize.NewFile()
 	defaultSheet := file.GetSheetName(0)
 	file.SetSheetName(defaultSheet, sheetName)
 
-	titleStyle, _ := file.NewStyle(&excelize.Style{
-		Font: &excelize.Font{Bold: true, Size: 14, Color: "C92C1E"},
-	})
-	metaLabelStyle, _ := file.NewStyle(&excelize.Style{
-		Font: &excelize.Font{Bold: true, Size: 10},
-	})
-	metaValueStyle, _ := file.NewStyle(&excelize.Style{
-		Font: &excelize.Font{Size: 10},
-	})
 	headerStyle, _ := file.NewStyle(&excelize.Style{
 		Font:      &excelize.Font{Bold: true, Color: "FFFFFF"},
 		Fill:      excelize.Fill{Type: "pattern", Color: []string{"C92C1E"}, Pattern: 1},
@@ -105,7 +163,27 @@ func buildAdminOwnerOutletXLSX(sheetName string, columns []ReportColumn, items [
 		},
 	})
 	bodyStyle, _ := file.NewStyle(&excelize.Style{
-		Alignment: &excelize.Alignment{Vertical: "top", WrapText: true},
+		Alignment: &excelize.Alignment{Horizontal: "center", Vertical: "center", WrapText: true},
+		Border: []excelize.Border{
+			{Type: "left", Color: "EAEAEA", Style: 1},
+			{Type: "right", Color: "EAEAEA", Style: 1},
+			{Type: "top", Color: "EAEAEA", Style: 1},
+			{Type: "bottom", Color: "EAEAEA", Style: 1},
+		},
+	})
+	numFmtStr := `"Rp "#,##0_-`
+	currencyStyle, _ := file.NewStyle(&excelize.Style{
+		Alignment: &excelize.Alignment{Horizontal: "center", Vertical: "center"},
+		Border: []excelize.Border{
+			{Type: "left", Color: "EAEAEA", Style: 1},
+			{Type: "right", Color: "EAEAEA", Style: 1},
+			{Type: "top", Color: "EAEAEA", Style: 1},
+			{Type: "bottom", Color: "EAEAEA", Style: 1},
+		},
+		CustomNumFmt: &numFmtStr,
+	})
+	centerStyle, _ := file.NewStyle(&excelize.Style{
+		Alignment: &excelize.Alignment{Horizontal: "center", Vertical: "top"},
 		Border: []excelize.Border{
 			{Type: "left", Color: "EAEAEA", Style: 1},
 			{Type: "right", Color: "EAEAEA", Style: 1},
@@ -114,33 +192,74 @@ func buildAdminOwnerOutletXLSX(sheetName string, columns []ReportColumn, items [
 		},
 	})
 
-	_ = file.SetRowHeight(sheetName, 1, 28)
-	for row := 2; row <= 6; row++ {
-		_ = file.SetRowHeight(sheetName, row, 20)
+	headerBgColor := "E8C2B9"
+
+	headerBgStyle, _ := file.NewStyle(&excelize.Style{
+		Fill: excelize.Fill{Type: "pattern", Pattern: 1, Color: []string{headerBgColor}},
+	})
+	titleStyle, _ := file.NewStyle(&excelize.Style{
+		Font: &excelize.Font{Bold: true, Size: 18, Color: "000000"},
+		Fill: excelize.Fill{Type: "pattern", Pattern: 1, Color: []string{headerBgColor}},
+		Alignment: &excelize.Alignment{Horizontal: "left", Vertical: "center"},
+	})
+	metaLabelStyle, _ := file.NewStyle(&excelize.Style{
+		Font: &excelize.Font{Bold: false, Size: 11, Color: "000000"},
+		Fill: excelize.Fill{Type: "pattern", Pattern: 1, Color: []string{headerBgColor}},
+	})
+	metaValueStyle, _ := file.NewStyle(&excelize.Style{
+		Font: &excelize.Font{Bold: true, Size: 12, Color: "000000"},
+		Fill: excelize.Fill{Type: "pattern", Pattern: 1, Color: []string{headerBgColor}},
+		Alignment: &excelize.Alignment{Horizontal: "right"},
+	})
+
+	for r := 1; r <= 6; r++ {
+		_ = file.SetRowHeight(sheetName, r, 24)
 	}
 
-	_ = file.MergeCell(sheetName, "C1", "H1")
-	_ = file.SetCellValue(sheetName, "C1", "Report Owner & Outlet")
-	_ = file.SetCellStyle(sheetName, "C1", "H1", titleStyle)
+	_ = file.SetColWidth(sheetName, "A", "A", 12)
+	_ = file.SetColWidth(sheetName, "B", "B", 12)
+	_ = file.SetColWidth(sheetName, "C", "C", 12)
+	_ = file.SetColWidth(sheetName, "D", "D", 12)
+	_ = file.SetColWidth(sheetName, "E", "E", 16)
+	_ = file.SetColWidth(sheetName, "F", "F", 24)
 
-	_ = file.SetCellValue(sheetName, "C3", "Tanggal Export")
-	_ = file.SetCellStyle(sheetName, "C3", "C3", metaLabelStyle)
-	_ = file.SetCellValue(sheetName, "D3", time.Now().In(time.Local).Format("02/01/2006"))
-	_ = file.SetCellStyle(sheetName, "D3", "D3", metaValueStyle)
+	lastDataCol, _ := excelize.ColumnNumberToName(len(columns))
+	_ = file.SetCellStyle(sheetName, "A1", lastDataCol+"6", headerBgStyle)
 
-	_ = file.SetCellValue(sheetName, "C4", "Total Baris")
-	_ = file.SetCellStyle(sheetName, "C4", "C4", metaLabelStyle)
-	_ = file.SetCellValue(sheetName, "D4", len(items))
-	_ = file.SetCellStyle(sheetName, "D4", "D4", metaValueStyle)
-
+	_ = file.MergeCell(sheetName, "A1", "D5")
 	if logoPath := findPiposmartLogoPath(); logoPath != "" {
 		_ = file.AddPicture(sheetName, "A1", logoPath, &excelize.GraphicOptions{
 			AutoFit:     false,
+			OffsetX:     6,
+			OffsetY:     6,
+			Positioning: "oneCell",
 			ScaleX:      0.55,
 			ScaleY:      0.55,
-			Positioning: "oneCell",
 		})
 	}
+
+	_ = file.MergeCell(sheetName, "E1", "H2")
+	_ = file.SetCellValue(sheetName, "E1", reportTitle)
+	_ = file.SetCellStyle(sheetName, "E1", "H2", titleStyle)
+
+	exportDateText := time.Now().In(time.Local).Format("02/01/2006")
+	if dateFrom != "" && dateTo != "" {
+		exportDateText = fmt.Sprintf("%s - %s", dateFrom, dateTo)
+	} else if dateFrom != "" {
+		exportDateText = fmt.Sprintf("Mulai %s", dateFrom)
+	} else if dateTo != "" {
+		exportDateText = fmt.Sprintf("s/d %s", dateTo)
+	}
+
+	_ = file.SetCellValue(sheetName, "E3", "Diekspor:")
+	_ = file.SetCellStyle(sheetName, "E3", "E3", metaLabelStyle)
+	_ = file.SetCellValue(sheetName, "F3", exportDateText)
+	_ = file.SetCellStyle(sheetName, "F3", "F3", metaValueStyle)
+
+	_ = file.SetCellValue(sheetName, "E4", "Total Baris:")
+	_ = file.SetCellStyle(sheetName, "E4", "E4", metaLabelStyle)
+	_ = file.SetCellValue(sheetName, "F4", len(items))
+	_ = file.SetCellStyle(sheetName, "F4", "F4", metaValueStyle)
 
 	headerRow := 7
 	for idx, column := range columns {
@@ -152,26 +271,50 @@ func buildAdminOwnerOutletXLSX(sheetName string, columns []ReportColumn, items [
 	}
 	_ = file.SetRowHeight(sheetName, headerRow, 34)
 
+	firstCell, _ := excelize.CoordinatesToCellName(1, headerRow)
+	lastCell, _ := excelize.CoordinatesToCellName(len(columns), headerRow)
+	_ = file.AutoFilter(sheetName, firstCell+":"+lastCell, []excelize.AutoFilterOptions{})
+
 	for rowIndex, item := range items {
+		item["no"] = rowIndex + 1
 		for colIndex, column := range columns {
 			cell, _ := excelize.CoordinatesToCellName(colIndex+1, rowIndex+headerRow+1)
-			_ = file.SetCellValue(sheetName, cell, sanitizeSpreadsheetCell(item[column.Key]))
-			_ = file.SetCellStyle(sheetName, cell, cell, bodyStyle)
+			val := item[column.Key]
+
+			styleToUse := bodyStyle
+			if column.Type == "currency" {
+				styleToUse = currencyStyle
+			} else if column.Key == "date_of_work" || column.Key == "create_date_project" {
+				styleToUse = centerStyle
+			}
+
+			if column.Type == "currency" || column.Type == "number" {
+				if valFloat, err := strconv.ParseFloat(fmt.Sprint(val), 64); err == nil {
+					_ = file.SetCellValue(sheetName, cell, valFloat)
+				} else {
+					_ = file.SetCellValue(sheetName, cell, sanitizeSpreadsheetCell(val))
+				}
+			} else {
+				_ = file.SetCellValue(sheetName, cell, sanitizeSpreadsheetCell(val))
+			}
+			_ = file.SetCellStyle(sheetName, cell, cell, styleToUse)
 		}
 	}
 
-	lastColumn, _ := excelize.ColumnNumberToName(len(columns))
 	_ = file.SetPanes(sheetName, &excelize.Panes{
 		Freeze:      true,
 		Split:       false,
-		XSplit:      0,
+		XSplit:      7,
 		YSplit:      headerRow,
-		TopLeftCell: fmt.Sprintf("A%d", headerRow+1),
-		ActivePane:  "bottomLeft",
+		TopLeftCell: fmt.Sprintf("H%d", headerRow+1),
+		ActivePane:  "bottomRight",
 	})
+
+	lastColumn, _ := excelize.ColumnNumberToName(len(columns))
 	if len(items) > 0 {
 		_ = file.SetCellStyle(sheetName, "A8", fmt.Sprintf("%s%d", lastColumn, len(items)+headerRow), bodyStyle)
 	}
+
 	var buf bytes.Buffer
 	if err := file.Write(&buf); err != nil {
 		return nil, err
@@ -196,28 +339,34 @@ func findPiposmartLogoPath() string {
 
 func adminOwnerOutletColumnWidth(key string) float64 {
 	switch key {
-	case "owner_year", "outlet_year":
-		return 12
-	case "owner_month", "outlet_month":
+	case "no":
+		return 5
+	case "date_of_work", "create_date_project":
+		return 13
+	case "nama_penginput":
 		return 16
-	case "owner_date", "outlet_date", "shared_at", "subscription_started_at", "subscription_ended_at":
-		return 20
+	case "owner_name", "brand_name", "outlet_name":
+		return 18
+	case "kategori_akun", "kode_baris":
+		return 13
 	case "owner_code":
-		return 16
-	case "owner_email":
-		return 26
-	case "owner_phone", "outlet_phone":
-		return 18
-	case "brand_name", "outlet_name", "pic_lead", "subscription_package_name":
-		return 24
-	case "outlet_kelurahan", "outlet_kecamatan", "outlet_city", "outlet_province", "subscription_status":
-		return 18
-	case "outlet_address":
-		return 34
-	case "subscription_tenor":
 		return 14
+	case "owner_email":
+		return 22
+	case "owner_phone", "outlet_phone":
+		return 14
+	case "kelurahan", "kecamatan":
+		return 14
+	case "kota", "provinsi":
+		return 13
+	case "alamat_lengkap":
+		return 26
+	case "jumlah_outlet":
+		return 10
+	case "saldo_owner":
+		return 16
 	default:
-		return 20
+		return 14
 	}
 }
 

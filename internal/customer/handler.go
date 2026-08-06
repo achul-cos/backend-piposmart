@@ -2,12 +2,14 @@ package customer
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
 
 	"backend_crm_piposmart/internal/identity"
 	"backend_crm_piposmart/internal/platform/httpx"
+	"backend_crm_piposmart/internal/reporting"
 
 	"github.com/gin-gonic/gin"
 )
@@ -32,6 +34,9 @@ func (h *Handler) RegisterRoutes(api *gin.RouterGroup) {
 	owners.PATCH("/bulk", h.bulkUpdateOwners)
 	owners.DELETE("/bulk", h.bulkDeleteOwners)
 	owners.DELETE("/bulk/force", h.bulkForceDeleteOwners)
+	owners.GET("/export", h.exportOwners)
+	owners.GET("/export/download", h.downloadOwnerOutletExcel)
+	owners.GET("/export/download-owner", h.downloadOwnerExcel)
 	owners.GET("/:owner_id", h.getOwner)
 	owners.GET("/:owner_id/overview", h.getOwnerOverview)
 	owners.PATCH("/:owner_id", h.updateOwner)
@@ -130,6 +135,81 @@ func (h *Handler) bulkCreateOwners(c *gin.Context) {
 		return
 	}
 	httpx.Success(c, http.StatusCreated, response)
+}
+
+func (h *Handler) exportOwners(c *gin.Context) {
+	actor := currentActor(c)
+	params, err := listParams(c)
+	if err != nil {
+		httpx.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
+		return
+	}
+	params.All = true
+
+	rows, err := h.service.ExportOwnerOutlets(c.Request.Context(), actor, params)
+	if err != nil {
+		writeError(c, err)
+		return
+	}
+	httpx.Success(c, http.StatusOK, rows)
+}
+
+// downloadOwnerOutletExcel — download file Excel Data Owner-Outlet dari Excel asli (terfilter tanggal)
+func (h *Handler) downloadOwnerOutletExcel(c *gin.Context) {
+	dateFrom := c.Query("date_from")
+	if dateFrom == "" {
+		dateFrom = c.Query("start_date")
+	}
+	dateTo := c.Query("date_to")
+	if dateTo == "" {
+		dateTo = c.Query("end_date")
+	}
+
+	data, err := reporting.BuildOwnerOutletFromExcel(dateFrom, dateTo)
+	if err != nil {
+		httpx.Error(c, http.StatusInternalServerError, "EXPORT_ERROR", err.Error(), nil)
+		return
+	}
+
+	filename := "Data_Owner_Outlet.xlsx"
+	if dateFrom != "" && dateTo != "" {
+		filename = fmt.Sprintf("Data_Owner_Outlet_%s_%s.xlsx", dateFrom, dateTo)
+	} else {
+		timestamp := time.Now().Format("20060102_150405")
+		filename = fmt.Sprintf("Data_Owner_Outlet_%s.xlsx", timestamp)
+	}
+
+	c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
+	c.Data(http.StatusOK, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", data)
+}
+
+// downloadOwnerExcel — download file Excel Data Owner (unique owners) dari Excel asli (terfilter tanggal)
+func (h *Handler) downloadOwnerExcel(c *gin.Context) {
+	dateFrom := c.Query("date_from")
+	if dateFrom == "" {
+		dateFrom = c.Query("start_date")
+	}
+	dateTo := c.Query("date_to")
+	if dateTo == "" {
+		dateTo = c.Query("end_date")
+	}
+
+	data, err := reporting.BuildOwnerFromExcel(dateFrom, dateTo)
+	if err != nil {
+		httpx.Error(c, http.StatusInternalServerError, "EXPORT_ERROR", err.Error(), nil)
+		return
+	}
+
+	filename := "Data_Owner.xlsx"
+	if dateFrom != "" && dateTo != "" {
+		filename = fmt.Sprintf("Data_Owner_%s_%s.xlsx", dateFrom, dateTo)
+	} else {
+		timestamp := time.Now().Format("20060102_150405")
+		filename = fmt.Sprintf("Data_Owner_%s.xlsx", timestamp)
+	}
+
+	c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
+	c.Data(http.StatusOK, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", data)
 }
 
 func (h *Handler) getOwner(c *gin.Context) {
