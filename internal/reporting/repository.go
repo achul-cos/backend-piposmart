@@ -862,7 +862,7 @@ func (r *Repository) buildReportQuery(actor Actor, reportKey string, params List
 			COALESCE(o.city, '') AS kota,
 			COALESCE(o.province, '') AS provinsi,
 			COALESCE(o.address, '') AS alamat_lengkap,
-			COALESCE(outlets_count.total, 0) AS jumlah_outlet,
+			COALESCE(outlets_count.total, 0) AS jumlah_outlet
 		FROM owners o
 		LEFT JOIN (SELECT owner_id, COUNT(id) AS total FROM outlets WHERE deleted_at IS NULL GROUP BY owner_id) outlets_count ON outlets_count.owner_id = o.id
 		WHERE o.deleted_at IS NULL AND o.created_at >= ? AND o.created_at <= ?`
@@ -914,7 +914,7 @@ func (r *Repository) buildReportQuery(actor Actor, reportKey string, params List
 			COALESCE(ot.city, o.city, '') AS kota,
 			COALESCE(ot.province, o.province, '') AS provinsi,
 			COALESCE(ot.address, o.address, '') AS alamat_lengkap,
-			COALESCE(outlets_count.total, 0) AS jumlah_outlet,
+			COALESCE(outlets_count.total, 0) AS jumlah_outlet
 		FROM owners o
 		LEFT JOIN outlets ot ON ot.owner_id = o.id AND ot.deleted_at IS NULL
 		LEFT JOIN (SELECT owner_id, COUNT(id) AS total FROM outlets WHERE deleted_at IS NULL GROUP BY owner_id) outlets_count ON outlets_count.owner_id = o.id

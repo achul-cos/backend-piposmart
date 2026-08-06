@@ -8,7 +8,6 @@ require (
 	github.com/go-pdf/fpdf v0.9.0
 	github.com/go-sql-driver/mysql v1.10.0
 	github.com/goccy/go-yaml v1.19.2
-	github.com/jmoiron/sqlx v1.4.0
 	github.com/pressly/goose/v3 v3.27.2
 	github.com/swaggo/files v1.0.1
 	github.com/swaggo/gin-swagger v1.6.1

@@ -587,18 +587,16 @@ func classifyOutletSubscription(snapshot OutletSubscriptionSnapshot, referenceMo
 	if end.Before(refDate.AddDate(0, 0, -60)) {
 		statusCode = OutletSubscriptionStatusNotSubscribe
 		statusLabel = "TIDAK BERLANGGANAN"
-		daysPassed := -diffDays
-		remaining = &daysPassed
-		remainingDisplay = fmt.Sprintf("%d hari", daysPassed)
+		remaining = &diffDays
+		remainingDisplay = fmt.Sprintf("%d hari", diffDays)
 		return statusCode, statusLabel, remaining, remainingDisplay, lastSubscriptionEndDisplay
 	}
 
 	if end.Before(refDate.AddDate(0, 0, -30)) {
 		statusCode = OutletSubscriptionStatusExpired
 		statusLabel = "UNSUBSCRIBE"
-		daysPassed := -diffDays
-		remaining = &daysPassed
-		remainingDisplay = fmt.Sprintf("%d hari", daysPassed)
+		remaining = &diffDays
+		remainingDisplay = fmt.Sprintf("%d hari", diffDays)
 		return statusCode, statusLabel, remaining, remainingDisplay, lastSubscriptionEndDisplay
 	}
 

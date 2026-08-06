@@ -769,7 +769,7 @@ func (r *Repository) outletSubscriptionStatusCounts(ctx context.Context, actor i
 		WHERE ` + strings.Join(where, " AND ") + `
 		GROUP BY status_code`
 	fullArgs := []any{monthEnd}
-	fullArgs = append(fullArgs, threshold, monthStart.AddDate(0, 0, -30), monthStart, recentStart, year, monthNum, monthEnd, monthEnd.AddDate(0, 0, 30), monthEnd, monthEnd, monthEnd.AddDate(0, 0, -30))
+	fullArgs = append(fullArgs, threshold, threshold, monthStart, monthStart, recentStart, year, monthNum, monthEnd, monthEnd.AddDate(0, 0, 30), monthEnd, monthEnd, recentStart)
 	fullArgs = append(fullArgs, args...)
 	rows, err := r.db.QueryContext(ctx, query, fullArgs...)
 	if err != nil {

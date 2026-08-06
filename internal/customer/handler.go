@@ -156,6 +156,10 @@ func (h *Handler) exportOwners(c *gin.Context) {
 
 // downloadOwnerOutletExcel — download file Excel Data Owner-Outlet dari Excel asli (terfilter tanggal)
 func (h *Handler) downloadOwnerOutletExcel(c *gin.Context) {
+	if !actorCanManageOwners(currentActor(c)) {
+		httpx.Error(c, http.StatusForbidden, "FORBIDDEN", "not allowed to perform this action", nil)
+		return
+	}
 	dateFrom := c.Query("date_from")
 	if dateFrom == "" {
 		dateFrom = c.Query("start_date")
@@ -185,6 +189,10 @@ func (h *Handler) downloadOwnerOutletExcel(c *gin.Context) {
 
 // downloadOwnerExcel — download file Excel Data Owner (unique owners) dari Excel asli (terfilter tanggal)
 func (h *Handler) downloadOwnerExcel(c *gin.Context) {
+	if !actorCanManageOwners(currentActor(c)) {
+		httpx.Error(c, http.StatusForbidden, "FORBIDDEN", "not allowed to perform this action", nil)
+		return
+	}
 	dateFrom := c.Query("date_from")
 	if dateFrom == "" {
 		dateFrom = c.Query("start_date")
@@ -659,7 +667,7 @@ func parseDateOnly(value string) (*time.Time, error) {
 	if value == "" {
 		return nil, nil
 	}
-	parsed, err := time.ParseInLocation("2006-01-02", value, time.Local)
+	parsed, err := time.ParseInLocation("2006-01-02", value, time.UTC)
 	if err == nil {
 		return &parsed, nil
 	}

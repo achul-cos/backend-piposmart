@@ -1045,6 +1045,7 @@ func (r *Repository) CreateCommissionRule(ctx context.Context, rule CommissionRu
 	if err != nil {
 		return 0, err
 	}
+	defer tx.Rollback()
 	if rule.PlanID.Valid {
 		if _, err := tx.ExecContext(ctx, `
 			UPDATE commission_rules

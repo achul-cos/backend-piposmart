@@ -53,7 +53,7 @@ type auditLogRecord struct {
 const entityTypePartnerType = "partner.type"
 
 func canManagePartnerType(actor identity.User) bool {
-	return actor.RoleCode == identity.RoleAdmin || actor.RoleCode == identity.RoleSupervisor || actor.RoleCode == ""
+	return actor.RoleCode == identity.RoleAdmin
 }
 
 func (s *Service) CreatePartnerTypeWithMeta(ctx context.Context, actor identity.User, req CreatePartnerTypeRequest, meta RequestMeta) (*PartnerTypeResponse, error) {
@@ -82,6 +82,21 @@ func (s *Service) UpdatePartnerTypeWithMeta(ctx context.Context, actor identity.
 	}
 	_ = s.repo.Audit(ctx, actor.ID, "partner_type.update", entityTypePartnerType, id, before, after, meta)
 	return after, nil
+}
+
+func (s *Service) DeletePartnerTypeWithMeta(ctx context.Context, actor identity.User, id int64, meta RequestMeta) error {
+	if !canManagePartnerType(actor) {
+		return ErrForbidden
+	}
+	before, err := s.GetPartnerTypeByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	if err := s.DeletePartnerType(ctx, id); err != nil {
+		return err
+	}
+	_ = s.repo.Audit(ctx, actor.ID, "partner_type.delete", entityTypePartnerType, id, before, nil, meta)
+	return nil
 }
 
 func (s *Service) ListPartnerTypeHistories(ctx context.Context, id int64) (*PartnerTypeHistoryListResponse, error) {

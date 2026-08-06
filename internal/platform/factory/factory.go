@@ -36,24 +36,26 @@ type User struct {
 }
 
 type Owner struct {
-	Code      string
-	Name      string
-	Phone     string
-	Email     string
-	BrandName string
-	Province  string
-	City      string
-	Address   string
-	CreatedAt time.Time
+	Code            string
+	Name            string
+	Phone           string
+	Email           string
+	BrandName       string
+	Province        string
+	City            string
+	Address         string
+	CreatedAt       time.Time
+	EnteredByUserID sql.NullInt64
 }
 
 type Outlet struct {
-	Code     string
-	Name     string
-	Phone    string
-	Province string
-	City     string
-	Address  string
+	Code            string
+	Name            string
+	Phone           string
+	Province        string
+	City            string
+	Address         string
+	EnteredByUserID sql.NullInt64
 }
 
 type Lead struct {
@@ -64,6 +66,7 @@ type Lead struct {
 	Status           string
 	NextFollowUpAt   time.Time
 	ActiveSalesEmail string
+	EnteredByUserID  sql.NullInt64
 }
 
 type Interaction struct {
@@ -109,6 +112,55 @@ func (f *Factory) BuildUser(roleCode string, index int) User {
 		Phone:        fmt.Sprintf("62812%08d", 100000+index),
 		PasswordHash: deterministicPasswordHash(email),
 	}
+}
+
+// BuildRealUser builds a User from a real display name (e.g. "Willi", "CS 4 - Wati" already
+// normalized to "Wati") extracted from real seed data, instead of the "<Role> Demo NNN" template
+// BuildUser uses. Email/code stay deterministic so the account is reproducible and login-testable
+// (same DummyPassword as every other seeded user).
+func (f *Factory) BuildRealUser(roleCode, displayName string, seedIndex int) User {
+	codePrefix := map[string]string{
+		"ADMIN":      "ADM",
+		"SUPERVISOR": "SPV",
+		"SALES":      "SLS",
+	}[roleCode]
+	if codePrefix == "" {
+		codePrefix = "USR"
+	}
+
+	slug := slugifyRealName(displayName)
+	email := fmt.Sprintf("%s.%s@internal.piposmart.id", strings.ToLower(roleCode), slug)
+	return User{
+		Code:         fmt.Sprintf("%s-R%04d", codePrefix, seedIndex),
+		RoleCode:     roleCode,
+		Name:         displayName,
+		Email:        email,
+		Phone:        fmt.Sprintf("62813%08d", 900000+seedIndex),
+		PasswordHash: deterministicPasswordHash(email),
+	}
+}
+
+func slugifyRealName(name string) string {
+	name = strings.ToLower(strings.TrimSpace(name))
+	var b strings.Builder
+	lastDash := true // avoid leading dash
+	for _, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+			lastDash = false
+		default:
+			if !lastDash {
+				b.WriteByte('-')
+				lastDash = true
+			}
+		}
+	}
+	slug := strings.TrimRight(b.String(), "-")
+	if slug == "" {
+		slug = "user"
+	}
+	return slug
 }
 
 func (f *Factory) BuildOwner(index int) Owner {
@@ -240,8 +292,8 @@ func (f *Factory) CreateOwner(ctx context.Context, tx *sql.Tx, owner Owner) (int
 		createdAt = time.Now()
 	}
 	_, err := tx.ExecContext(ctx, `
-		INSERT INTO owners (code, name, phone, email, brand_name, province, city, address, status, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?)
+		INSERT INTO owners (code, name, phone, email, brand_name, province, city, address, status, entered_by_user_id, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?, ?)
 		ON DUPLICATE KEY UPDATE
 			name = VALUES(name),
 			phone = VALUES(phone),
@@ -251,8 +303,9 @@ func (f *Factory) CreateOwner(ctx context.Context, tx *sql.Tx, owner Owner) (int
 			city = VALUES(city),
 			address = VALUES(address),
 			status = 'ACTIVE',
+			entered_by_user_id = VALUES(entered_by_user_id),
 			deleted_at = NULL`,
-		owner.Code, owner.Name, owner.Phone, owner.Email, owner.BrandName, owner.Province, owner.City, owner.Address, createdAt,
+		owner.Code, owner.Name, owner.Phone, owner.Email, owner.BrandName, owner.Province, owner.City, owner.Address, owner.EnteredByUserID, createdAt,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("seed owner %s: %w", owner.Code, err)
@@ -262,8 +315,8 @@ func (f *Factory) CreateOwner(ctx context.Context, tx *sql.Tx, owner Owner) (int
 
 func (f *Factory) CreateOutlet(ctx context.Context, tx *sql.Tx, ownerID int64, outlet Outlet) (int64, error) {
 	_, err := tx.ExecContext(ctx, `
-		INSERT INTO outlets (owner_id, code, name, phone, province, city, address, status)
-		VALUES (?, ?, ?, ?, ?, ?, ?, 'ACTIVE')
+		INSERT INTO outlets (owner_id, code, name, phone, province, city, address, status, entered_by_user_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?)
 		ON DUPLICATE KEY UPDATE
 			owner_id = VALUES(owner_id),
 			name = VALUES(name),
@@ -272,8 +325,9 @@ func (f *Factory) CreateOutlet(ctx context.Context, tx *sql.Tx, ownerID int64, o
 			city = VALUES(city),
 			address = VALUES(address),
 			status = 'ACTIVE',
+			entered_by_user_id = VALUES(entered_by_user_id),
 			deleted_at = NULL`,
-		ownerID, outlet.Code, outlet.Name, outlet.Phone, outlet.Province, outlet.City, outlet.Address,
+		ownerID, outlet.Code, outlet.Name, outlet.Phone, outlet.Province, outlet.City, outlet.Address, outlet.EnteredByUserID,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("seed outlet %s: %w", outlet.Code, err)
@@ -294,12 +348,13 @@ func (f *Factory) CreateLead(ctx context.Context, tx *sql.Tx, ownerID, outletID 
 
 	res, err := tx.ExecContext(ctx, `
 		INSERT INTO customer_leads
-			(code, owner_id, outlet_id, active_sales_id, current_owner_user_id, current_owner_role, supervisor_id, source_type, source_reference, stage, status, current_score, next_follow_up_at)
-		VALUES (?, ?, ?, ?, ?, 'SALES', ?, ?, ?, ?, ?, ?, ?)
+			(code, owner_id, outlet_id, active_sales_id, entered_by_user_id, current_owner_user_id, current_owner_role, supervisor_id, source_type, source_reference, stage, status, current_score, next_follow_up_at)
+		VALUES (?, ?, ?, ?, ?, ?, 'SALES', ?, ?, ?, ?, ?, ?, ?)
 		ON DUPLICATE KEY UPDATE
 			owner_id = VALUES(owner_id),
 			outlet_id = VALUES(outlet_id),
 			active_sales_id = VALUES(active_sales_id),
+			entered_by_user_id = VALUES(entered_by_user_id),
 			current_owner_user_id = VALUES(current_owner_user_id),
 			current_owner_role = VALUES(current_owner_role),
 			supervisor_id = VALUES(supervisor_id),
@@ -310,7 +365,7 @@ func (f *Factory) CreateLead(ctx context.Context, tx *sql.Tx, ownerID, outletID 
 			current_score = VALUES(current_score),
 			next_follow_up_at = VALUES(next_follow_up_at),
 			deleted_at = NULL`,
-		lead.Code, ownerID, outletID, salesID, salesID, supervisorID, lead.SourceType, lead.SourceReference, lead.Stage, lead.Status, score, lead.NextFollowUpAt,
+		lead.Code, ownerID, outletID, salesID, lead.EnteredByUserID, salesID, supervisorID, lead.SourceType, lead.SourceReference, lead.Stage, lead.Status, score, lead.NextFollowUpAt,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("seed lead %s: %w", lead.Code, err)
@@ -349,6 +404,45 @@ func (f *Factory) CreateLead(ctx context.Context, tx *sql.Tx, ownerID, outletID 
 		return 0, fmt.Errorf("seed lead assignment %s: %w", lead.Code, err)
 	}
 	return leadID, nil
+}
+
+// ReassignLead replays a historical hand-off of a lead from one sales user to another at a real
+// point in time (e.g. a "Share N" reassignment event from real seed data), closing the previously
+// active lead_assignments row and inserting a new one with the given historical timestamp — unlike
+// CreateLead's own bootstrap assignment row, which always uses the seed run's asOf date.
+func (f *Factory) ReassignLead(ctx context.Context, tx *sql.Tx, leadID, ownerID, fromSalesID, toSalesID, supervisorID int64, action, reason string, score int, at time.Time) error {
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE lead_assignments
+		SET active = FALSE, ended_at = ?
+		WHERE lead_id = ? AND active = TRUE`,
+		at, leadID,
+	); err != nil {
+		return fmt.Errorf("close active lead assignment lead=%d: %w", leadID, err)
+	}
+
+	var fromUserID sql.NullInt64
+	if fromSalesID > 0 {
+		fromUserID = sql.NullInt64{Int64: fromSalesID, Valid: true}
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO lead_assignments
+			(lead_id, owner_id, from_user_id, from_role, to_user_id, to_role, supervisor_id, assigned_by_user_id, action, reason, score, active, started_at)
+		VALUES (?, ?, ?, 'SALES', ?, 'SALES', ?, ?, ?, ?, ?, TRUE, ?)`,
+		leadID, ownerID, fromUserID, toSalesID, supervisorID, supervisorID, action, reason, score, at,
+	); err != nil {
+		return fmt.Errorf("insert lead assignment lead=%d: %w", leadID, err)
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE customer_leads
+		SET current_score = ?, active_sales_id = ?, current_owner_user_id = ?
+		WHERE id = ?`,
+		score, toSalesID, toSalesID, leadID,
+	); err != nil {
+		return fmt.Errorf("update lead assignment lead=%d: %w", leadID, err)
+	}
+	return nil
 }
 
 func (f *Factory) CreateInteraction(ctx context.Context, tx *sql.Tx, leadID int64, interaction Interaction) (int64, error) {

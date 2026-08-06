@@ -451,7 +451,7 @@ func NewOwnerResponse(owner Owner) OwnerResponse {
 		District:              owner.District.String,
 		SubDistrict:           owner.SubDistrict.String,
 		Address:               owner.Address.String,
-		Status:                subStatus,
+		Status:                owner.Status,
 		SubscriptionStatus:    subStatus,
 		SubscribedOutletCount: owner.SubscribedOutletCount,
 		OutletCount:           owner.OutletCount,

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math/rand"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -14,6 +15,17 @@ import (
 
 	"github.com/xuri/excelize/v2"
 )
+
+const noPICIdentity = "Tanpa PIC"
+
+// realShareEvent is one "Share N" lead hand-off event from the real Owner & Outlet Excel export —
+// a real historical reassignment of the lead to a (possibly different) sales person, with the
+// outcome category recorded at that point in time.
+type realShareEvent struct {
+	Date     time.Time
+	RawName  string
+	Category string
+}
 
 type realOwnerExcelRow struct {
 	OwnerCode   string
@@ -27,6 +39,14 @@ type realOwnerExcelRow struct {
 	Province    string
 	Address     string
 	DateOfWork  time.Time
+
+	// Organizational columns — only populated by the "01. Owner & Outlet" file/sheets, which are
+	// the only source that carries this data (see docs/sprint-16f).
+	NamaPenginput string
+	PIC           string
+	StatusTerbaru string
+	Akuisisi      string
+	Shares        []realShareEvent
 }
 
 func parseMonthIndonesian(mStr string) time.Month {
@@ -68,15 +88,45 @@ func getCol(row []string, idx int) string {
 	return ""
 }
 
+// findHeaderIndex resolves a column by header name (exact, trimmed, case-insensitive match).
+// The "01. Owner & Outlet" file's two sheets ("2025-2026" and "2021-2024") have a duplicate
+// "Nama Pengisi" column in the older sheet that shifts every column after it by one position —
+// columns after "STATUS TERBARU" (Akuisisi, PIC, Share N, ...) must be resolved by header name
+// per-sheet rather than hardcoded index, or the older sheet's data silently misaligns.
+func findHeaderIndex(header []string, name string) int {
+	target := strings.ToUpper(strings.TrimSpace(name))
+	for i, h := range header {
+		if strings.ToUpper(strings.TrimSpace(h)) == target {
+			return i
+		}
+	}
+	return -1
+}
+
+// parseShareDate parses the "Tanggal Dibagikan N" columns, which use a distinct "02 January
+// 2006" English-month layout (e.g. " 03 January 2025") not covered by parseDateRobust.
+func parseShareDate(raw string) time.Time {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || strings.EqualFold(raw, "No Date") {
+		return time.Time{}
+	}
+	if t, err := time.Parse("02 January 2006", raw); err == nil {
+		return t
+	}
+	return parseDateRobust(raw)
+}
+
 func seedDemoReal(ctx context.Context, tx *sql.Tx, options Options) error {
 	fake := factory.New(options.Seed, options.AsOf)
 	rng := rand.New(rand.NewSource(options.Seed))
 
-	// 1. Setup Team (Admin)
+	// 1. Setup Team (Admin) — kept as the fallback/system admin used by other seed paths
+	// (e.g. seedDemoReal's own bootstrap), separate from the real "Nama Penginput" admin
+	// accounts created below.
 	adminUser := fake.BuildUser("ADMIN", 1)
 	adminUser.Email = "admin@piposmart.id"
 	adminUser.Name = "Initial Admin"
-	_, err := fake.CreateUser(ctx, tx, adminUser)
+	adminID, err := fake.CreateUser(ctx, tx, adminUser)
 	if err != nil {
 		return fmt.Errorf("create admin: %w", err)
 	}
@@ -87,6 +137,15 @@ func seedDemoReal(ctx context.Context, tx *sql.Tx, options Options) error {
 	if len(excelRows) == 0 {
 		return fmt.Errorf("tidak ada data Excel yang ditemukan di asset/data_admin atau asset/data_sales")
 	}
+
+	// 3. Pre-pass: extract real admin ("Nama Penginput") and sales (PIC/Share) identities from
+	// the whole dataset up front, so the main loop only does O(1) map lookups instead of a
+	// CreateUser call per row (~11.8K rows). See docs/sprint-16f for the data shape this reads.
+	adminIDByName, salesEmailByKey, supervisorID, err := seedRealIdentities(ctx, tx, fake, excelRows)
+	if err != nil {
+		return fmt.Errorf("seed real identities: %w", err)
+	}
+	_ = supervisorID
 
 	// Untuk preset real: hanya iterasi data Excel yang ada, tidak boleh duplikat
 	targetCount := len(excelRows)
@@ -190,8 +249,6 @@ func seedDemoReal(ctx context.Context, tx *sql.Tx, options Options) error {
 		}
 		seenOutlets[outletKey] = true
 
-
-
 		outletPhone := row.OutletPhone
 		if len(outletPhone) > 25 {
 			outletPhone = strings.TrimSpace(outletPhone[:25])
@@ -285,7 +342,27 @@ func readAllRealOwnerExcelFiles() []realOwnerExcelRow {
 					colKota        = 16 // "Kota"
 					colProvinsi    = 17 // "Provinsi"
 					colAlamat      = 18 // "Alamat Lengkap"
+					colNamaPeng    = 2  // "Nama Penginput" — before the sheet-layout divergence, safe hardcoded
+					colStatus      = 21 // "STATUS TERBARU" — also before the divergence
 				)
+
+				// Columns after STATUS TERBARU (Akuisisi, PIC, Share N) shift by one position on
+				// the older "2021-2024" sheet (it has an extra duplicate "Nama Pengisi" column) —
+				// resolve those by header name per-sheet instead of a fixed index.
+				header := rows[0]
+				colAkuisisi := findHeaderIndex(header, "Akuisisi")
+				colPIC := findHeaderIndex(header, "PIC")
+				type shareCols struct{ tanggal, share, kategori int }
+				var shareColIdx [5]shareCols
+				for n := 0; n < 5; n++ {
+					tCol := findHeaderIndex(header, fmt.Sprintf("Tanggal Dibagikan %d", n+1))
+					sCol := findHeaderIndex(header, fmt.Sprintf("Share %d", n+1))
+					kCol := -1
+					if sCol != -1 {
+						kCol = sCol + 1 // "Kategori Nasabah" always immediately follows "Share N"
+					}
+					shareColIdx[n] = shareCols{tanggal: tCol, share: sCol, kategori: kCol}
+				}
 
 				for rIdx := 1; rIdx < len(rows); rIdx++ {
 					row := rows[rIdx]
@@ -321,18 +398,37 @@ func readAllRealOwnerExcelFiles() []realOwnerExcelRow {
 						dt = parseDateRobust(rawDate)
 					}
 
+					var shares []realShareEvent
+					for n := 0; n < 5; n++ {
+						sc := shareColIdx[n]
+						shareName := getCol(row, sc.share)
+						if shareName == "" {
+							continue
+						}
+						shares = append(shares, realShareEvent{
+							Date:     parseShareDate(getCol(row, sc.tanggal)),
+							RawName:  shareName,
+							Category: getCol(row, sc.kategori),
+						})
+					}
+
 					results = append(results, realOwnerExcelRow{
-						OwnerCode:   code,
-						OwnerName:   name,
-						BrandName:   brand,
-						OutletName:  outlet,
-						OwnerPhone:  ownerPhone,
-						OwnerEmail:  getCol(row, colOwnerEmail),
-						OutletPhone: outletPhone,
-						City:        getCol(row, colKota),
-						Province:    getCol(row, colProvinsi),
-						Address:     getCol(row, colAlamat),
-						DateOfWork:  dt,
+						OwnerCode:     code,
+						OwnerName:     name,
+						BrandName:     brand,
+						OutletName:    outlet,
+						OwnerPhone:    ownerPhone,
+						NamaPenginput: getCol(row, colNamaPeng),
+						PIC:           getCol(row, colPIC),
+						StatusTerbaru: getCol(row, colStatus),
+						Akuisisi:      getCol(row, colAkuisisi),
+						Shares:        shares,
+						OwnerEmail:    getCol(row, colOwnerEmail),
+						OutletPhone:   outletPhone,
+						City:          getCol(row, colKota),
+						Province:      getCol(row, colProvinsi),
+						Address:       getCol(row, colAlamat),
+						DateOfWork:    dt,
 					})
 				}
 				continue
@@ -378,16 +474,16 @@ func readAllRealOwnerExcelFiles() []realOwnerExcelRow {
 					}
 
 					results = append(results, realOwnerExcelRow{
-						OwnerCode:   code,
-						OwnerName:   name,
-						OwnerPhone:  phone,
-						OwnerEmail:  email,
-						BrandName:   brand,
-						OutletName:  brand,
-						City:        city,
-						Province:    sheet,
-						Address:     addr,
-						DateOfWork:  dt,
+						OwnerCode:  code,
+						OwnerName:  name,
+						OwnerPhone: phone,
+						OwnerEmail: email,
+						BrandName:  brand,
+						OutletName: brand,
+						City:       city,
+						Province:   sheet,
+						Address:    addr,
+						DateOfWork: dt,
 					})
 				}
 				continue
@@ -470,7 +566,7 @@ func readAllRealOwnerExcelFiles() []realOwnerExcelRow {
 				if code == "" && name == "" && brand == "" {
 					continue
 				}
-				
+
 				if strings.Contains(strings.ToUpper(getCol(row, 0)), "TOTAL") {
 					continue
 				}
@@ -495,16 +591,16 @@ func readAllRealOwnerExcelFiles() []realOwnerExcelRow {
 				}
 
 				results = append(results, realOwnerExcelRow{
-					OwnerCode:   code,
-					OwnerName:   name,
-					OwnerPhone:  phone,
-					OwnerEmail:  email,
-					BrandName:   brand,
-					OutletName:  outlet,
-					City:        city,
-					Province:    prov,
-					Address:     addr,
-					DateOfWork:  dt,
+					OwnerCode:  code,
+					OwnerName:  name,
+					OwnerPhone: phone,
+					OwnerEmail: email,
+					BrandName:  brand,
+					OutletName: outlet,
+					City:       city,
+					Province:   prov,
+					Address:    addr,
+					DateOfWork: dt,
 				})
 			}
 		}

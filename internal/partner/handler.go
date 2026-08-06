@@ -153,12 +153,15 @@ func (h *Handler) DeletePartnerType(c *gin.Context) {
 		httpx.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", "ID tidak valid", nil)
 		return
 	}
-	if err := h.service.DeletePartnerType(c.Request.Context(), id); err != nil {
+	actor, _ := identity.CurrentUser(c)
+	if err := h.service.DeletePartnerTypeWithMeta(c.Request.Context(), actor, id, requestMeta(c)); err != nil {
 		switch err {
 		case ErrNotFound:
 			httpx.Error(c, http.StatusNotFound, "NOT_FOUND", "jenis mitra tidak ditemukan", nil)
 		case ErrPartnerTypeInUse:
 			httpx.Error(c, http.StatusBadRequest, "TYPE_IN_USE", err.Error(), nil)
+		case ErrForbidden:
+			httpx.Error(c, http.StatusForbidden, "FORBIDDEN", "not allowed to perform this action", nil)
 		default:
 			httpx.Error(c, http.StatusInternalServerError, "INTERNAL_ERROR", "gagal menghapus jenis mitra", nil)
 		}

@@ -1383,6 +1383,7 @@ func mapDuplicateError(err error) error {
 }
 
 func (r *Repository) ExportOwnerOutlets(ctx context.Context, actor Actor, params ListParams) ([]map[string]any, error) {
+	where, args := ownerWhere(actor, params)
 	query := `SELECT
 		CAST(o.id AS CHAR) AS row_code,
 		o.code AS owner_code,
@@ -1409,10 +1410,10 @@ func (r *Repository) ExportOwnerOutlets(ctx context.Context, actor Actor, params
 		COALESCE((SELECT wa.balance FROM wallet_accounts wa WHERE wa.owner_id = o.id AND wa.deleted_at IS NULL ORDER BY wa.id LIMIT 1), 0) AS owner_balance
 	FROM owners o
 	LEFT JOIN outlets ot ON ot.owner_id = o.id AND ot.deleted_at IS NULL
-	WHERE o.deleted_at IS NULL
+	WHERE ` + where + `
 	ORDER BY o.created_at DESC`
 
-	rows, err := r.db.QueryContext(ctx, query)
+	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
