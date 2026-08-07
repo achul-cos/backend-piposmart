@@ -175,21 +175,43 @@ func SeedSubscriptionsFromExcel(ctx context.Context, tx *sql.Tx, fake *factory.F
 			}
 		}
 
-		// 4. Create Subscription
+		// 4. Create Subscription — via a Closing first, so the order chains owner→lead→closing→
+		// subscription instead of landing directly as a "HANGING_ORDER" reconciliation issue.
 		if row.Paket != "" {
 			tenor, _ := strconv.Atoi(row.Tenor)
 			if tenor == 0 {
 				tenor = 1
 			}
-			
+
 			paketStr := strings.ToUpper(strings.TrimSpace(row.Paket))
 			if paketStr == "BISNIS" {
 				paketStr = "BUSINESS"
 			}
 			planCode := fmt.Sprintf("%s_%02d_MONTHS", paketStr, tenor)
-			
+
+			var closingID sql.NullInt64
+			var leadID int64
+			if err := tx.QueryRowContext(ctx, "SELECT id FROM customer_leads WHERE owner_id = ? LIMIT 1", ownerID).Scan(&leadID); err == nil {
+				newClosingID, cErr := fake.CreateClosing(ctx, tx, leadID, factory.Closing{
+					PlanCode: planCode,
+					Status:   "CONFIRMED",
+					Note:     "Import dari Excel New & Subscribe",
+					ClosedAt: aktivasiDate,
+				})
+				if cErr != nil {
+					if strings.Contains(cErr.Error(), "tidak ditemukan") || strings.Contains(cErr.Error(), "no rows in result set") {
+						continue
+					}
+					return fmt.Errorf("create closing owner=%s: %w", row.OwnerCode, cErr)
+				}
+				closingID = sql.NullInt64{Int64: newClosingID, Valid: true}
+			} else if err != sql.ErrNoRows {
+				return fmt.Errorf("lookup lead owner=%s: %w", row.OwnerCode, err)
+			}
+
 			order := factory.SubscriptionOrder{
 				PlanCode:              planCode,
+				ClosingID:             closingID,
 				ExternalReference:     fmt.Sprintf("EXCEL-SUB-%s-%d", row.OwnerCode, i),
 				IdempotencyKey:        fmt.Sprintf("excel-sub-%s-%d", row.OwnerCode, i),
 				PurchasedAt:           paidAt,

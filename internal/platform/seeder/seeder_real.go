@@ -145,7 +145,6 @@ func seedDemoReal(ctx context.Context, tx *sql.Tx, options Options) error {
 	if err != nil {
 		return fmt.Errorf("seed real identities: %w", err)
 	}
-	_ = supervisorID
 
 	// Untuk preset real: hanya iterasi data Excel yang ada, tidak boleh duplikat
 	targetCount := len(excelRows)
@@ -171,6 +170,11 @@ func seedDemoReal(ctx context.Context, tx *sql.Tx, options Options) error {
 			createdAt = clampToAsOf(row.DateOfWork, options.AsOf)
 		}
 
+		var enteredBy sql.NullInt64
+		if id, ok := adminIDByName[strings.TrimSpace(row.NamaPenginput)]; ok {
+			enteredBy = sql.NullInt64{Int64: id, Valid: true}
+		}
+
 		ownerCode := row.OwnerCode
 		if ownerCode == "" || len(ownerCode) > 20 || strings.Contains(ownerCode, " ") {
 			if row.OwnerPhone != "" {
@@ -187,9 +191,11 @@ func seedDemoReal(ctx context.Context, tx *sql.Tx, options Options) error {
 		}
 
 		var ownerID int64
+		isNewOwner := false
 		if existingID, exists := seenOwners[ownerCode]; exists {
 			ownerID = existingID
 		} else {
+			isNewOwner = true
 			ownerName := strings.TrimSpace(row.OwnerName)
 			if ownerName == "" {
 				ownerName = strings.TrimSpace(row.BrandName)
@@ -215,15 +221,16 @@ func seedDemoReal(ctx context.Context, tx *sql.Tx, options Options) error {
 			province := row.Province
 
 			owner := factory.Owner{
-				Code:      ownerCode,
-				Name:      ownerName,
-				Phone:     ownerPhone,
-				Email:     row.OwnerEmail,
-				BrandName: brandName,
-				Province:  province,
-				City:      city,
-				Address:   row.Address,
-				CreatedAt: createdAt,
+				Code:            ownerCode,
+				Name:            ownerName,
+				Phone:           ownerPhone,
+				Email:           row.OwnerEmail,
+				BrandName:       brandName,
+				Province:        province,
+				City:            city,
+				Address:         row.Address,
+				CreatedAt:       createdAt,
+				EnteredByUserID: enteredBy,
 			}
 
 			newOwnerID, err := fake.CreateOwner(ctx, tx, owner)
@@ -264,12 +271,13 @@ func seedDemoReal(ctx context.Context, tx *sql.Tx, options Options) error {
 			outletCode = fmt.Sprintf("OUT-%s-%02d", ownerCode, ownerOutletIdx)
 		}
 		outlet := factory.Outlet{
-			Code:     outletCode,
-			Name:     outletName,
-			Phone:    outletPhone,
-			Province: province,
-			City:     city,
-			Address:  row.Address,
+			Code:            outletCode,
+			Name:            outletName,
+			Phone:           outletPhone,
+			Province:        province,
+			City:            city,
+			Address:         row.Address,
+			EnteredByUserID: enteredBy,
 		}
 		outletID, err := fake.CreateOutlet(ctx, tx, ownerID, outlet)
 		if err != nil {
@@ -278,10 +286,24 @@ func seedDemoReal(ctx context.Context, tx *sql.Tx, options Options) error {
 		// Ensure outlet created_at is historical
 		_, _ = tx.ExecContext(ctx, "UPDATE outlets SET created_at = ? WHERE id = ?", createdAt, outletID)
 
+		// customer_leads is unique per owner, not per outlet — only build the lead + its
+		// assignment/interaction history off the FIRST outlet row seen for a given owner.
+		if isNewOwner {
+			if err := seedRealLeadForOwner(ctx, tx, fake, ownerID, outletID, ownerCode, row, createdAt, enteredBy, supervisorID, salesEmailByKey, options.AsOf); err != nil {
+				return fmt.Errorf("create real lead owner=%d: %w", ownerIndex, err)
+			}
+		}
+
 		progress.update(ownerIndex)
 	}
 
 	progress.finish()
+
+	// 4. Chain subscription/closing data from the "02. New & Subscribe" file onto the owner→lead
+	// data just seeded above (needs the leads created in the loop, so runs after it).
+	if err := SeedSubscriptionsFromExcel(ctx, tx, fake, adminID); err != nil {
+		return fmt.Errorf("seed subscriptions from excel: %w", err)
+	}
 
 	return nil
 }
@@ -610,90 +632,181 @@ func readAllRealOwnerExcelFiles() []realOwnerExcelRow {
 	return results
 }
 
-func seedMultistageLeadAssignments(
+// realAssignmentEvent is one point in a lead's chronologically-replayed real assignment history —
+// either a "Share N" hand-off or, appended last, the row's current "PIC" (unless it already
+// matches the last Share event, in which case it would be a no-op reassignment and is skipped).
+type realAssignmentEvent struct {
+	Date     time.Time
+	Key      string
+	Name     string
+	Category string
+}
+
+// seedRealLeadForOwner creates the customer_leads row for a real-seeded owner (called once, off
+// the first outlet row seen for that owner, since customer_leads is unique per owner) and replays
+// its real "PIC"/"Share 1..5" assignment history as lead_assignments + customer_interactions —
+// data-driven from the Excel export, unlike the synthetic 5-stage generator this replaces.
+func seedRealLeadForOwner(
 	ctx context.Context,
 	tx *sql.Tx,
-	leadID, ownerID int64,
-	salesEmails []string,
-	startDate time.Time,
-	totalSteps int,
-	rng *rand.Rand,
+	fake *factory.Factory,
+	ownerID, outletID int64,
+	ownerCode string,
+	row realOwnerExcelRow,
+	createdAt time.Time,
+	enteredBy sql.NullInt64,
+	supervisorID int64,
+	salesEmailByKey map[string]string,
 	asOf time.Time,
 ) error {
-	// First deactivate existing assignments for this lead
-	if _, err := tx.ExecContext(ctx, `UPDATE lead_assignments SET active = FALSE WHERE lead_id = ?`, leadID); err != nil {
+	var events []realAssignmentEvent
+	for _, sh := range row.Shares {
+		if sh.RawName == "" {
+			continue
+		}
+		d := sh.Date
+		if d.IsZero() {
+			d = createdAt
+		}
+		events = append(events, realAssignmentEvent{
+			Date:     d,
+			Key:      salesIdentityKey(sh.RawName),
+			Name:     normalizeSalesName(sh.RawName),
+			Category: sh.Category,
+		})
+	}
+	sort.SliceStable(events, func(i, j int) bool { return events[i].Date.Before(events[j].Date) })
+
+	if row.PIC != "" {
+		picKey := salesIdentityKey(row.PIC)
+		lastKey, lastDate := "", createdAt
+		if len(events) > 0 {
+			lastKey = events[len(events)-1].Key
+			lastDate = events[len(events)-1].Date
+		}
+		if picKey != lastKey {
+			events = append(events, realAssignmentEvent{Date: lastDate, Key: picKey, Name: normalizeSalesName(row.PIC)})
+		}
+	}
+
+	if len(events) == 0 {
+		events = append(events, realAssignmentEvent{
+			Date: createdAt,
+			Key:  salesIdentityKey(noPICIdentity),
+			Name: normalizeSalesName(noPICIdentity),
+		})
+	}
+
+	firstEmail, ok := salesEmailByKey[events[0].Key]
+	if !ok {
+		firstEmail = salesEmailByKey[salesIdentityKey(noPICIdentity)]
+	}
+
+	stage, status := "NEW", "OPEN"
+	lastCategory := events[len(events)-1].Category
+	if strings.Contains(strings.ToUpper(row.Akuisisi), "GAGAL") ||
+		strings.Contains(strings.ToUpper(row.StatusTerbaru), "GAGAL") ||
+		strings.EqualFold(strings.TrimSpace(lastCategory), "Tidak Tertarik") {
+		stage, status = "INVALID", "INVALID"
+	}
+
+	lead := factory.Lead{
+		Code:             fmt.Sprintf("LEAD-%s", ownerCode),
+		SourceType:       "IMPORT",
+		SourceReference:  "excel:01-owner-outlet",
+		Stage:            stage,
+		Status:           status,
+		NextFollowUpAt:   clampToAsOf(createdAt.AddDate(0, 0, 7), asOf),
+		ActiveSalesEmail: firstEmail,
+		EnteredByUserID:  enteredBy,
+	}
+	leadID, err := fake.CreateLead(ctx, tx, ownerID, outletID, lead)
+	if err != nil {
+		return fmt.Errorf("create lead %s: %w", lead.Code, err)
+	}
+	// CreateLead's own bootstrap lead_assignments row always dates itself to the seed run's asOf
+	// (today), not the real historical first-assignment date — left as-is it sorts chronologically
+	// LAST instead of first. Backdate it to the real first event so history reads correctly.
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE lead_assignments
+		SET action = 'REAL_INITIAL_ASSIGNMENT', started_at = ?
+		WHERE lead_id = ? AND action = 'DEMO_ASSIGNED_TO_SALES'`,
+		events[0].Date, leadID,
+	); err != nil {
+		return fmt.Errorf("backdate lead %s initial assignment: %w", lead.Code, err)
+	}
+
+	prevSalesID, err := lookupRealUserIDByEmail(ctx, tx, firstEmail)
+	if err != nil {
 		return err
 	}
+	if err := createRealShareInteraction(ctx, tx, fake, leadID, events[0]); err != nil {
+		return fmt.Errorf("create lead %s interaction 0: %w", lead.Code, err)
+	}
 
-	// Fetch supervisor ID
-	var supervisorID int64
-	_ = tx.QueryRowContext(ctx, `SELECT id FROM users WHERE role_code = 'SUPERVISOR' LIMIT 1`).Scan(&supervisorID)
-
-	// Fetch sales user IDs
-	salesIDs := make([]int64, 0, len(salesEmails))
-	for _, email := range salesEmails {
-		var uID int64
-		if err := tx.QueryRowContext(ctx, `SELECT id FROM users WHERE email = ?`, email).Scan(&uID); err == nil {
-			salesIDs = append(salesIDs, uID)
+	for i := 1; i < len(events); i++ {
+		ev := events[i]
+		email, ok := salesEmailByKey[ev.Key]
+		if !ok {
+			continue
 		}
-	}
-	if len(salesIDs) == 0 {
-		return nil
-	}
-
-	currentStart := startDate
-	actions := []string{
-		"TUGAS_1_PEMBAGIAN_SALES",
-		"TUGAS_2_FOLLOW_UP_SKORING",
-		"TUGAS_3_PRESENTASI_DEMO",
-		"TUGAS_4_NEGOSIASI_PROPOSAL",
-		"TUGAS_5_CLOSING_HANDOVER",
-	}
-
-	scores := []int{20, 45, 65, 85, 100}
-
-	for s := 0; s < totalSteps; s++ {
-		isLast := (s == totalSteps-1)
-		salesID := salesIDs[(s+rng.Intn(len(salesIDs)))%len(salesIDs)]
-		score := scores[minInt(s, len(scores)-1)]
-		action := actions[minInt(s, len(actions)-1)]
-
-		var endedAt *time.Time
-		if !isLast {
-			durationDays := 2 + rng.Intn(6)
-			endT := clampToAsOf(currentStart.AddDate(0, 0, durationDays), asOf)
-			endedAt = &endT
-		}
-
-		active := isLast
-
-		res, err := tx.ExecContext(ctx, `
-			INSERT INTO lead_assignments
-				(lead_id, owner_id, from_user_id, from_role, to_user_id, to_role, supervisor_id, assigned_by_user_id, action, reason, score, active, started_at, ended_at, created_at)
-			VALUES (?, ?, ?, 'SUPERVISOR', ?, 'SALES', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			leadID, ownerID, supervisorID, salesID, supervisorID, supervisorID, action,
-			fmt.Sprintf("Distribusi tugas tahapan %d oleh Supervisor", s+1),
-			score, active, currentStart, endedAt, currentStart,
-		)
+		toSalesID, err := lookupRealUserIDByEmail(ctx, tx, email)
 		if err != nil {
 			return err
 		}
-
-		if active {
-			// Update customer_leads with current score and active sales user
-			_, _ = tx.ExecContext(ctx, `
-				UPDATE customer_leads
-				SET current_score = ?, active_sales_id = ?, current_owner_user_id = ?
-				WHERE id = ?`,
-				score, salesID, salesID, leadID,
-			)
+		reason := fmt.Sprintf("Share ke %s", ev.Name)
+		if ev.Category != "" {
+			reason += " — " + ev.Category
 		}
-
-		if endedAt != nil {
-			currentStart = *endedAt
+		if err := fake.ReassignLead(ctx, tx, leadID, ownerID, prevSalesID, toSalesID, supervisorID,
+			"REAL_SHARE_REASSIGNED", reason, remarkScoreForCategory(ev.Category), ev.Date); err != nil {
+			return fmt.Errorf("create lead %s reassignment %d: %w", lead.Code, i, err)
 		}
-		_ = res
+		if err := createRealShareInteraction(ctx, tx, fake, leadID, ev); err != nil {
+			return fmt.Errorf("create lead %s interaction %d: %w", lead.Code, i, err)
+		}
+		prevSalesID = toSalesID
 	}
 
 	return nil
+}
+
+func createRealShareInteraction(ctx context.Context, tx *sql.Tx, fake *factory.Factory, leadID int64, ev realAssignmentEvent) error {
+	at := ev.Date
+	if at.IsZero() {
+		at = time.Now().UTC()
+	}
+	note := fmt.Sprintf("Share ke %s", ev.Name)
+	if ev.Category != "" {
+		note += " — " + ev.Category
+	}
+	// Append the date so repeated identical share events (same sales + same category, which does
+	// occur in the real data) don't collide on CreateInteraction's note-based dedup delete.
+	note += " (" + at.Format("2006-01-02") + ")"
+	_, err := fake.CreateInteraction(ctx, tx, leadID, factory.Interaction{
+		Type:          "NOTE",
+		InteractionAt: at,
+		RemarkScore:   remarkScoreForCategory(ev.Category),
+		Note:          note,
+		// CreateInteraction always writes FollowUpAt as-is (no NULL-guard for a zero time.Time) —
+		// every other caller in this package sets a real date for the same reason; match that.
+		FollowUpAt: at.AddDate(0, 0, 3),
+	})
+	return err
+}
+
+func remarkScoreForCategory(category string) int {
+	if strings.EqualFold(strings.TrimSpace(category), "Tidak Tertarik") {
+		return 0 // INVALID
+	}
+	return 1 // POSSIBLE — neutral default; only 4 remark_reasons buckets exist and Excel
+	// category text is too free-form to map precisely beyond "explicitly not interested".
+}
+
+func lookupRealUserIDByEmail(ctx context.Context, tx *sql.Tx, email string) (int64, error) {
+	var id int64
+	if err := tx.QueryRowContext(ctx, `SELECT id FROM users WHERE email = ?`, email).Scan(&id); err != nil {
+		return 0, fmt.Errorf("lookup users.email=%s: %w", email, err)
+	}
+	return id, nil
 }

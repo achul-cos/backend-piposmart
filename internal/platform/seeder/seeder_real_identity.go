@@ -1,8 +1,14 @@
 package seeder
 
 import (
+	"context"
+	"database/sql"
+	"fmt"
 	"regexp"
+	"sort"
 	"strings"
+
+	"backend_crm_piposmart/internal/platform/factory"
 )
 
 // reNameBeforeCS matches "Magdalena ( CS 5 )" / "Kristina (CS 3)" -> captures "Magdalena".
@@ -51,6 +57,82 @@ func normalizeSalesName(raw string) string {
 // salesIdentityKey is the case-insensitive dedup key for a normalized sales name.
 func salesIdentityKey(raw string) string {
 	return strings.ToUpper(normalizeSalesName(raw))
+}
+
+// seedRealIdentities scans the whole real Owner & Outlet dataset up front and creates one real
+// user account per distinct "Nama Penginput" (ADMIN) and per distinct normalized PIC/Share sales
+// identity (SALES, including non-person placeholder labels like "Perusahaan"/"Akun Testing" and
+// the "Tanpa PIC" fallback for rows with no assignment info at all), plus the single hardcoded
+// "Supervisor CRM" account. Doing this once up front (instead of per-row) keeps the ~11.8K row
+// main loop to O(1) map lookups.
+func seedRealIdentities(ctx context.Context, tx *sql.Tx, fake *factory.Factory, rows []realOwnerExcelRow) (adminIDByName map[string]int64, salesEmailByKey map[string]string, supervisorID int64, err error) {
+	adminNames := map[string]bool{}
+	salesNames := map[string]string{} // identity key -> first-seen display name
+	salesNames[salesIdentityKey(noPICIdentity)] = normalizeSalesName(noPICIdentity)
+
+	addSales := func(raw string) {
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			return
+		}
+		key := salesIdentityKey(raw)
+		if key == "" {
+			return
+		}
+		if _, exists := salesNames[key]; !exists {
+			salesNames[key] = normalizeSalesName(raw)
+		}
+	}
+
+	for _, row := range rows {
+		if name := strings.TrimSpace(row.NamaPenginput); name != "" {
+			adminNames[name] = true
+		}
+		addSales(row.PIC)
+		for _, sh := range row.Shares {
+			addSales(sh.RawName)
+		}
+	}
+
+	supUser := fake.BuildRealUser("SUPERVISOR", "Supervisor CRM", 1)
+	supervisorID, err = fake.CreateUser(ctx, tx, supUser)
+	if err != nil {
+		return nil, nil, 0, fmt.Errorf("create supervisor: %w", err)
+	}
+
+	sortedAdmins := make([]string, 0, len(adminNames))
+	for name := range adminNames {
+		sortedAdmins = append(sortedAdmins, name)
+	}
+	sort.Strings(sortedAdmins)
+
+	adminIDByName = make(map[string]int64, len(adminNames))
+	for i, name := range sortedAdmins {
+		u := fake.BuildRealUser("ADMIN", name, i+1)
+		id, err := fake.CreateUser(ctx, tx, u)
+		if err != nil {
+			return nil, nil, 0, fmt.Errorf("create admin %q: %w", name, err)
+		}
+		adminIDByName[name] = id
+	}
+
+	sortedSalesKeys := make([]string, 0, len(salesNames))
+	for key := range salesNames {
+		sortedSalesKeys = append(sortedSalesKeys, key)
+	}
+	sort.Strings(sortedSalesKeys)
+
+	salesEmailByKey = make(map[string]string, len(salesNames))
+	for i, key := range sortedSalesKeys {
+		displayName := salesNames[key]
+		u := fake.BuildRealUser("SALES", displayName, i+1)
+		if _, err := fake.CreateUser(ctx, tx, u); err != nil {
+			return nil, nil, 0, fmt.Errorf("create sales %q: %w", displayName, err)
+		}
+		salesEmailByKey[key] = u.Email
+	}
+
+	return adminIDByName, salesEmailByKey, supervisorID, nil
 }
 
 func titleCaseName(s string) string {
