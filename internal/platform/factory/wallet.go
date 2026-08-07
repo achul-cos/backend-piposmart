@@ -22,6 +22,13 @@ type WalletTopup struct {
 	RejectNote     string
 	UniqueCode     string
 	TransferDateAt time.Time
+	// New & Subscribe archive migration — structured payment method (TF_BRI/MIDTRANS/SALDO_APLIKASI)
+	// plus Midtrans fee/settlement, and a flag marking topups synthesized purely to backfill an old
+	// "Saldo Aplikasi" balance whose original topup predates the migrated data range.
+	PaymentMethod       string
+	FeeAmount           string
+	SettlementAmount    string
+	IsSyntheticBackfill bool
 }
 
 type WalletLedgerTransaction struct {
@@ -76,6 +83,15 @@ func (f *Factory) CreateWalletTopup(ctx context.Context, tx *sql.Tx, ownerID int
 	if amountCents <= 0 {
 		return 0, fmt.Errorf("seed wallet top-up amount harus positif owner=%d", ownerID)
 	}
+	feeAmount, err := nullableSeedMoney(topup.FeeAmount)
+	if err != nil {
+		return 0, err
+	}
+	settlementAmount, err := nullableSeedMoney(topup.SettlementAmount)
+	if err != nil {
+		return 0, err
+	}
+	paymentMethod := nullableSeedString(topup.PaymentMethod)
 	idempotencyKey := strings.TrimSpace(topup.IdempotencyKey)
 	if idempotencyKey == "" {
 		idempotencyKey = fmt.Sprintf("demo:topup:owner:%06d:%s", ownerID, topup.ExternalReference)
@@ -115,22 +131,27 @@ func (f *Factory) CreateWalletTopup(ctx context.Context, tx *sql.Tx, ownerID int
 		}
 		result, err := tx.ExecContext(ctx, `
 			INSERT INTO wallet_payments
-				(code, owner_id, wallet_account_id, payment_type, payment_channel, external_reference,
-				 idempotency_key, amount, currency, status, paid_at, session_expires_at, note, created_by_user_id)
-			VALUES (?, ?, ?, 'TOPUP', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				(code, owner_id, wallet_account_id, payment_type, payment_channel, payment_method, external_reference,
+				 idempotency_key, amount, fee_amount, settlement_amount, currency, status, paid_at, session_expires_at,
+				 note, created_by_user_id, is_synthetic_backfill)
+			VALUES (?, ?, ?, 'TOPUP', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			paymentCode,
 			ownerID,
 			wallet.id,
 			normalizeSeedCode(topup.PaymentChannel, "TF/BRI"),
+			paymentMethod,
 			nullableSeedString(topup.ExternalReference),
 			idempotencyKey,
 			formatSeedCents(amountCents),
+			feeAmount,
+			settlementAmount,
 			wallet.currency,
 			status,
 			topup.PaidAt,
 			sessionExpiresAt,
 			nullableSeedString(note),
 			adminID,
+			topup.IsSyntheticBackfill,
 		)
 		if err != nil {
 			return 0, fmt.Errorf("seed wallet top-up owner=%d: %w", ownerID, err)
@@ -149,22 +170,27 @@ func (f *Factory) CreateWalletTopup(ctx context.Context, tx *sql.Tx, ownerID int
 	}
 	result, err := tx.ExecContext(ctx, `
 		INSERT INTO wallet_payments
-			(code, owner_id, wallet_account_id, payment_type, payment_channel, external_reference,
-			 idempotency_key, amount, currency, status, paid_at, transfer_date_override, unique_code, note, created_by_user_id)
-		VALUES (?, ?, ?, 'TOPUP', ?, ?, ?, ?, ?, 'ACCEPTED', ?, ?, ?, ?, ?)`,
+			(code, owner_id, wallet_account_id, payment_type, payment_channel, payment_method, external_reference,
+			 idempotency_key, amount, fee_amount, settlement_amount, currency, status, paid_at, transfer_date_override,
+			 unique_code, note, created_by_user_id, is_synthetic_backfill)
+		VALUES (?, ?, ?, 'TOPUP', ?, ?, ?, ?, ?, ?, ?, ?, 'ACCEPTED', ?, ?, ?, ?, ?, ?)`,
 		paymentCode,
 		ownerID,
 		wallet.id,
 		normalizeSeedCode(topup.PaymentChannel, "TF/BRI"),
+		paymentMethod,
 		nullableSeedString(topup.ExternalReference),
 		idempotencyKey,
 		formatSeedCents(amountCents),
+		feeAmount,
+		settlementAmount,
 		wallet.currency,
 		topup.PaidAt,
 		transferDateOverride,
 		nullableSeedString(topup.UniqueCode),
 		nullableSeedString(topup.Note),
 		adminID,
+		topup.IsSyntheticBackfill,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("seed wallet top-up owner=%d: %w", ownerID, err)
@@ -410,7 +436,28 @@ func nullableSeedString(value string) sql.NullString {
 	return sql.NullString{String: value, Valid: true}
 }
 
+// nullableSeedMoney parses a decimal seed-money string into a NULL-able formatted amount, treating
+// blank input as NULL rather than as zero (unlike parseSeedMoneyToCents, which treats "" as 0).
+func nullableSeedMoney(value string) (sql.NullString, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return sql.NullString{}, nil
+	}
+	cents, err := parseSeedMoneyToCents(value)
+	if err != nil {
+		return sql.NullString{}, err
+	}
+	return sql.NullString{String: formatSeedCents(cents), Valid: true}, nil
+}
+
 func compactSeedKey(value string) string {
+	return CompactSeedKey(value)
+}
+
+// CompactSeedKey is the exported form of the seed-code compaction used to build deterministic
+// idempotency/external-reference keys, so callers outside this package (e.g. the seeder package's
+// multi-file/multi-year Excel importers) build keys with identical trimming behavior.
+func CompactSeedKey(value string) string {
 	value = strings.ToUpper(strings.ReplaceAll(strings.ReplaceAll(value, ":", "-"), "_", "-"))
 	if len(value) > 40 {
 		return value[len(value)-40:]
