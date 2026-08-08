@@ -14,6 +14,10 @@ func ownerOutletExcelPath() string {
 	return filepath.Join("asset", "data_admin", "01. Owner & Outlet 2021 - 2024 & 2025 - 2026.xlsx")
 }
 
+func nonRegisterExcelPath() string {
+	return filepath.Join("asset", "data_admin", "04. Data Belum Registrasi 2026 - User Temp (Copy).xlsx")
+}
+
 const (
 	exColNo            = 0
 	exColDateOfWork    = 1
@@ -129,6 +133,62 @@ func readAllExcelRows() ([][]string, error) {
 	return allDataRows, nil
 }
 
+func readNonRegisterExcelRows() ([][]string, error) {
+	f, err := excelize.OpenFile(nonRegisterExcelPath())
+	if err != nil {
+		return nil, fmt.Errorf("gagal membuka file Excel non register: %w", err)
+	}
+	defer f.Close()
+
+	var allDataRows [][]string
+	for _, sheet := range f.GetSheetList() {
+		rows, err := f.GetRows(sheet)
+		if err != nil || len(rows) <= 2 {
+			continue
+		}
+		allDataRows = append(allDataRows, rows[2:]...)
+	}
+	return allDataRows, nil
+}
+
+func isNrRowInDateRange(row []string, dateFrom, dateTo string) bool {
+	if dateFrom == "" && dateTo == "" {
+		return true
+	}
+
+	rawDate := getExcelCol(row, 0)
+	if rawDate == "" {
+		rawDate = getExcelCol(row, 5)
+	}
+	if rawDate == "" {
+		return true
+	}
+
+	parsedDate, err := parseExcelDate(rawDate)
+	if err != nil {
+		return true
+	}
+
+	if dateFrom != "" {
+		if tFrom, err := time.Parse("2006-01-02", dateFrom); err == nil {
+			if parsedDate.Before(tFrom) {
+				return false
+			}
+		}
+	}
+
+	if dateTo != "" {
+		if tTo, err := time.Parse("2006-01-02", dateTo); err == nil {
+			tTo = tTo.Add(23*time.Hour + 59*time.Minute + 59*time.Second)
+			if parsedDate.After(tTo) {
+				return false
+			}
+		}
+	}
+
+	return true
+}
+
 // determineAccountCategory menentukan Kategori Akun otomatis, dan mengembalikan Akun Testing jika aslinya adalah akun testing
 func determineAccountCategory(ownerCode, rawKategori string, seenOwners map[string]bool) string {
 	if strings.EqualFold(strings.TrimSpace(rawKategori), "akun testing") {
@@ -197,8 +257,16 @@ func BuildOwnerOutletFromExcel(dateFrom, dateTo string) ([]byte, error) {
 
 	items := make([]map[string]any, 0, len(dataRows))
 	seenOwnersForCategory := make(map[string]bool)
+	existingPhones := make(map[string]bool)
 
 	for _, row := range dataRows {
+		if phone := getExcelCol(row, exColNoHpOwner); phone != "" {
+			existingPhones[phone] = true
+		}
+		if phone := getExcelCol(row, exColNoHpOutlet); phone != "" {
+			existingPhones[phone] = true
+		}
+
 		if !hasValidOutlet(row) {
 			continue
 		}
@@ -297,6 +365,44 @@ func BuildOwnerOutletFromExcel(dateFrom, dateTo string) ([]byte, error) {
 		items = append(items, item)
 	}
 
+	nonRegRows, _ := readNonRegisterExcelRows()
+	for _, nrRow := range nonRegRows {
+		phone := getExcelCol(nrRow, 4)
+		if phone == "" || existingPhones[phone] {
+			continue
+		}
+		if !isNrRowInDateRange(nrRow, dateFrom, dateTo) {
+			continue
+		}
+		kategoriAkun := getExcelCol(nrRow, 8)
+		if kategoriAkun == "" {
+			kategoriAkun = "Belum punya akun"
+		}
+		
+		item := map[string]any{
+			"no":                  len(items) + 1,
+			"date_of_work":        getExcelCol(nrRow, 0),
+			"nama_penginput":      getExcelCol(nrRow, 2),
+			"kategori_akun":       kategoriAkun,
+			"kode_baris":          "",
+			"owner_code":          "",
+			"owner_name":          "",
+			"owner_email":         "",
+			"owner_phone":         phone,
+			"outlet_phone":        "",
+			"create_date_project": getExcelCol(nrRow, 5),
+			"brand_name":          "",
+			"outlet_name":         "",
+			"kelurahan":           "",
+			"kecamatan":           "",
+			"kota":                "",
+			"provinsi":            "",
+			"alamat_lengkap":      getExcelCol(nrRow, 10),
+			"jumlah_outlet":       0,
+		}
+		items = append(items, item)
+	}
+
 	ownerOutletCount := make(map[string]int)
 	for _, item := range items {
 		code := fmt.Sprint(item["owner_code"])
@@ -307,6 +413,21 @@ func BuildOwnerOutletFromExcel(dateFrom, dateTo string) ([]byte, error) {
 	for _, item := range items {
 		code := fmt.Sprint(item["owner_code"])
 		item["jumlah_outlet"] = ownerOutletCount[code]
+		
+
+		ownerPhone := fmt.Sprint(item["owner_phone"])
+		outletPhone := fmt.Sprint(item["outlet_phone"])
+
+		if ownerPhone == "" {
+			if outletPhone != "" {
+				item["owner_phone"] = outletPhone
+			}
+		}
+		if outletPhone == "" {
+			if ownerPhone != "" {
+				item["outlet_phone"] = ownerPhone
+			}
+		}
 	}
 
 	return buildAdminOwnerOutletXLSX("Report Owner & Outlet", "Data Owner Outlet", columns, items, dateFrom, dateTo)
@@ -322,10 +443,37 @@ func BuildOwnerFromExcel(dateFrom, dateTo string) ([]byte, error) {
 	columns := GetAdminOwnerColumns()
 
 	ownerOutletCount := make(map[string]int)
+	existingPhones := make(map[string]bool)
 	for _, row := range dataRows {
 		code := getExcelCol(row, exColKodeOwner)
 		if code != "" {
 			ownerOutletCount[code]++
+		}
+		if phone := getExcelCol(row, exColNoHpOwner); phone != "" {
+			existingPhones[phone] = true
+		}
+		if phone := getExcelCol(row, exColNoHpOutlet); phone != "" {
+			existingPhones[phone] = true
+		}
+	}
+
+	ownerInfoMap := make(map[string]map[string]string)
+	for _, row := range dataRows {
+		code := getExcelCol(row, exColKodeOwner)
+		if code == "" {
+			continue
+		}
+		if ownerInfoMap[code] == nil {
+			ownerInfoMap[code] = make(map[string]string)
+		}
+		if email := getExcelCol(row, exColEmailOwner); email != "" {
+			ownerInfoMap[code]["email"] = email
+		}
+		if phone := getExcelCol(row, exColNoHpOwner); phone != "" {
+			ownerInfoMap[code]["phone"] = phone
+		}
+		if outletPhone := getExcelCol(row, exColNoHpOutlet); outletPhone != "" {
+			ownerInfoMap[code]["outlet_phone"] = outletPhone
 		}
 	}
 
@@ -348,14 +496,34 @@ func BuildOwnerFromExcel(dateFrom, dateTo string) ([]byte, error) {
 
 		seenOwners[code] = true
 
+		ownerEmail := getExcelCol(row, exColEmailOwner)
+		ownerPhone := getExcelCol(row, exColNoHpOwner)
+
+		outletPhone := ""
+		if ownerInfoMap[code] != nil {
+			if ownerEmail == "" {
+				ownerEmail = ownerInfoMap[code]["email"]
+			}
+			if ownerPhone == "" {
+				ownerPhone = ownerInfoMap[code]["phone"]
+			}
+			outletPhone = ownerInfoMap[code]["outlet_phone"]
+		}
+		
+		if ownerPhone == "" {
+			if outletPhone != "" {
+				ownerPhone = outletPhone
+			}
+		}
+
 		item := map[string]any{
 			"no":                  len(items) + 1,
 			"date_of_work":        getExcelCol(row, exColDateOfWork),
 			"kode_baris":          getExcelCol(row, exColKodeBaris),
 			"owner_code":          code,
 			"owner_name":          getExcelCol(row, exColNamaOwner),
-			"owner_email":         getExcelCol(row, exColEmailOwner),
-			"owner_phone":         getExcelCol(row, exColNoHpOwner),
+			"owner_email":         ownerEmail,
+			"owner_phone":         ownerPhone,
 			"create_date_project": getExcelCol(row, exColCreateDate),
 			"brand_name":          getExcelCol(row, exColBrandName),
 			"kelurahan":           getExcelCol(row, exColKelurahan),
@@ -364,6 +532,37 @@ func BuildOwnerFromExcel(dateFrom, dateTo string) ([]byte, error) {
 			"provinsi":            getExcelCol(row, exColProvinsi),
 			"alamat_lengkap":      getExcelCol(row, exColAlamatLengkap),
 			"jumlah_outlet":       ownerOutletCount[code],
+			"saldo_owner":         0,
+		}
+		items = append(items, item)
+	}
+
+	nonRegRows, _ := readNonRegisterExcelRows()
+	for _, nrRow := range nonRegRows {
+		phone := getExcelCol(nrRow, 4)
+		if phone == "" || existingPhones[phone] {
+			continue
+		}
+		if !isNrRowInDateRange(nrRow, dateFrom, dateTo) {
+			continue
+		}
+		
+		item := map[string]any{
+			"no":                  len(items) + 1,
+			"date_of_work":        getExcelCol(nrRow, 0),
+			"kode_baris":          "",
+			"owner_code":          "",
+			"owner_name":          "",
+			"owner_email":         "",
+			"owner_phone":         phone,
+			"create_date_project": getExcelCol(nrRow, 5),
+			"brand_name":          "",
+			"kelurahan":           "",
+			"kecamatan":           "",
+			"kota":                "",
+			"provinsi":            "",
+			"alamat_lengkap":      getExcelCol(nrRow, 10),
+			"jumlah_outlet":       0,
 			"saldo_owner":         0,
 		}
 		items = append(items, item)

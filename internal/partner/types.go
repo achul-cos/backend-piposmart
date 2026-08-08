@@ -66,12 +66,18 @@ type Partner struct {
 	Name                       string         `json:"name"`
 	Phone                      sql.NullString `json:"phone,omitempty"`
 	Email                      sql.NullString `json:"email,omitempty"`
+	Province                   sql.NullString `json:"province,omitempty"`
+	City                       sql.NullString `json:"city,omitempty"`
+	District                   sql.NullString `json:"district,omitempty"`
+	SubDistrict                sql.NullString `json:"sub_district,omitempty"`
 	Address                    sql.NullString `json:"address,omitempty"`
 	BankAccountEncrypted       []byte         `json:"-"`                            // encrypted account number, never exposed
 	BankAccountLast4           sql.NullString `json:"bank_account_last4,omitempty"` // last 4 digits for masking
 	Status                     string         `json:"status"`
 	CreatedAt                  time.Time      `json:"created_at"`
 	UpdatedAt                  time.Time      `json:"updated_at"`
+	PicName                    sql.NullString `json:"pic_name,omitempty"`
+	OwnerName                  sql.NullString `json:"owner_name,omitempty"`
 }
 
 // PartnerAssignment represents the assignment of a PIC (Person In Charge) to a partner.
@@ -131,11 +137,17 @@ type PartnerResponse struct {
 	Name              string              `json:"name"`
 	Phone             *string             `json:"phone,omitempty"`
 	Email             *string             `json:"email,omitempty"`
+	Province          *string             `json:"province,omitempty"`
+	City              *string             `json:"city,omitempty"`
+	District          *string             `json:"district,omitempty"`
+	SubDistrict       *string             `json:"sub_district,omitempty"`
 	Address           *string             `json:"address,omitempty"`
 	BankAccountMasked *string             `json:"bank_account_masked,omitempty"` // e.g., ****1234
 	Status            string              `json:"status"`
 	CreatedAt         time.Time           `json:"created_at"`
 	UpdatedAt         time.Time           `json:"updated_at"`
+	PicName           *string             `json:"pic_name,omitempty"`
+	OwnerName         *string             `json:"owner_name,omitempty"`
 }
 
 type PartnerAssignmentResponse struct {
@@ -230,6 +242,10 @@ type CreatePartnerRequest struct {
 	Name          string  `json:"name" binding:"required,min=3"`
 	Phone         *string `json:"phone,omitempty"`
 	Email         *string `json:"email,omitempty"`
+	Province      *string `json:"province,omitempty"`
+	City          *string `json:"city,omitempty"`
+	District      *string `json:"district,omitempty"`
+	SubDistrict   *string `json:"sub_district,omitempty"`
 	Address       *string `json:"address,omitempty"`
 	BankAccount   *string `json:"bank_account,omitempty"` // plain account number, will be encrypted
 	Status        string  `json:"status,omitempty"`       // default ACTIVE
@@ -255,6 +271,10 @@ type UpdatePartnerRequest struct {
 	Name        *string `json:"name,omitempty"`
 	Phone       *string `json:"phone,omitempty"`
 	Email       *string `json:"email,omitempty"`
+	Province    *string `json:"province,omitempty"`
+	City        *string `json:"city,omitempty"`
+	District    *string `json:"district,omitempty"`
+	SubDistrict *string `json:"sub_district,omitempty"`
 	Address     *string `json:"address,omitempty"`
 	BankAccount *string `json:"bank_account,omitempty"` // if provided, re-encrypt
 	Status      *string `json:"status,omitempty"`
@@ -339,11 +359,17 @@ func NewPartnerResponse(p Partner) PartnerResponse {
 		Name:              p.Name,
 		Phone:             nullStringToPtr(p.Phone),
 		Email:             nullStringToPtr(p.Email),
+		Province:          nullStringToPtr(p.Province),
+		City:              nullStringToPtr(p.City),
+		District:          nullStringToPtr(p.District),
+		SubDistrict:       nullStringToPtr(p.SubDistrict),
 		Address:           nullStringToPtr(p.Address),
 		BankAccountMasked: maskedAccountPtr(p.BankAccountLast4),
 		Status:            p.Status,
 		CreatedAt:         p.CreatedAt,
 		UpdatedAt:         p.UpdatedAt,
+		PicName:           nullStringToPtr(p.PicName),
+		OwnerName:         nullStringToPtr(p.OwnerName),
 	}
 }
 

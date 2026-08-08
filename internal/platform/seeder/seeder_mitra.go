@@ -77,11 +77,14 @@ func readMitraExcel() ([]mitraRow, error) {
 			}
 		}
 		if colCode != -1 && colPIC != -1 {
+			fmt.Printf("Found headers at row %d. colCode=%d, colPIC=%d\n", rIdx, colCode, colPIC)
 			headerRowIdx = rIdx
 			break
 		}
 	}
-
+	if headerRowIdx == -1 {
+		fmt.Printf("Failed to find headers. colCode=%d, colPIC=%d\n", colCode, colPIC)
+	}
 	if headerRowIdx == -1 {
 		return nil, fmt.Errorf("mitra headers not found")
 	}
@@ -130,7 +133,7 @@ func SeedMitraFromExcel(ctx context.Context, tx *sql.Tx, adminID int64, salesEma
 
 	// Build users map for fuzzy PIC search
 	users := make(map[string]int64)
-	userRows, err := tx.QueryContext(ctx, "SELECT id, name, email FROM users WHERE role = 'SALES' OR role = 'ADMIN'")
+	userRows, err := tx.QueryContext(ctx, "SELECT u.id, u.name, u.email FROM users u JOIN roles r ON u.role_id = r.id WHERE r.name = 'SALES' OR r.name = 'ADMIN'")
 	if err == nil {
 		for userRows.Next() {
 			var id int64
@@ -244,6 +247,7 @@ func SeedMitraFromExcel(ctx context.Context, tx *sql.Tx, adminID int64, salesEma
 			`, partnerID, picID, adminID, createdAt, createdAt)
 			if err != nil {
 				// Assignment might already exist, ignore error for simplicity or handle gracefully
+				fmt.Printf("Error assigning PIC %d to partner %d: %v\n", picID, partnerID, err)
 			}
 		}
 	}
