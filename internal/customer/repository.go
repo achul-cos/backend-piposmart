@@ -1446,5 +1446,8 @@ func (r *Repository) ExportOwnerOutlets(ctx context.Context, actor Actor, params
 		}
 		results = append(results, rowMap)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 	return results, nil
 }
