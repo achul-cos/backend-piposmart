@@ -1,8 +1,11 @@
 package seeder
 
 import (
+	"database/sql"
 	"testing"
 	"time"
+
+	"backend_crm_piposmart/internal/platform/factory"
 )
 
 func TestSheetMonthFromName(t *testing.T) {
@@ -143,6 +146,62 @@ func TestInferPaymentMethod(t *testing.T) {
 	}
 }
 
+func TestSplitProjectOutlet(t *testing.T) {
+	cases := []struct {
+		raw       string
+		wantBrand string
+		wantName  string
+	}{
+		{"D'java Laundry/Cabang Ambon", "D'java Laundry", "Cabang Ambon"},
+		{"Solo Laundry", "", "Solo Laundry"},
+		{"", "", ""},
+		{"  Brand / Outlet  ", "Brand", "Outlet"},
+		{"OnlySlash/", "OnlySlash", "OnlySlash"}, // blank outlet half falls back to the brand half
+	}
+	for _, tc := range cases {
+		brand, name := splitProjectOutlet(tc.raw)
+		if brand != tc.wantBrand || name != tc.wantName {
+			t.Errorf("splitProjectOutlet(%q) = (%q, %q), want (%q, %q)", tc.raw, brand, name, tc.wantBrand, tc.wantName)
+		}
+	}
+}
+
+func TestNormalizePhoneForMatch(t *testing.T) {
+	cases := []struct {
+		in   string
+		want string
+	}{
+		{"0896891123", "896891123"},
+		{"62896891123", "896891123"},
+		{"896891123", "896891123"},
+		{"0896-891-123", "896891123"},
+		{"+62 896 891 123", "896891123"},
+	}
+	for _, tc := range cases {
+		if got := normalizePhoneForMatch(tc.in); got != tc.want {
+			t.Errorf("normalizePhoneForMatch(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestDeriveFallbackOwnerCode(t *testing.T) {
+	cases := []struct {
+		name  string
+		phone string
+		idx   int
+		want  string
+	}{
+		{"Azizah", "0896891123", 5, "OWN-0896891123"},
+		{"D'java Laundry Cabang Ambon", "", 5, "OWN-D'JAVALAUN"},
+		{"", "", 5, "OWN-NS-00005"},
+	}
+	for _, tc := range cases {
+		if got := deriveFallbackOwnerCode(tc.name, tc.phone, tc.idx); got != tc.want {
+			t.Errorf("deriveFallbackOwnerCode(%q, %q, %d) = %q, want %q", tc.name, tc.phone, tc.idx, got, tc.want)
+		}
+	}
+}
+
 func TestCleanAmountString(t *testing.T) {
 	cases := []struct {
 		in   string
@@ -161,5 +220,96 @@ func TestCleanAmountString(t *testing.T) {
 		if got := cleanAmountString(tc.in); got != tc.want {
 			t.Errorf("cleanAmountString(%q) = %q, want %q", tc.in, got, tc.want)
 		}
+	}
+}
+
+func TestShouldSeedTransferForTopup(t *testing.T) {
+	cases := []struct {
+		name  string
+		topup factory.WalletTopup
+		want  bool
+	}{
+		{
+			name: "manual transfer topup",
+			topup: factory.WalletTopup{
+				PaymentMethod:  "TF_BRI",
+				PaymentChannel: "TF/BRI",
+			},
+			want: true,
+		},
+		{
+			name: "midtrans topup still gets transfer record for imported proof",
+			topup: factory.WalletTopup{
+				PaymentMethod:  "MIDTRANS",
+				PaymentChannel: "Midtrans",
+			},
+			want: true,
+		},
+		{
+			name: "saldo aplikasi synthetic topup skips transfer",
+			topup: factory.WalletTopup{
+				PaymentMethod:  "SALDO_APLIKASI",
+				PaymentChannel: "Saldo Aplikasi",
+			},
+			want: false,
+		},
+	}
+
+	for _, tc := range cases {
+		if got := shouldSeedTransferForTopup(tc.topup); got != tc.want {
+			t.Errorf("%s: shouldSeedTransferForTopup() = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestBuildMatchedTransferForSubscribeTopup(t *testing.T) {
+	paidAt := time.Date(2026, 7, 14, 9, 0, 0, 0, time.UTC)
+	transferAt := time.Date(2026, 7, 13, 16, 30, 0, 0, time.UTC)
+	topup := factory.WalletTopup{
+		Amount:            "78000",
+		PaidAt:            paidAt,
+		TransferDateAt:    transferAt,
+		Note:              "Import dari Excel New & Subscribe",
+		PaymentMethod:     "TF_BRI",
+		PaymentChannel:    "TF/BRI",
+		ExternalReference: "EXCEL-TF-2026-77",
+	}
+
+	got := buildMatchedTransferForSubscribeTopup("2026-77", topup, 9123)
+
+	if got.Amount != topup.Amount {
+		t.Fatalf("Amount = %q, want %q", got.Amount, topup.Amount)
+	}
+	if !got.TransferDate.Equal(transferAt) {
+		t.Fatalf("TransferDate = %v, want %v", got.TransferDate, transferAt)
+	}
+	if got.MatchStatus != "MATCHED" {
+		t.Fatalf("MatchStatus = %q, want MATCHED", got.MatchStatus)
+	}
+	if got.ExternalReference != "EXCEL-TRF-2026-77" {
+		t.Fatalf("ExternalReference = %q, want %q", got.ExternalReference, "EXCEL-TRF-2026-77")
+	}
+	wantMatched := sql.NullInt64{Int64: 9123, Valid: true}
+	if got.MatchedWalletPaymentID != wantMatched {
+		t.Fatalf("MatchedWalletPaymentID = %+v, want %+v", got.MatchedWalletPaymentID, wantMatched)
+	}
+	if got.Note == "" {
+		t.Fatal("Note should not be blank")
+	}
+}
+
+func TestBuildMatchedTransferForSubscribeTopupFallsBackToPaidAt(t *testing.T) {
+	paidAt := time.Date(2026, 1, 10, 10, 0, 0, 0, time.UTC)
+	topup := factory.WalletTopup{
+		Amount: "120000",
+		PaidAt: paidAt,
+	}
+
+	got := buildMatchedTransferForSubscribeTopup("2026-15", topup, 77)
+	if !got.TransferDate.Equal(paidAt) {
+		t.Fatalf("TransferDate = %v, want %v", got.TransferDate, paidAt)
+	}
+	if got.Note == "" {
+		t.Fatal("Note should fall back to default text")
 	}
 }

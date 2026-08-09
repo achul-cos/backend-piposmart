@@ -361,6 +361,6 @@ func writeError(c *gin.Context, err error) {
 		if err != nil {
 			log.Printf("[subscription writeError 500] %v", err)
 		}
-		httpx.Error(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Terjadi kesalahan pada server", nil)
+		httpx.InternalServerError(c, "Terjadi kesalahan pada server", err)
 	}
 }

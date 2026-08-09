@@ -362,6 +362,6 @@ func writeServiceError(c *gin.Context, err error) {
 	case errors.Is(err, ErrWeakPassword):
 		httpx.Error(c, http.StatusBadRequest, "WEAK_PASSWORD", err.Error(), nil)
 	default:
-		httpx.Error(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Terjadi kesalahan pada server", nil)
+		httpx.InternalServerError(c, "Terjadi kesalahan pada server", err)
 	}
 }

@@ -44,7 +44,7 @@ func (h *Handler) listThreads(c *gin.Context) {
 
 	threads, err := h.service.ListThreads(c.Request.Context(), currentUser, channel, query)
 	if err != nil {
-		httpx.Error(c, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		httpx.InternalServerError(c, "Terjadi kesalahan pada server", err)
 		return
 	}
 
@@ -66,7 +66,7 @@ func (h *Handler) createThread(c *gin.Context) {
 
 	thread, err := h.service.CreateThread(c.Request.Context(), currentUser, req)
 	if err != nil {
-		httpx.Error(c, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		httpx.InternalServerError(c, "Terjadi kesalahan pada server", err)
 		return
 	}
 
@@ -92,7 +92,7 @@ func (h *Handler) getThread(c *gin.Context) {
 			httpx.Error(c, http.StatusNotFound, "NOT_FOUND", err.Error(), nil)
 			return
 		}
-		httpx.Error(c, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		httpx.InternalServerError(c, "Terjadi kesalahan pada server", err)
 		return
 	}
 
@@ -118,7 +118,7 @@ func (h *Handler) toggleLike(c *gin.Context) {
 			httpx.Error(c, http.StatusNotFound, "NOT_FOUND", err.Error(), nil)
 			return
 		}
-		httpx.Error(c, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		httpx.InternalServerError(c, "Terjadi kesalahan pada server", err)
 		return
 	}
 
@@ -150,7 +150,7 @@ func (h *Handler) deleteThread(c *gin.Context) {
 			httpx.Error(c, http.StatusForbidden, "FORBIDDEN", err.Error(), nil)
 			return
 		}
-		httpx.Error(c, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		httpx.InternalServerError(c, "Terjadi kesalahan pada server", err)
 		return
 	}
 
@@ -182,7 +182,7 @@ func (h *Handler) addReply(c *gin.Context) {
 			httpx.Error(c, http.StatusNotFound, "NOT_FOUND", err.Error(), nil)
 			return
 		}
-		httpx.Error(c, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		httpx.InternalServerError(c, "Terjadi kesalahan pada server", err)
 		return
 	}
 
@@ -211,7 +211,7 @@ func (h *Handler) deleteReply(c *gin.Context) {
 			httpx.Error(c, http.StatusForbidden, "FORBIDDEN", err.Error(), nil)
 			return
 		}
-		httpx.Error(c, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		httpx.InternalServerError(c, "Terjadi kesalahan pada server", err)
 		return
 	}
 

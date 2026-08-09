@@ -153,6 +153,6 @@ func writeReportingError(c *gin.Context, err error) {
 	case errors.Is(err, ErrExportNotReady):
 		httpx.Error(c, http.StatusConflict, "EXPORT_NOT_READY", err.Error(), nil)
 	default:
-		httpx.Error(c, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		httpx.InternalServerError(c, "Terjadi kesalahan pada server", err)
 	}
 }

@@ -1,6 +1,7 @@
 package kpi
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -257,6 +258,8 @@ func (h *Handler) ListRanking(c *gin.Context) {
 
 func writeKpiError(c *gin.Context, err error) {
 	switch err {
+	case nil:
+		return
 	case ErrNotFound, ErrJobNotFound:
 		httpx.Error(c, http.StatusNotFound, "NOT_FOUND", err.Error(), nil)
 	case ErrForbidden:
@@ -280,6 +283,31 @@ func writeKpiError(c *gin.Context, err error) {
 	case ErrUnsupportedMetric:
 		httpx.Error(c, http.StatusBadRequest, "UNSUPPORTED_METRIC", err.Error(), nil)
 	default:
-		httpx.Error(c, http.StatusInternalServerError, "INTERNAL_ERROR", "unexpected error", nil)
+		switch {
+		case errors.Is(err, ErrNotFound), errors.Is(err, ErrJobNotFound):
+			httpx.Error(c, http.StatusNotFound, "NOT_FOUND", err.Error(), nil)
+		case errors.Is(err, ErrForbidden):
+			httpx.Error(c, http.StatusForbidden, "FORBIDDEN", err.Error(), nil)
+		case errors.Is(err, ErrInvalidMetric):
+			httpx.Error(c, http.StatusBadRequest, "INVALID_METRIC", err.Error(), nil)
+		case errors.Is(err, ErrInvalidPeriod):
+			httpx.Error(c, http.StatusBadRequest, "INVALID_PERIOD", err.Error(), nil)
+		case errors.Is(err, ErrInvalidWeight):
+			httpx.Error(c, http.StatusBadRequest, "INVALID_WEIGHT", err.Error(), nil)
+		case errors.Is(err, ErrInvalidThreshold):
+			httpx.Error(c, http.StatusBadRequest, "INVALID_THRESHOLD", err.Error(), nil)
+		case errors.Is(err, ErrDuplicateDefinition):
+			httpx.Error(c, http.StatusConflict, "DUPLICATE_DEFINITION", err.Error(), nil)
+		case errors.Is(err, ErrNoActiveDefinitions):
+			httpx.Error(c, http.StatusBadRequest, "NO_ACTIVE_DEFINITIONS", err.Error(), nil)
+		case errors.Is(err, ErrWeightNotHundred):
+			httpx.Error(c, http.StatusBadRequest, "WEIGHT_NOT_HUNDRED", err.Error(), nil)
+		case errors.Is(err, ErrInconsistentThreshold):
+			httpx.Error(c, http.StatusBadRequest, "INCONSISTENT_THRESHOLD", err.Error(), nil)
+		case errors.Is(err, ErrUnsupportedMetric):
+			httpx.Error(c, http.StatusBadRequest, "UNSUPPORTED_METRIC", err.Error(), nil)
+		default:
+			httpx.InternalServerError(c, "Terjadi kesalahan pada server", err)
+		}
 	}
 }

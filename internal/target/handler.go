@@ -1,6 +1,7 @@
 package target
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -166,6 +167,8 @@ func (h *Handler) ListAllTargets(c *gin.Context) {
 
 func writeTargetError(c *gin.Context, err error) {
 	switch err {
+	case nil:
+		return
 	case ErrNotFound:
 		httpx.Error(c, http.StatusNotFound, "NOT_FOUND", err.Error(), nil)
 	case ErrForbidden:
@@ -179,6 +182,21 @@ func writeTargetError(c *gin.Context, err error) {
 	case ErrSalesNotEligible:
 		httpx.Error(c, http.StatusBadRequest, "SALES_NOT_ELIGIBLE", err.Error(), nil)
 	default:
-		httpx.Error(c, http.StatusInternalServerError, "INTERNAL_ERROR", "unexpected error", nil)
+		switch {
+		case errors.Is(err, ErrNotFound):
+			httpx.Error(c, http.StatusNotFound, "NOT_FOUND", err.Error(), nil)
+		case errors.Is(err, ErrForbidden):
+			httpx.Error(c, http.StatusForbidden, "FORBIDDEN", err.Error(), nil)
+		case errors.Is(err, ErrInvalidMetric):
+			httpx.Error(c, http.StatusBadRequest, "INVALID_METRIC", err.Error(), nil)
+		case errors.Is(err, ErrInvalidPeriod):
+			httpx.Error(c, http.StatusBadRequest, "INVALID_PERIOD", err.Error(), nil)
+		case errors.Is(err, ErrInvalidValue):
+			httpx.Error(c, http.StatusBadRequest, "INVALID_VALUE", err.Error(), nil)
+		case errors.Is(err, ErrSalesNotEligible):
+			httpx.Error(c, http.StatusBadRequest, "SALES_NOT_ELIGIBLE", err.Error(), nil)
+		default:
+			httpx.InternalServerError(c, "Terjadi kesalahan pada server", err)
+		}
 	}
 }

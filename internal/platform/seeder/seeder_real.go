@@ -36,6 +36,8 @@ type realOwnerExcelRow struct {
 	OutletName  string
 	OutletPhone string
 	City        string
+	District    string
+	SubDistrict string
 	Province    string
 	Address     string
 	DateOfWork  time.Time
@@ -47,6 +49,13 @@ type realOwnerExcelRow struct {
 	StatusTerbaru string
 	Akuisisi      string
 	Shares        []realShareEvent
+
+	// KodeBaris ("Kode Baris") is the raw per-row identifier from the source spreadsheet.
+	// KategoriAkun ("Kategori Akun") classifies the row — a literal "Akun Testing" value is the
+	// authoritative signal that this owner is a piposmart employee's demo/learning account, not a
+	// real prospective customer (see owner.IsTestingAccount).
+	KodeBaris    string
+	KategoriAkun string
 }
 
 func parseMonthIndonesian(mStr string) time.Month {
@@ -124,6 +133,12 @@ func seedDemoReal(ctx context.Context, tx *sql.Tx, options Options) error {
 	// (e.g. seedDemoReal's own bootstrap), separate from the real "Nama Penginput" admin
 	// accounts created below.
 	adminUser := fake.BuildUser("ADMIN", 1)
+	// Use a dedicated code for the real-data seed's bootstrap admin. Reusing "ADM-001" collides
+	// with the classic demo/master seed account (`admin.001@demo.piposmart.id`), and CreateUser
+	// resolves the inserted row by email after the upsert. When the duplicate key hit happens on
+	// `users.code` instead of `users.email`, the old row survives with its old email and the
+	// follow-up lookup `users.email=admin@piposmart.id` fails with `sql: no rows in result set`.
+	adminUser.Code = "ADM-REAL-001"
 	adminUser.Email = "admin@piposmart.id"
 	adminUser.Name = "Initial Admin"
 	adminID, err := fake.CreateUser(ctx, tx, adminUser)
@@ -192,6 +207,7 @@ func seedDemoReal(ctx context.Context, tx *sql.Tx, options Options) error {
 
 		var ownerID int64
 		isNewOwner := false
+		isTestingOwner := false
 		if existingID, exists := seenOwners[ownerCode]; exists {
 			ownerID = existingID
 		} else {
@@ -228,10 +244,18 @@ func seedDemoReal(ctx context.Context, tx *sql.Tx, options Options) error {
 				BrandName:       brandName,
 				Province:        province,
 				City:            city,
+				District:        row.District,
+				SubDistrict:     row.SubDistrict,
 				Address:         row.Address,
 				CreatedAt:       createdAt,
 				EnteredByUserID: enteredBy,
 			}
+			if strings.EqualFold(strings.TrimSpace(row.KategoriAkun), "Akun Testing") {
+				owner.IsTestingAccount = true
+				owner.TestingMarkedByUserID = enteredBy
+				owner.TestingMarkedAt = sql.NullTime{Time: createdAt, Valid: true}
+			}
+			isTestingOwner = owner.IsTestingAccount
 
 			newOwnerID, err := fake.CreateOwner(ctx, tx, owner)
 			if err != nil {
@@ -276,8 +300,11 @@ func seedDemoReal(ctx context.Context, tx *sql.Tx, options Options) error {
 			Phone:           outletPhone,
 			Province:        province,
 			City:            city,
+			District:        row.District,
+			SubDistrict:     row.SubDistrict,
 			Address:         row.Address,
 			EnteredByUserID: enteredBy,
+			RowCode:         row.KodeBaris,
 		}
 		outletID, err := fake.CreateOutlet(ctx, tx, ownerID, outlet)
 		if err != nil {
@@ -287,8 +314,9 @@ func seedDemoReal(ctx context.Context, tx *sql.Tx, options Options) error {
 		_, _ = tx.ExecContext(ctx, "UPDATE outlets SET created_at = ? WHERE id = ?", createdAt, outletID)
 
 		// customer_leads is unique per owner, not per outlet — only build the lead + its
-		// assignment/interaction history off the FIRST outlet row seen for a given owner.
-		if isNewOwner {
+		// assignment/interaction history off the FIRST outlet row seen for a given owner. Imported
+		// "Akun Testing" owners are intentionally excluded from the lead pipeline altogether.
+		if isNewOwner && !isTestingOwner {
 			if err := seedRealLeadForOwner(ctx, tx, fake, ownerID, outletID, ownerCode, row, createdAt, enteredBy, supervisorID, salesEmailByKey, options.AsOf); err != nil {
 				return fmt.Errorf("create real lead owner=%d: %w", ownerIndex, err)
 			}
@@ -299,9 +327,13 @@ func seedDemoReal(ctx context.Context, tx *sql.Tx, options Options) error {
 
 	progress.finish()
 
-	// 4. Chain subscription/closing data from the "02. New & Subscribe" file onto the owner→lead
-	// data just seeded above (needs the leads created in the loop, so runs after it).
-	if err := SeedSubscriptionsFromExcel(ctx, tx, fake, adminID); err != nil {
+	// 4. Chain subscription/closing data from the "New & Subscribe" archives onto the owner→lead
+	// data just seeded above (needs the leads created in the loop, so runs after it). Some archive
+	// years (2021-2022) reference owners/outlets that never appear in the "01. Owner & Outlet"
+	// file at all — those get created on the fly, assigned to the "Tanpa PIC" fallback sales
+	// account (same placeholder identity used elsewhere in this seeder for un-attributed leads).
+	fallbackSalesEmail := salesEmailByKey[salesIdentityKey(noPICIdentity)]
+	if err := SeedSubscriptionsFromExcel(ctx, tx, fake, adminID, fallbackSalesEmail); err != nil {
 		return fmt.Errorf("seed subscriptions from excel: %w", err)
 	}
 
@@ -353,19 +385,23 @@ func readAllRealOwnerExcelFiles() []realOwnerExcelRow {
 				// [11]=Bulan, [12]=Nama Project/BRAND, [13]=Nama Outlet,
 				// [14]=Kelurahan, [15]=Kecamatan, [16]=Kota, [17]=Provinsi, [18]=Alamat Lengkap
 				const (
-					colOwnerCode   = 5
-					colOwnerName   = 6
-					colOwnerEmail  = 7
-					colOwnerPhone  = 8
-					colOutletPhone = 9
-					colCreateDate  = 10 // "Create Date Project"
-					colBrandName   = 12 // "Nama Project/BRAND"
-					colOutletName  = 13 // "Nama Outlet"
-					colKota        = 16 // "Kota"
-					colProvinsi    = 17 // "Provinsi"
-					colAlamat      = 18 // "Alamat Lengkap"
-					colNamaPeng    = 2  // "Nama Penginput" — before the sheet-layout divergence, safe hardcoded
-					colStatus      = 21 // "STATUS TERBARU" — also before the divergence
+					colOwnerCode    = 5
+					colOwnerName    = 6
+					colOwnerEmail   = 7
+					colOwnerPhone   = 8
+					colOutletPhone  = 9
+					colCreateDate   = 10 // "Create Date Project"
+					colBrandName    = 12 // "Nama Project/BRAND"
+					colOutletName   = 13 // "Nama Outlet"
+					colKelurahan    = 14 // "Kelurahan"
+					colKecamatan    = 15 // "Kecamatan"
+					colKota         = 16 // "Kota"
+					colProvinsi     = 17 // "Provinsi"
+					colAlamat       = 18 // "Alamat Lengkap"
+					colNamaPeng     = 2  // "Nama Penginput" — before the sheet-layout divergence, safe hardcoded
+					colKategoriAkun = 3  // "Kategori Akun" — also before the divergence
+					colKodeBaris    = 4  // "Kode Baris" — also before the divergence
+					colStatus       = 21 // "STATUS TERBARU" — also before the divergence
 				)
 
 				// Columns after STATUS TERBARU (Akuisisi, PIC, Share N) shift by one position on
@@ -448,9 +484,13 @@ func readAllRealOwnerExcelFiles() []realOwnerExcelRow {
 						OwnerEmail:    getCol(row, colOwnerEmail),
 						OutletPhone:   outletPhone,
 						City:          getCol(row, colKota),
+						District:      getCol(row, colKecamatan),
+						SubDistrict:   getCol(row, colKelurahan),
 						Province:      getCol(row, colProvinsi),
 						Address:       getCol(row, colAlamat),
 						DateOfWork:    dt,
+						KodeBaris:     getCol(row, colKodeBaris),
+						KategoriAkun:  getCol(row, colKategoriAkun),
 					})
 				}
 				continue

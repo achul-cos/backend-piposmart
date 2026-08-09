@@ -18,6 +18,7 @@ type Repository struct {
 type lockedLead struct {
 	ID                 int64
 	OwnerID            sql.NullInt64
+	IsTestingAccount   bool
 	CurrentOwnerUserID sql.NullInt64
 	CurrentOwnerRole   string
 	SupervisorID       sql.NullInt64
@@ -38,7 +39,7 @@ func (r *Repository) CreateLead(ctx context.Context, actor identity.User, req Cr
 	}
 	defer tx.Rollback()
 
-	if err := ensureOwnerExists(ctx, tx, req.OwnerID); err != nil {
+	if err := ensureOwnerEligibleForLead(ctx, tx, req.OwnerID); err != nil {
 		return Lead{}, err
 	}
 	if req.OutletID != nil {
@@ -214,6 +215,9 @@ func (r *Repository) AssignSupervisor(ctx context.Context, actor identity.User, 
 		return nil, err
 	}
 	return r.applyBulk(ctx, actor, leadIDs, func(ctx context.Context, tx *sql.Tx, current lockedLead) error {
+		if current.IsTestingAccount {
+			return ErrTestingAccount
+		}
 		score := current.CurrentScore
 		if !score.Valid {
 			score = sql.NullInt64{Int64: 1, Valid: true}
@@ -243,6 +247,9 @@ func (r *Repository) AssignSales(ctx context.Context, actor identity.User, leadI
 		}
 		if !currentBelongsToSupervisor(current, actor.ID) {
 			return ErrForbidden
+		}
+		if current.IsTestingAccount {
+			return ErrTestingAccount
 		}
 		score := current.CurrentScore
 		stage := current.Stage
@@ -485,16 +492,18 @@ func (r *Repository) insertAssignment(ctx context.Context, tx *sql.Tx, input ass
 func (r *Repository) lockLead(ctx context.Context, tx *sql.Tx, id int64) (lockedLead, error) {
 	var item lockedLead
 	err := tx.QueryRowContext(ctx, `
-		SELECT id, owner_id, current_owner_user_id, current_owner_role, supervisor_id,
-			active_sales_id, stage, status, current_score
-		FROM customer_leads
-		WHERE (id = ? OR outlet_id = ? OR owner_id = ?) AND deleted_at IS NULL
-		ORDER BY CASE WHEN id = ? THEN 0 WHEN outlet_id = ? THEN 1 ELSE 2 END
+		SELECT cl.id, cl.owner_id, o.is_testing_account, cl.current_owner_user_id, cl.current_owner_role, cl.supervisor_id,
+			cl.active_sales_id, cl.stage, cl.status, cl.current_score
+		FROM customer_leads cl
+		JOIN owners o ON o.id = cl.owner_id
+		WHERE (cl.id = ? OR cl.outlet_id = ? OR cl.owner_id = ?) AND cl.deleted_at IS NULL
+		ORDER BY CASE WHEN cl.id = ? THEN 0 WHEN cl.outlet_id = ? THEN 1 ELSE 2 END
 		LIMIT 1
 		FOR UPDATE`, id, id, id, id, id).
 		Scan(
 			&item.ID,
 			&item.OwnerID,
+			&item.IsTestingAccount,
 			&item.CurrentOwnerUserID,
 			&item.CurrentOwnerRole,
 			&item.SupervisorID,
@@ -727,7 +736,7 @@ func leadSelect() string {
 }
 
 func leadWhere(actor identity.User, params ListParams) (string, []any) {
-	where := []string{"ot.deleted_at IS NULL", "o.deleted_at IS NULL"}
+	where := []string{"ot.deleted_at IS NULL", "o.deleted_at IS NULL", "o.is_testing_account = 0"}
 	args := []any{}
 	visibility, visibilityArgs := leadVisibilityWhere(actor)
 	where = append(where, visibility)
@@ -919,6 +928,26 @@ func ensureOwnerExists(ctx context.Context, tx *sql.Tx, ownerID int64) error {
 		return ErrNotFound
 	}
 	return err
+}
+
+func ensureOwnerEligibleForLead(ctx context.Context, tx *sql.Tx, ownerID int64) error {
+	var exists int
+	var isTesting bool
+	err := tx.QueryRowContext(ctx, `
+		SELECT 1, is_testing_account
+		FROM owners
+		WHERE id = ? AND deleted_at IS NULL
+		LIMIT 1`, ownerID).Scan(&exists, &isTesting)
+	if err == sql.ErrNoRows {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if isTesting {
+		return ErrTestingAccount
+	}
+	return nil
 }
 
 func ensureOutletExists(ctx context.Context, tx *sql.Tx, ownerID, outletID int64) error {

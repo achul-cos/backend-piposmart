@@ -332,7 +332,9 @@ func writeError(c *gin.Context, err error) {
 		httpx.Error(c, http.StatusBadRequest, "USER_NOT_VALID", err.Error(), nil)
 	case errors.Is(err, ErrLeadAlreadyExists):
 		httpx.Error(c, http.StatusConflict, "LEAD_ALREADY_EXISTS", err.Error(), nil)
+	case errors.Is(err, ErrTestingAccount):
+		httpx.Error(c, http.StatusBadRequest, "TESTING_ACCOUNT", err.Error(), nil)
 	default:
-		httpx.Error(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Terjadi kesalahan pada server", nil)
+		httpx.InternalServerError(c, "Terjadi kesalahan pada server", err)
 	}
 }

@@ -299,14 +299,16 @@ func commitOwnerOutletRow(ctx context.Context, repo *Repository, customerService
 	}
 	if !exists {
 		ownerResp, err := customerService.CreateOwner(ctx, actor, customer.CreateOwnerRequest{
-			Code:      r.OwnerCode,
-			Name:      r.OwnerName,
-			Phone:     r.OwnerPhone,
-			Email:     r.OwnerEmail,
-			BrandName: r.BrandName,
-			Province:  r.Province,
-			City:      r.City,
-			Address:   r.Address,
+			Code:        r.OwnerCode,
+			Name:        r.OwnerName,
+			Phone:       r.OwnerPhone,
+			Email:       r.OwnerEmail,
+			BrandName:   r.BrandName,
+			Province:    r.Province,
+			City:        r.City,
+			District:    r.District,
+			SubDistrict: r.SubDistrict,
+			Address:     r.Address,
 		})
 		if err != nil {
 			if err == customer.ErrCodeAlreadyUsed {
@@ -331,12 +333,14 @@ func commitOwnerOutletRow(ctx context.Context, repo *Repository, customerService
 	}
 	outletCode := fmt.Sprintf("%s-OUT-%02d", r.OwnerCode, outletSeq+1)
 	outletResp, err := customerService.CreateOutlet(ctx, actor, ownerID, customer.CreateOutletRequest{
-		Code:     outletCode,
-		Name:     r.OutletName,
-		Phone:    r.OutletPhone,
-		Province: r.Province,
-		City:     r.City,
-		Address:  r.Address,
+		Code:        outletCode,
+		Name:        r.OutletName,
+		Phone:       r.OutletPhone,
+		Province:    r.Province,
+		City:        r.City,
+		District:    r.District,
+		SubDistrict: r.SubDistrict,
+		Address:     r.Address,
 	})
 	if err != nil {
 		return fmt.Errorf("create outlet %s: %w", outletCode, err)

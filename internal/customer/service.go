@@ -122,6 +122,20 @@ func (s *Service) UpdateOwner(ctx context.Context, actor Actor, id int64, req Up
 	return NewOwnerResponse(owner), nil
 }
 
+// SetTestingAccount lets an admin flag an owner as a testing account (a piposmart employee's
+// demo/learning account, not a real prospective customer) so it's excluded from the sales/lead
+// pipeline, or clear that flag.
+func (s *Service) SetTestingAccount(ctx context.Context, actor Actor, id int64, isTesting bool) (OwnerResponse, error) {
+	if !actorCanManageOwners(actor) {
+		return OwnerResponse{}, ErrForbidden
+	}
+	owner, err := s.repo.SetTestingAccount(ctx, id, isTesting, actor.ID)
+	if err != nil {
+		return OwnerResponse{}, err
+	}
+	return NewOwnerResponse(owner), nil
+}
+
 func (s *Service) BulkUpdateOwners(ctx context.Context, actor Actor, req BulkOwnerUpdateRequest) (OwnerBulkResponse, error) {
 	if !actorCanManageOwners(actor) {
 		return OwnerBulkResponse{}, ErrForbidden
@@ -515,4 +529,8 @@ func actorCanManageOwners(actor Actor) bool {
 
 func (s *Service) ExportOwnerOutlets(ctx context.Context, actor Actor, params ListParams) ([]map[string]any, error) {
 	return s.repo.ExportOwnerOutlets(ctx, actor, params)
+}
+
+func (s *Service) ExportGlobalOutlets(ctx context.Context, actor Actor, params ListParams) ([]map[string]any, error) {
+	return s.repo.ExportGlobalOutlets(ctx, actor, params)
 }

@@ -3,12 +3,14 @@ package httpserver
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"runtime/debug"
 	"strings"
 	"time"
 
+	"backend_crm_piposmart/internal/identity"
 	"backend_crm_piposmart/internal/platform/config"
 	"backend_crm_piposmart/internal/platform/httpx"
 
@@ -36,14 +38,73 @@ func accessLogMiddleware(logger *slog.Logger) gin.HandlerFunc {
 		startedAt := time.Now()
 		c.Next()
 
+		duration := time.Since(startedAt)
+		requestID := httpx.RequestID(c)
+		status := c.Writer.Status()
+		errorInfo, hasErrorInfo := httpx.CurrentError(c)
+		actorID, actorRole := currentActorLogFields(c)
+
+		if status >= http.StatusInternalServerError {
+			fields := []any{
+				slog.String("request_id", requestID),
+				slog.String("method", c.Request.Method),
+				slog.String("path", c.Request.URL.Path),
+				slog.String("raw_query", c.Request.URL.RawQuery),
+				slog.Int("status", status),
+				slog.Int("response_bytes", c.Writer.Size()),
+				slog.Duration("duration", duration),
+				slog.String("client_ip", c.ClientIP()),
+				slog.Int64("actor_id", actorID),
+				slog.String("actor_role", actorRole),
+			}
+			if hasErrorInfo {
+				errorDetails := errorInfo.Details
+				if errorInfo.Private != nil {
+					errorDetails = errorInfo.Private
+				}
+				fields = append(fields,
+					slog.String("error_code", errorInfo.Code),
+					slog.String("error_message", errorInfo.Message),
+					slog.String("error_details", formatLogDetails(errorDetails)),
+				)
+			}
+			logger.ErrorContext(c.Request.Context(), "http server error", fields...)
+			return
+		}
+
+		if status >= http.StatusBadRequest {
+			fields := []any{
+				slog.String("request_id", requestID),
+				slog.String("method", c.Request.Method),
+				slog.String("path", c.Request.URL.Path),
+				slog.String("raw_query", c.Request.URL.RawQuery),
+				slog.Int("status", status),
+				slog.Int("response_bytes", c.Writer.Size()),
+				slog.Duration("duration", duration),
+				slog.String("client_ip", c.ClientIP()),
+				slog.Int64("actor_id", actorID),
+				slog.String("actor_role", actorRole),
+			}
+			if hasErrorInfo {
+				fields = append(fields,
+					slog.String("error_code", errorInfo.Code),
+					slog.String("error_message", errorInfo.Message),
+				)
+			}
+			logger.WarnContext(c.Request.Context(), "http client error", fields...)
+			return
+		}
+
 		logger.InfoContext(c.Request.Context(), "http request",
-			slog.String("request_id", httpx.RequestID(c)),
+			slog.String("request_id", requestID),
 			slog.String("method", c.Request.Method),
 			slog.String("path", c.Request.URL.Path),
-			slog.Int("status", c.Writer.Status()),
+			slog.Int("status", status),
 			slog.Int("response_bytes", c.Writer.Size()),
-			slog.Duration("duration", time.Since(startedAt)),
+			slog.Duration("duration", duration),
 			slog.String("client_ip", c.ClientIP()),
+			slog.Int64("actor_id", actorID),
+			slog.String("actor_role", actorRole),
 		)
 	}
 }
@@ -88,4 +149,19 @@ func newRequestID() string {
 		return hex.EncodeToString([]byte(time.Now().UTC().Format(time.RFC3339Nano)))
 	}
 	return hex.EncodeToString(bytes)
+}
+
+func currentActorLogFields(c *gin.Context) (int64, string) {
+	user, ok := identity.CurrentUser(c)
+	if !ok {
+		return 0, ""
+	}
+	return user.ID, user.RoleCode
+}
+
+func formatLogDetails(details any) string {
+	if details == nil {
+		return ""
+	}
+	return fmt.Sprintf("%v", details)
 }

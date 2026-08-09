@@ -76,7 +76,7 @@ func BuildXLSX(reportKey, sheetName string, columns []ReportColumn, items []map[
 	}
 
 	if reportKey == ReportAdminOwnerOutlet || reportKey == ReportAdminOwner {
-		return buildAdminOwnerOutletXLSX(title, sheetName, columns, items, dateFrom, dateTo)
+		return BuildAdminOwnerOutletXLSX(title, sheetName, columns, items, dateFrom, dateTo)
 	}
 
 	file := excelize.NewFile()
@@ -99,9 +99,23 @@ func BuildXLSX(reportKey, sheetName string, columns []ReportColumn, items []map[
 	return buf.Bytes(), nil
 }
 
+const adminOwnerOutletShareExportMax = 10
+
+func adminOwnerOutletShareColumns() []ReportColumn {
+	columns := make([]ReportColumn, 0, adminOwnerOutletShareExportMax*3)
+	for index := 1; index <= adminOwnerOutletShareExportMax; index++ {
+		columns = append(columns,
+			ReportColumn{Key: fmt.Sprintf("tanggal_dibagikan_%d", index), Label: fmt.Sprintf("Tanggal Dibagikan %d", index), Type: "string"},
+			ReportColumn{Key: fmt.Sprintf("share_%d", index), Label: fmt.Sprintf("Share %d", index), Type: "string"},
+			ReportColumn{Key: fmt.Sprintf("kategori_nasabah_%d", index), Label: fmt.Sprintf("Kategori Nasabah %d", index), Type: "string"},
+		)
+	}
+	return columns
+}
+
 // GetAdminOwnerOutletColumns - Kolom lengkap untuk Data Owner-Outlet
 func GetAdminOwnerOutletColumns() []ReportColumn {
-	return []ReportColumn{
+	columns := []ReportColumn{
 		{Key: "no", Label: "No", Type: "number"},
 		{Key: "date_of_work", Label: "Date of Work", Type: "string"},
 		{Key: "nama_penginput", Label: "Nama Penginput", Type: "string"},
@@ -120,8 +134,13 @@ func GetAdminOwnerOutletColumns() []ReportColumn {
 		{Key: "kota", Label: "Kota", Type: "string"},
 		{Key: "provinsi", Label: "Provinsi", Type: "string"},
 		{Key: "alamat_lengkap", Label: "Alamat Lengkap", Type: "string"},
-		{Key: "jumlah_outlet", Label: "Jumlah Outlet", Type: "number"},
+		{Key: "status_terbaru", Label: "STATUS TERBARU", Type: "string"},
+		{Key: "akuisisi", Label: "Akuisisi", Type: "string"},
+		{Key: "pic", Label: "PIC", Type: "string"},
 	}
+	columns = append(columns, adminOwnerOutletShareColumns()...)
+	columns = append(columns, ReportColumn{Key: "jumlah_outlet", Label: "Jumlah Outlet", Type: "number"})
+	return columns
 }
 
 // GetAdminOwnerColumns - Kolom khusus Data Owner (Penginput, Kategori Akun, Hp Outlet, Bulan, & Outlet Name DAHUS/DIHAPUS)
@@ -146,7 +165,7 @@ func GetAdminOwnerColumns() []ReportColumn {
 	}
 }
 
-func buildAdminOwnerOutletXLSX(reportTitle, sheetName string, columns []ReportColumn, items []map[string]any, dateFrom, dateTo string) ([]byte, error) {
+func BuildAdminOwnerOutletXLSX(reportTitle, sheetName string, columns []ReportColumn, items []map[string]any, dateFrom, dateTo string) ([]byte, error) {
 	file := excelize.NewFile()
 	defaultSheet := file.GetSheetName(0)
 	file.SetSheetName(defaultSheet, sheetName)
@@ -198,8 +217,8 @@ func buildAdminOwnerOutletXLSX(reportTitle, sheetName string, columns []ReportCo
 		Fill: excelize.Fill{Type: "pattern", Pattern: 1, Color: []string{headerBgColor}},
 	})
 	titleStyle, _ := file.NewStyle(&excelize.Style{
-		Font: &excelize.Font{Bold: true, Size: 18, Color: "000000"},
-		Fill: excelize.Fill{Type: "pattern", Pattern: 1, Color: []string{headerBgColor}},
+		Font:      &excelize.Font{Bold: true, Size: 18, Color: "000000"},
+		Fill:      excelize.Fill{Type: "pattern", Pattern: 1, Color: []string{headerBgColor}},
 		Alignment: &excelize.Alignment{Horizontal: "left", Vertical: "center"},
 	})
 	metaLabelStyle, _ := file.NewStyle(&excelize.Style{
@@ -207,8 +226,8 @@ func buildAdminOwnerOutletXLSX(reportTitle, sheetName string, columns []ReportCo
 		Fill: excelize.Fill{Type: "pattern", Pattern: 1, Color: []string{headerBgColor}},
 	})
 	metaValueStyle, _ := file.NewStyle(&excelize.Style{
-		Font: &excelize.Font{Bold: true, Size: 12, Color: "000000"},
-		Fill: excelize.Fill{Type: "pattern", Pattern: 1, Color: []string{headerBgColor}},
+		Font:      &excelize.Font{Bold: true, Size: 12, Color: "000000"},
+		Fill:      excelize.Fill{Type: "pattern", Pattern: 1, Color: []string{headerBgColor}},
 		Alignment: &excelize.Alignment{Horizontal: "right"},
 	})
 

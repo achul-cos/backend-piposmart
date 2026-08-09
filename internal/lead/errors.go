@@ -10,4 +10,5 @@ var (
 	ErrEmptyBulk         = errors.New("minimal satu data wajib dikirim")
 	ErrUserNotValid      = errors.New("user tujuan tidak valid atau tidak aktif")
 	ErrLeadAlreadyExists = errors.New("lead untuk owner ini sudah ada")
+	ErrTestingAccount    = errors.New("akun testing tidak boleh masuk pipeline lead/sales")
 )

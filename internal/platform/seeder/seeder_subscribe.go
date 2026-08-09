@@ -19,7 +19,12 @@ type subscribeRow struct {
 	Kode            string // "Kode" column — stable per-transaction id, used for the dedup/idempotency key
 	Year            int    // from filename, used as a date-fallback anchor
 	SheetMonth      int    // 1-12 from the sheet name when it's a plain month sheet, 0 if unknown
-	OwnerCode       string
+	OwnerCode       string // blank for 2021/2022 archives — those files have no "Kode Owner" column at all
+	OwnerName       string
+	OwnerPhone      string
+	ProjectOutlet   string // raw "Brand/Outlet Name" cell, split downstream by splitProjectOutlet
+	City            string
+	Province        string
 	DateWork        string
 	DateTopUp       string
 	DateStruk       string
@@ -36,13 +41,17 @@ type subscribeRow struct {
 	Tenor           string
 }
 
-// archiveFiles are the yearly "New & Subscribe" archives (2023-2026). The single-year sample
+// archiveFiles are the yearly "New & Subscribe" archives (2021-2026). The single-year sample
 // "02. New & Subscribe 2026 (Copy).xlsx" is deliberately NOT read here — it's a subset of the same
 // 2026 data already covered by the 2026 archive below; reading both would double-count rows.
+// 2021/2022 predate the "Kode Owner" column entirely (see readNewAndSubscribeExcel's header
+// handling) — owners/outlets for those rows are related by phone match or created on the fly.
 var archiveFiles = []struct {
 	name string
 	year int
 }{
+	{"Salinan New & Subscribe 2021.xlsx", 2021},
+	{"salinan subscribe 2022.xlsx", 2022},
 	{"Salinan New & Subscribe 2023.xlsx", 2023},
 	{"Salinan 1. New & Subscribe 2024.xlsx", 2024},
 	{"Salinan 1. New & Subscribe 2025.xlsx", 2025},
@@ -114,6 +123,7 @@ func readNewAndSubscribeExcel() ([]subscribeRow, error) {
 			// Find header
 			headerRowIdx := -1
 			colKode, colDateWork, colOwnerCode := -1, -1, -1
+			colOwnerName, colOwnerPhone, colProjectOutlet, colCity, colProvince := -1, -1, -1, -1, -1
 			colTopUpSystem, colTopUpStruk, colAktivasi := -1, -1, -1
 			colNominalAktivasi, colBalanceSystem, colBalanceTf := -1, -1, -1
 			colFeeMidtrans, colSettlement, colMetode := -1, -1, -1
@@ -130,7 +140,15 @@ func readNewAndSubscribeExcel() ([]subscribeRow, error) {
 						colDateWork = cIdx
 					case "KODE OWNER":
 						colOwnerCode = cIdx
-					case "DATE TOP UP  SYSTEM":
+					case "NAMA OWNER":
+						colOwnerName = cIdx
+					case "PROJECT/OUTLET":
+						colProjectOutlet = cIdx
+					case "KOTA":
+						colCity = cIdx
+					case "PROVINSI":
+						colProvince = cIdx
+					case "DATE TOP UP  SYSTEM", "DATE TOP UP":
 						colTopUpSystem = cIdx
 					case "DATE TOP UP STRUK":
 						colTopUpStruk = cIdx
@@ -159,9 +177,20 @@ func readNewAndSubscribeExcel() ([]subscribeRow, error) {
 						if colSettlement == -1 && strings.Contains(u, "SETTLEMENT") {
 							colSettlement = cIdx
 						}
+						// "No. Hp" (2021) / "No. Hp Owner/Outlet" (2022-2026) — variant naming.
+						if colOwnerPhone == -1 && strings.Contains(u, "HP") {
+							colOwnerPhone = cIdx
+						}
 					}
 				}
-				if colOwnerCode != -1 && colPaket != -1 {
+				// The 2022 archive's "Nama Owner" header cell is blank even though the column
+				// (immediately after Kode) holds real owner-name data in every row — only apply
+				// this positional fallback for files that also lack "Kode Owner" entirely, so it
+				// can never misfire on the 2023-2026 files (which always resolve colOwnerCode).
+				if colOwnerName == -1 && colOwnerCode == -1 && colKode != -1 && colKode+1 < len(row) {
+					colOwnerName = colKode + 1
+				}
+				if colKode != -1 && (colOwnerCode != -1 || colOwnerName != -1) {
 					headerRowIdx = rIdx
 					break
 				}
@@ -178,7 +207,11 @@ func readNewAndSubscribeExcel() ([]subscribeRow, error) {
 				}
 
 				code := getCol(row, colOwnerCode)
-				if code == "" {
+				ownerName := getCol(row, colOwnerName)
+				if code == "" && ownerName == "" {
+					// Neither identifier present — a blank spacer row, a stub row with only a
+					// leftover "Kode" value (seen in the 2022 archive's tail), or a trailing
+					// total/summary row (seen at the end of both the 2021 and 2022 archives).
 					continue
 				}
 
@@ -187,6 +220,11 @@ func readNewAndSubscribeExcel() ([]subscribeRow, error) {
 					Year:            archive.year,
 					SheetMonth:      sheetMonth,
 					OwnerCode:       code,
+					OwnerName:       ownerName,
+					OwnerPhone:      getCol(row, colOwnerPhone),
+					ProjectOutlet:   getCol(row, colProjectOutlet),
+					City:            getCol(row, colCity),
+					Province:        getCol(row, colProvince),
 					DateWork:        getCol(row, colDateWork),
 					DateTopUp:       getCol(row, colTopUpSystem),
 					DateStruk:       getCol(row, colTopUpStruk),
@@ -298,7 +336,228 @@ func inferPaymentMethod(metode, balanceSystemRaw, balanceTfRaw string) (method s
 	return "TF_BRI", ""
 }
 
-func SeedSubscriptionsFromExcel(ctx context.Context, tx *sql.Tx, fake *factory.Factory, adminID int64) error {
+// splitProjectOutlet parses the combined "Project/Outlet" cell ("Brand/Outlet Name") into its two
+// parts. A cell with no "/" is treated as an outlet name with no separate brand.
+func splitProjectOutlet(raw string) (brand string, outletName string) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", ""
+	}
+	idx := strings.Index(raw, "/")
+	if idx == -1 {
+		return "", raw
+	}
+	brand = strings.TrimSpace(raw[:idx])
+	outletName = strings.TrimSpace(raw[idx+1:])
+	if outletName == "" {
+		outletName = brand
+	}
+	return brand, outletName
+}
+
+// normalizePhoneForMatch strips everything but digits and drops a leading country/trunk prefix
+// (62 or 0), so "62896xxxx", "0896xxxx", and "896xxxx" all compare on the same core number —
+// needed because owners.phone in this dataset isn't stored in one consistent format.
+func normalizePhoneForMatch(phone string) string {
+	var b strings.Builder
+	for _, r := range phone {
+		if r >= '0' && r <= '9' {
+			b.WriteRune(r)
+		}
+	}
+	digits := b.String()
+	switch {
+	case strings.HasPrefix(digits, "62"):
+		digits = digits[2:]
+	case strings.HasPrefix(digits, "0"):
+		digits = digits[1:]
+	}
+	return digits
+}
+
+// minMatchablePhoneDigits guards against matching on a too-short/placeholder phone fragment.
+const minMatchablePhoneDigits = 7
+
+// deriveFallbackOwnerCode mirrors the fallback convention seeder_real.go already uses when a row's
+// own owner code is missing/unusable: prefer a phone-derived code, then a name-derived one, then a
+// purely positional one — so a brand-new owner created here still gets a stable, traceable code.
+func deriveFallbackOwnerCode(name, phone string, rowIndex int) string {
+	phone = strings.TrimSpace(phone)
+	if phone != "" {
+		return "OWN-" + phone
+	}
+	name = strings.TrimSpace(name)
+	if name != "" {
+		cleanName := strings.ToUpper(strings.ReplaceAll(name, " ", ""))
+		if len(cleanName) > 10 {
+			cleanName = cleanName[:10]
+		}
+		return "OWN-" + cleanName
+	}
+	return fmt.Sprintf("OWN-NS-%05d", rowIndex)
+}
+
+// loadOwnerPhoneIndex preloads a normalized-phone -> owner id map from the current owners table,
+// so per-row phone matching (the fallback relation path when a row has no usable owner code, or its
+// code doesn't resolve) is an O(1) map lookup instead of a per-row fuzzy SQL query. When two owners
+// share a normalized phone (placeholder/duplicate data), the first one encountered wins — a
+// best-effort relation heuristic, not a strict guarantee.
+func loadOwnerPhoneIndex(ctx context.Context, tx *sql.Tx) (map[string]int64, error) {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT id, phone FROM owners
+		WHERE deleted_at IS NULL AND phone IS NOT NULL AND phone <> '' AND phone <> '-'`)
+	if err != nil {
+		return nil, fmt.Errorf("load owner phone index: %w", err)
+	}
+	defer rows.Close()
+
+	index := make(map[string]int64)
+	for rows.Next() {
+		var id int64
+		var phone string
+		if err := rows.Scan(&id, &phone); err != nil {
+			return nil, err
+		}
+		key := normalizePhoneForMatch(phone)
+		if len(key) < minMatchablePhoneDigits {
+			continue
+		}
+		if _, exists := index[key]; !exists {
+			index[key] = id
+		}
+	}
+	return index, rows.Err()
+}
+
+// resolveOwnerAndOutlet relates a row to an owner/outlet, prioritizing existing data: first by the
+// row's own owner code (when present — always true for 2023-2026, never true for 2021-2022, which
+// have no "Kode Owner" column at all), then by a normalized phone match against every owner already
+// in the database. Only when neither matches does it create a brand-new owner+outlet (and, for a
+// brand-new owner, a minimal customer_leads row under the "Tanpa PIC" fallback sales identity, so
+// the closing/order chain below has a lead to attach to instead of landing as a HANGING_ORDER).
+func resolveOwnerAndOutlet(
+	ctx context.Context,
+	tx *sql.Tx,
+	fake *factory.Factory,
+	row subscribeRow,
+	ownerPhoneIndex map[string]int64,
+	fallbackSalesEmail string,
+	createdAt time.Time,
+	rowIndex int,
+) (ownerID int64, err error) {
+	code := strings.TrimSpace(row.OwnerCode)
+	phoneKey := normalizePhoneForMatch(row.OwnerPhone)
+
+	var ownerFound bool
+	if code != "" {
+		lookupErr := tx.QueryRowContext(ctx, "SELECT id FROM owners WHERE code = ? AND deleted_at IS NULL LIMIT 1", code).Scan(&ownerID)
+		if lookupErr == nil {
+			ownerFound = true
+		} else if lookupErr != sql.ErrNoRows {
+			return 0, lookupErr
+		}
+	}
+	if !ownerFound && len(phoneKey) >= minMatchablePhoneDigits {
+		if id, ok := ownerPhoneIndex[phoneKey]; ok {
+			ownerID = id
+			ownerFound = true
+		}
+	}
+
+	isNewOwner := false
+	if !ownerFound {
+		isNewOwner = true
+		ownerName := strings.TrimSpace(row.OwnerName)
+		if ownerName == "" {
+			ownerName = "-"
+		}
+		ownerPhone := strings.TrimSpace(row.OwnerPhone)
+		if ownerPhone == "" {
+			ownerPhone = "-"
+		}
+		ownerCode := code
+		if ownerCode == "" {
+			ownerCode = deriveFallbackOwnerCode(row.OwnerName, row.OwnerPhone, rowIndex)
+		}
+		brand, _ := splitProjectOutlet(row.ProjectOutlet)
+		brandName := brand
+		if brandName == "" {
+			brandName = ownerName
+		}
+		newOwnerID, createErr := fake.CreateOwner(ctx, tx, factory.Owner{
+			Code:      ownerCode,
+			Name:      ownerName,
+			Phone:     ownerPhone,
+			BrandName: brandName,
+			Province:  row.Province,
+			City:      row.City,
+			CreatedAt: createdAt,
+		})
+		if createErr != nil {
+			return 0, fmt.Errorf("create owner from new & subscribe archive: %w", createErr)
+		}
+		ownerID = newOwnerID
+		if len(phoneKey) >= minMatchablePhoneDigits {
+			ownerPhoneIndex[phoneKey] = ownerID
+		}
+	}
+
+	_, outletName := splitProjectOutlet(row.ProjectOutlet)
+	if outletName == "" {
+		outletName = "-"
+	}
+
+	var outletID int64
+	var outletFound bool
+	lookupErr := tx.QueryRowContext(ctx,
+		"SELECT id FROM outlets WHERE owner_id = ? AND LOWER(name) = LOWER(?) AND deleted_at IS NULL LIMIT 1",
+		ownerID, outletName).Scan(&outletID)
+	if lookupErr == nil {
+		outletFound = true
+	} else if lookupErr != sql.ErrNoRows {
+		return 0, lookupErr
+	}
+	if !outletFound {
+		var outletCount int
+		if err := tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM outlets WHERE owner_id = ?", ownerID).Scan(&outletCount); err != nil {
+			return 0, err
+		}
+		outletCode := fmt.Sprintf("OUT-NS-%d-%02d", ownerID, outletCount+1)
+		newOutletID, createErr := fake.CreateOutlet(ctx, tx, ownerID, factory.Outlet{
+			Code:     outletCode,
+			Name:     outletName,
+			Phone:    strings.TrimSpace(row.OwnerPhone),
+			Province: row.Province,
+			City:     row.City,
+		})
+		if createErr != nil {
+			return 0, fmt.Errorf("create outlet from new & subscribe archive owner=%d: %w", ownerID, createErr)
+		}
+		outletID = newOutletID
+		if _, err := tx.ExecContext(ctx, "UPDATE outlets SET created_at = ? WHERE id = ?", createdAt, outletID); err != nil {
+			return 0, err
+		}
+	}
+
+	if isNewOwner {
+		lead := factory.Lead{
+			Code:             fmt.Sprintf("LEAD-NS-%d", ownerID),
+			SourceType:       "IMPORT",
+			SourceReference:  "excel:new-subscribe-archive",
+			Stage:            "NEW",
+			Status:           "OPEN",
+			NextFollowUpAt:   createdAt.AddDate(0, 0, 7),
+			ActiveSalesEmail: fallbackSalesEmail,
+		}
+		if _, err := fake.CreateLead(ctx, tx, ownerID, outletID, lead); err != nil {
+			return 0, fmt.Errorf("create lead from new & subscribe archive owner=%d: %w", ownerID, err)
+		}
+	}
+
+	return ownerID, nil
+}
+
+func SeedSubscriptionsFromExcel(ctx context.Context, tx *sql.Tx, fake *factory.Factory, adminID int64, fallbackSalesEmail string) error {
 	_ = adminID // kept for call-site compatibility; CreateWalletTopup/CreateSubscriptionOrder resolve their own admin actor internally
 	rows, err := readNewAndSubscribeExcel()
 	if err != nil {
@@ -308,14 +567,33 @@ func SeedSubscriptionsFromExcel(ctx context.Context, tx *sql.Tx, fake *factory.F
 		return nil
 	}
 
+	ownerPhoneIndex, err := loadOwnerPhoneIndex(ctx, tx)
+	if err != nil {
+		return err
+	}
+
 	for i, row := range rows {
-		// 1. Find Owner
-		var ownerID int64
-		err := tx.QueryRowContext(ctx, "SELECT id FROM owners WHERE code = ? LIMIT 1", row.OwnerCode).Scan(&ownerID)
-		if err == sql.ErrNoRows {
-			continue // owner not found — skip
-		} else if err != nil {
-			return err
+		// 1. Parse dates first — a brand-new owner/outlet (see step 2) needs a historically
+		// plausible created_at, not "now".
+		paidAt := parseDateRobust(row.DateTopUp)
+		transferDate := parseDateRobust(row.DateStruk)
+		aktivasiDate := parseDateRobust(row.DateAktivasi)
+		if aktivasiDate.IsZero() {
+			aktivasiDate = resolveFallbackDate(row, row.DateTopUp, row.DateWork)
+		}
+		if paidAt.IsZero() {
+			paidAt = aktivasiDate
+		}
+		ownerCreatedAt := aktivasiDate
+		if !paidAt.IsZero() && paidAt.Before(ownerCreatedAt) {
+			ownerCreatedAt = paidAt
+		}
+
+		// 2. Relate to an existing owner/outlet when possible (by code, then by phone);
+		// only create a new owner/outlet when neither matches (see resolveOwnerAndOutlet doc).
+		ownerID, err := resolveOwnerAndOutlet(ctx, tx, fake, row, ownerPhoneIndex, fallbackSalesEmail, ownerCreatedAt, i)
+		if err != nil {
+			return fmt.Errorf("resolve owner row=%d: %w", i, err)
 		}
 
 		// Per-transaction key: year + the row's position in the combined multi-file/multi-year
@@ -330,17 +608,6 @@ func SeedSubscriptionsFromExcel(ctx context.Context, tx *sql.Tx, fake *factory.F
 		// last 40 characters (this happened with a real row: keys long enough to truncate away
 		// the "TF"/"SUB" distinction produced identical DEMO-WTX-... codes for two unrelated rows).
 		keySuffix := fmt.Sprintf("%d-%d", row.Year, i)
-
-		// 2. Parse dates
-		paidAt := parseDateRobust(row.DateTopUp)
-		transferDate := parseDateRobust(row.DateStruk)
-		aktivasiDate := parseDateRobust(row.DateAktivasi)
-		if aktivasiDate.IsZero() {
-			aktivasiDate = resolveFallbackDate(row, row.DateTopUp, row.DateWork)
-		}
-		if paidAt.IsZero() {
-			paidAt = aktivasiDate
-		}
 
 		// 3. Determine the amount that actually credits the wallet: what the owner really
 		// transferred (Balance Bukti TF), not what the app told them to pay (Balance Top Up
@@ -371,8 +638,15 @@ func SeedSubscriptionsFromExcel(ctx context.Context, tx *sql.Tx, fake *factory.F
 			if !transferDate.IsZero() {
 				topup.TransferDateAt = transferDate
 			}
-			if _, err := fake.CreateWalletTopup(ctx, tx, ownerID, topup); err != nil {
+			paymentID, err := fake.CreateWalletTopup(ctx, tx, ownerID, topup)
+			if err != nil {
 				return fmt.Errorf("create topup owner=%s: %w", row.OwnerCode, err)
+			}
+			if shouldSeedTransferForTopup(topup) {
+				matchedTransfer := buildMatchedTransferForSubscribeTopup(keySuffix, topup, paymentID)
+				if _, err := fake.CreateTransfer(ctx, tx, ownerID, matchedTransfer); err != nil {
+					return fmt.Errorf("create matched transfer owner=%s: %w", row.OwnerCode, err)
+				}
 			}
 		}
 
@@ -506,4 +780,31 @@ func parseDateRobust(d string) time.Time {
 		return t
 	}
 	return time.Time{}
+}
+
+func shouldSeedTransferForTopup(topup factory.WalletTopup) bool {
+	method := strings.ToUpper(strings.TrimSpace(topup.PaymentMethod))
+	channel := strings.ToUpper(strings.TrimSpace(topup.PaymentChannel))
+	return method != "SALDO_APLIKASI" && channel != "SALDO APLIKASI"
+}
+
+func buildMatchedTransferForSubscribeTopup(keySuffix string, topup factory.WalletTopup, paymentID int64) factory.Transfer {
+	transferDate := topup.PaidAt
+	if !topup.TransferDateAt.IsZero() {
+		transferDate = topup.TransferDateAt
+	}
+
+	note := strings.TrimSpace(topup.Note)
+	if note == "" {
+		note = "Import dari Excel New & Subscribe"
+	}
+
+	return factory.Transfer{
+		Amount:                 topup.Amount,
+		TransferDate:           transferDate,
+		Note:                   note + " | Auto-paired transfer untuk top up impor.",
+		MatchStatus:            "MATCHED",
+		MatchedWalletPaymentID: sql.NullInt64{Int64: paymentID, Valid: true},
+		ExternalReference:      fmt.Sprintf("EXCEL-TRF-%s", keySuffix),
+	}
 }

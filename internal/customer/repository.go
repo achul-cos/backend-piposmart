@@ -116,7 +116,7 @@ func (r *Repository) findOwnerByID(ctx context.Context, q queryExecutor, id int6
 	owner, err := scanOwner(q.QueryRowContext(ctx, `
 		SELECT
 			o.id, o.code, o.name, o.phone, o.email, o.brand_name, o.province, o.city, o.district, o.sub_district,
-			o.address, o.status, COUNT(ot.id) AS outlet_count,
+			o.address, o.status, o.is_testing_account, COUNT(ot.id) AS outlet_count,
 			(
 				SELECT COUNT(DISTINCT s.outlet_id)
 				FROM subscriptions s
@@ -147,7 +147,7 @@ func (r *Repository) findOwnerByIDVisible(ctx context.Context, q queryExecutor, 
 	owner, err := scanOwner(q.QueryRowContext(ctx, `
 		SELECT
 			o.id, o.code, o.name, o.phone, o.email, o.brand_name, o.province, o.city, o.district, o.sub_district,
-			o.address, o.status, COUNT(ot.id) AS outlet_count,
+			o.address, o.status, o.is_testing_account, COUNT(ot.id) AS outlet_count,
 			(
 				SELECT COUNT(DISTINCT s.outlet_id)
 				FROM subscriptions s
@@ -180,7 +180,7 @@ func (r *Repository) ListOwners(ctx context.Context, actor Actor, params ListPar
 	query := `
 		SELECT
 			o.id, o.code, o.name, o.phone, o.email, o.brand_name, o.province, o.city,
-			o.district, o.sub_district, o.address, o.status, COUNT(ot.id) AS outlet_count,
+			o.district, o.sub_district, o.address, o.status, o.is_testing_account, COUNT(ot.id) AS outlet_count,
 			(
 				SELECT COUNT(DISTINCT s.outlet_id)
 				FROM subscriptions s
@@ -230,6 +230,28 @@ func (r *Repository) UpdateOwner(ctx context.Context, id int64, req UpdateOwnerR
 		Request:         req,
 		NormalizedPhone: normalizedPhone,
 	})
+}
+
+// SetTestingAccount flags/unflags an owner as a testing account (see owners.is_testing_account doc
+// comment in the migration) and records who did it and when, for audit. Unflagging clears the audit
+// columns too, since "who most recently marked this testing" no longer applies once it's cleared.
+func (r *Repository) SetTestingAccount(ctx context.Context, id int64, isTesting bool, actorID int64) (Owner, error) {
+	if isTesting {
+		if _, err := r.db.ExecContext(ctx, `
+			UPDATE owners
+			SET is_testing_account = 1, testing_marked_by_user_id = ?, testing_marked_at = NOW()
+			WHERE id = ? AND deleted_at IS NULL`, actorID, id); err != nil {
+			return Owner{}, err
+		}
+	} else {
+		if _, err := r.db.ExecContext(ctx, `
+			UPDATE owners
+			SET is_testing_account = 0, testing_marked_by_user_id = NULL, testing_marked_at = NULL
+			WHERE id = ? AND deleted_at IS NULL`, id); err != nil {
+			return Owner{}, err
+		}
+	}
+	return r.findOwnerByID(ctx, r.db, id, false)
 }
 
 func (r *Repository) UpdateOwners(ctx context.Context, updates []OwnerUpdateInput) ([]Owner, error) {
@@ -748,6 +770,7 @@ func scanOwner(row scanner) (Owner, error) {
 		&owner.SubDistrict,
 		&owner.Address,
 		&owner.Status,
+		&owner.IsTestingAccount,
 		&owner.OutletCount,
 		&owner.SubscribedOutletCount,
 		&owner.CreatedAt,
@@ -971,6 +994,12 @@ func ownerVisibilityWhereByColumn(actor Actor, ownerColumn string) (string, []an
 	case RoleSupervisor:
 		return `EXISTS (
 			SELECT 1
+			FROM owners o_vis
+			WHERE o_vis.id = ` + ownerColumn + `
+				AND o_vis.deleted_at IS NULL
+				AND o_vis.is_testing_account = 0
+		) AND EXISTS (
+			SELECT 1
 			FROM customer_leads cl
 			WHERE cl.owner_id = ` + ownerColumn + `
 				AND cl.deleted_at IS NULL
@@ -978,6 +1007,12 @@ func ownerVisibilityWhereByColumn(actor Actor, ownerColumn string) (string, []an
 		)`, []any{actor.ID, actor.ID}
 	case RoleSales:
 		return `EXISTS (
+			SELECT 1
+			FROM owners o_vis
+			WHERE o_vis.id = ` + ownerColumn + `
+				AND o_vis.deleted_at IS NULL
+				AND o_vis.is_testing_account = 0
+		) AND EXISTS (
 			SELECT 1
 			FROM customer_leads cl
 			WHERE cl.owner_id = ` + ownerColumn + `
@@ -1043,6 +1078,11 @@ func globalOutletWhere(actor Actor, params ListParams) (string, []any) {
 	if params.OwnerID != nil {
 		where = append(where, "ot.owner_id = ?")
 		args = append(args, *params.OwnerID)
+	}
+	if params.OwnerKeyword != "" {
+		pattern := wordBoundaryRegexp(params.OwnerKeyword)
+		where = append(where, "(o.code REGEXP ? OR o.name REGEXP ?)")
+		args = append(args, pattern, pattern)
 	}
 	if params.Code != "" {
 		where = append(where, "ot.code LIKE ?")
@@ -1235,18 +1275,18 @@ func ownerOverviewSelect() string {
 
 func ownerOrderBy(sort string) (string, error) {
 	return orderBy(sort, map[string]string{
-		"created_at":   "o.created_at",
-		"updated_at":   "o.updated_at",
-		"code":         "o.code",
-		"name":         "o.name",
-		"brand_name":   "o.brand_name",
-		"city":         "o.city",
-		"province":     "o.province",
-		"phone":        "o.phone",
+		"created_at":          "o.created_at",
+		"updated_at":          "o.updated_at",
+		"code":                "o.code",
+		"name":                "o.name",
+		"brand_name":          "o.brand_name",
+		"city":                "o.city",
+		"province":            "o.province",
+		"phone":               "o.phone",
 		"status":              "(CASE WHEN (SELECT COUNT(DISTINCT s.outlet_id) FROM subscriptions s JOIN outlets ot4 ON ot4.id = s.outlet_id WHERE ot4.owner_id = o.id AND s.deleted_at IS NULL) > 0 THEN 1 WHEN o.created_at >= NOW() - INTERVAL 14 DAY THEN 2 ELSE 3 END)",
 		"subscription_status": "(CASE WHEN (SELECT COUNT(DISTINCT s.outlet_id) FROM subscriptions s JOIN outlets ot4 ON ot4.id = s.outlet_id WHERE ot4.owner_id = o.id AND s.deleted_at IS NULL) > 0 THEN 1 WHEN o.created_at >= NOW() - INTERVAL 14 DAY THEN 2 ELSE 3 END)",
-		"outlet_count": "outlet_count",
-		"wallet_balance": "CAST(wa.balance AS DECIMAL(20,2))",
+		"outlet_count":        "outlet_count",
+		"wallet_balance":      "CAST(wa.balance AS DECIMAL(20,2))",
 	}, "o.created_at DESC, o.id DESC")
 }
 
@@ -1384,8 +1424,18 @@ func mapDuplicateError(err error) error {
 
 func (r *Repository) ExportOwnerOutlets(ctx context.Context, actor Actor, params ListParams) ([]map[string]any, error) {
 	where, args := ownerWhere(actor, params)
+	return r.exportOwnerOutletRows(ctx, where, args)
+}
+
+func (r *Repository) ExportGlobalOutlets(ctx context.Context, actor Actor, params ListParams) ([]map[string]any, error) {
+	where, args := globalOutletWhere(actor, params)
+	return r.exportOwnerOutletRows(ctx, where, args)
+}
+
+func (r *Repository) exportOwnerOutletRows(ctx context.Context, where string, args []any) ([]map[string]any, error) {
 	query := `SELECT
-		CAST(o.id AS CHAR) AS row_code,
+		o.id AS owner_id,
+		COALESCE(ot.row_code, '') AS row_code,
 		o.code AS owner_code,
 		CASE WHEN COALESCE(o.name,'') LIKE '%#REF!%' OR COALESCE(o.name,'') LIKE '%#VALUE!%' THEN '' ELSE COALESCE(o.name, '') END AS owner_name,
 		COALESCE(o.email, '') AS owner_email,
@@ -1396,6 +1446,8 @@ func (r *Repository) ExportOwnerOutlets(ctx context.Context, actor Actor, params
 		END AS owner_phone,
 		CASE WHEN COALESCE(o.brand_name,'') LIKE '%#REF!%' OR COALESCE(o.brand_name,'') LIKE '%#VALUE!%' THEN '' ELSE COALESCE(o.brand_name, '') END AS brand_name,
 		DATE_FORMAT(o.created_at, '%Y-%m-%dT%H:%i:%sZ') AS owner_created_at,
+		o.is_testing_account,
+		COALESCE(u.name, '') AS entered_by_name,
 		COALESCE(ot.code, '') AS outlet_code,
 		CASE WHEN COALESCE(ot.name,'') LIKE '%#REF!%' OR COALESCE(ot.name,'') LIKE '%#VALUE!%' THEN '' ELSE COALESCE(ot.name, '') END AS outlet_name,
 		CASE
@@ -1405,11 +1457,15 @@ func (r *Repository) ExportOwnerOutlets(ctx context.Context, actor Actor, params
 		END AS outlet_phone,
 		COALESCE(ot.city, o.city, '') AS outlet_city,
 		COALESCE(ot.province, o.province, '') AS outlet_province,
+		COALESCE(ot.district, o.district, '') AS outlet_district,
+		COALESCE(ot.sub_district, o.sub_district, '') AS outlet_sub_district,
 		COALESCE(ot.address, o.address, '') AS outlet_address,
+		COALESCE(DATE_FORMAT(ot.created_at, '%Y-%m-%dT%H:%i:%sZ'), '') AS outlet_created_at,
 		(SELECT COUNT(*) FROM outlets ot2 WHERE ot2.owner_id = o.id AND ot2.deleted_at IS NULL) AS outlet_count,
 		COALESCE((SELECT wa.balance FROM wallet_accounts wa WHERE wa.owner_id = o.id AND wa.deleted_at IS NULL ORDER BY wa.id LIMIT 1), 0) AS owner_balance
 	FROM owners o
 	LEFT JOIN outlets ot ON ot.owner_id = o.id AND ot.deleted_at IS NULL
+	LEFT JOIN users u ON u.id = o.entered_by_user_id
 	WHERE ` + where + `
 	ORDER BY o.created_at DESC`
 
@@ -1445,6 +1501,9 @@ func (r *Repository) ExportOwnerOutlets(ctx context.Context, actor Actor, params
 			}
 		}
 		results = append(results, rowMap)
+	}
+	if err := r.enrichOwnerOutletExportRows(ctx, results); err != nil {
+		return nil, err
 	}
 	return results, nil
 }

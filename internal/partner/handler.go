@@ -22,6 +22,10 @@ func NewHandler(service *Service) *Handler {
 	return &Handler{service: service}
 }
 
+func internalServerError(c *gin.Context, message string, err error) {
+	httpx.InternalServerError(c, message, err)
+}
+
 // RegisterRoutes registers partner routes on the given router group.
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	partnerTypes := rg.Group("/partner-types")
@@ -121,7 +125,7 @@ func (h *Handler) CreatePartnerType(c *gin.Context) {
 		case ErrInvalidCommissionRate, ErrInvalidMoney, ErrInvalidCommissionMode:
 			httpx.Error(c, http.StatusBadRequest, "INVALID_COMMISSION_VALUE", err.Error(), nil)
 		default:
-			httpx.Error(c, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to create partner type", nil)
+			internalServerError(c, "failed to create partner type", err)
 		}
 		return
 	}
@@ -163,7 +167,7 @@ func (h *Handler) DeletePartnerType(c *gin.Context) {
 		case ErrForbidden:
 			httpx.Error(c, http.StatusForbidden, "FORBIDDEN", "not allowed to perform this action", nil)
 		default:
-			httpx.Error(c, http.StatusInternalServerError, "INTERNAL_ERROR", "gagal menghapus jenis mitra", nil)
+			internalServerError(c, "gagal menghapus jenis mitra", err)
 		}
 		return
 	}
@@ -181,7 +185,7 @@ func (h *Handler) GetPartnerTypeByID(c *gin.Context) {
 		if err == ErrNotFound {
 			httpx.Error(c, http.StatusNotFound, "NOT_FOUND", "partner type not found", nil)
 		} else {
-			httpx.Error(c, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to get partner type", nil)
+			internalServerError(c, "failed to get partner type", err)
 		}
 		return
 	}
@@ -209,7 +213,7 @@ func (h *Handler) ListPartnerTypeHistories(c *gin.Context) {
 		if err == ErrNotFound {
 			httpx.Error(c, http.StatusNotFound, "NOT_FOUND", "partner type not found", nil)
 		} else {
-			httpx.Error(c, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to get partner type histories", nil)
+			internalServerError(c, "failed to get partner type histories", err)
 		}
 		return
 	}
@@ -231,7 +235,7 @@ func (h *Handler) ListPartnerTypes(c *gin.Context) {
 	}
 	resp, err := h.service.ListPartnerTypes(c.Request.Context(), params)
 	if err != nil {
-		httpx.Error(c, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to list partner types", nil)
+		internalServerError(c, "failed to list partner types", err)
 		return
 	}
 	httpx.Success(c, http.StatusOK, PartnerTypeListResponse{
@@ -278,7 +282,7 @@ func (h *Handler) UpdatePartnerType(c *gin.Context) {
 		case ErrInvalidCommissionRate, ErrInvalidMoney, ErrInvalidCommissionMode:
 			httpx.Error(c, http.StatusBadRequest, "INVALID_COMMISSION_VALUE", err.Error(), nil)
 		default:
-			httpx.Error(c, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to update partner type", nil)
+			internalServerError(c, "failed to update partner type", err)
 		}
 		return
 	}
@@ -311,7 +315,7 @@ func (h *Handler) CreatePartner(c *gin.Context) {
 		case ErrDuplicatePartner:
 			httpx.Error(c, http.StatusConflict, "PARTNER_CODE_EXISTS", "partner code already exists", nil)
 		default:
-			httpx.Error(c, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to create partner", nil)
+			internalServerError(c, "failed to create partner", err)
 		}
 		return
 	}
@@ -339,7 +343,7 @@ func (h *Handler) GetPartnerByID(c *gin.Context) {
 		if err == ErrNotFound {
 			httpx.Error(c, http.StatusNotFound, "NOT_FOUND", "partner not found", nil)
 		} else {
-			httpx.Error(c, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to get partner", nil)
+			internalServerError(c, "failed to get partner", err)
 		}
 		return
 	}
@@ -363,7 +367,7 @@ func (h *Handler) GetPartnerByCode(c *gin.Context) {
 		if err == ErrNotFound {
 			httpx.Error(c, http.StatusNotFound, "NOT_FOUND", "partner not found", nil)
 		} else {
-			httpx.Error(c, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to get partner", nil)
+			internalServerError(c, "failed to get partner", err)
 		}
 		return
 	}
@@ -397,7 +401,7 @@ func (h *Handler) ListPartners(c *gin.Context) {
 		Offset:      offset,
 	})
 	if err != nil {
-		httpx.Error(c, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to list partners", nil)
+		internalServerError(c, "failed to list partners", err)
 		return
 	}
 	httpx.Success(c, http.StatusOK, PartnerListResponse{
@@ -424,7 +428,7 @@ func (h *Handler) ListAllPartners(c *gin.Context) {
 		Offset:      0,
 	})
 	if err != nil {
-		httpx.Error(c, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to list partners", nil)
+		internalServerError(c, "failed to list partners", err)
 		return
 	}
 	httpx.Success(c, http.StatusOK, PartnerListResponse{
@@ -465,7 +469,7 @@ func (h *Handler) UpdatePartner(c *gin.Context) {
 		if err == ErrNotFound {
 			httpx.Error(c, http.StatusNotFound, "NOT_FOUND", "partner not found", nil)
 		} else {
-			httpx.Error(c, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to update partner", nil)
+			internalServerError(c, "failed to update partner", err)
 		}
 		return
 	}
@@ -492,7 +496,7 @@ func (h *Handler) DeactivatePartner(c *gin.Context) {
 		if err == ErrNotFound {
 			httpx.Error(c, http.StatusNotFound, "NOT_FOUND", "partner not found", nil)
 		} else {
-			httpx.Error(c, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to deactivate partner", nil)
+			internalServerError(c, "failed to deactivate partner", err)
 		}
 		return
 	}
@@ -539,7 +543,7 @@ func (h *Handler) AssignPIC(c *gin.Context) {
 		case ErrInvalidAssignment:
 			httpx.Error(c, http.StatusBadRequest, "INVALID_ASSIGNMENT", "invalid partner assignment", nil)
 		default:
-			httpx.Error(c, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to assign PIC", nil)
+			internalServerError(c, "failed to assign PIC", err)
 		}
 		return
 	}
@@ -567,7 +571,7 @@ func (h *Handler) GetActiveAssignmentForPartner(c *gin.Context) {
 		if err == ErrNotFound {
 			httpx.Error(c, http.StatusNotFound, "NOT_FOUND", "no active assignment found", nil)
 		} else {
-			httpx.Error(c, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to get active assignment", nil)
+			internalServerError(c, "failed to get active assignment", err)
 		}
 		return
 	}
@@ -598,7 +602,7 @@ func (h *Handler) ListPartnerAssignments(c *gin.Context) {
 		CreatedTo:   createdTo,
 	})
 	if err != nil {
-		httpx.Error(c, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to list partner assignments", nil)
+		internalServerError(c, "failed to list partner assignments", err)
 		return
 	}
 	httpx.Success(c, http.StatusOK, PartnerAssignmentListResponse{
@@ -628,7 +632,7 @@ func (h *Handler) ReleasePartner(c *gin.Context) {
 		return
 	}
 	if err := h.service.ReleasePartner(c.Request.Context(), partnerID); err != nil {
-		httpx.Error(c, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to release partner", nil)
+		internalServerError(c, "failed to release partner", err)
 		return
 	}
 	httpx.Success(c, http.StatusNoContent, nil)
@@ -669,7 +673,7 @@ func (h *Handler) RecordInteraction(c *gin.Context) {
 		if err == ErrNotFound {
 			httpx.Error(c, http.StatusNotFound, "NOT_FOUND", "partner not found", nil)
 		} else {
-			httpx.Error(c, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to record interaction", nil)
+			internalServerError(c, "failed to record interaction", err)
 		}
 		return
 	}
@@ -706,7 +710,7 @@ func (h *Handler) ListInteractions(c *gin.Context) {
 		Offset:      offset,
 	})
 	if err != nil {
-		httpx.Error(c, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to list interactions", nil)
+		internalServerError(c, "failed to list interactions", err)
 		return
 	}
 	httpx.Success(c, http.StatusOK, PartnerInteractionListResponse{
@@ -736,7 +740,7 @@ func (h *Handler) ListAllInteractions(c *gin.Context) {
 		Offset:      0,
 	})
 	if err != nil {
-		httpx.Error(c, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to list interactions", nil)
+		internalServerError(c, "failed to list interactions", err)
 		return
 	}
 	httpx.Success(c, http.StatusOK, PartnerInteractionListResponse{
@@ -788,7 +792,7 @@ func (h *Handler) CreateReferral(c *gin.Context) {
 		case ErrDuplicateReferral:
 			httpx.Error(c, http.StatusConflict, "DUPLICATE_REFERRAL", "referral already exists for this partner-lead pair", nil)
 		default:
-			httpx.Error(c, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to create referral: "+err.Error(), nil)
+			internalServerError(c, "failed to create referral", err)
 		}
 		return
 	}
@@ -852,7 +856,7 @@ func (h *Handler) ListReferrals(c *gin.Context) {
 		CreatedTo:   createdTo,
 	})
 	if err != nil {
-		httpx.Error(c, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to list referrals", nil)
+		internalServerError(c, "failed to list referrals", err)
 		return
 	}
 	httpx.Success(c, http.StatusOK, PartnerReferralListResponse{
@@ -1433,7 +1437,7 @@ func writeCommissionError(c *gin.Context, err error) {
 	case ErrInvalidPayoutStatus:
 		httpx.Error(c, http.StatusBadRequest, "INVALID_PAYOUT_STATUS", err.Error(), nil)
 	default:
-		httpx.Error(c, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to process commission request", nil)
+		internalServerError(c, "failed to process commission request", err)
 	}
 }
 

@@ -486,6 +486,6 @@ func writeError(c *gin.Context, err error) {
 	case errors.Is(err, ErrLeadHasNoPIC):
 		httpx.Error(c, http.StatusBadRequest, "LEAD_HAS_NO_PIC", err.Error(), nil)
 	default:
-		httpx.Error(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Terjadi kesalahan pada server", nil)
+		httpx.InternalServerError(c, "Terjadi kesalahan pada server", err)
 	}
 }

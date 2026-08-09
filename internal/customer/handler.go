@@ -40,6 +40,7 @@ func (h *Handler) RegisterRoutes(api *gin.RouterGroup) {
 	owners.GET("/:owner_id", h.getOwner)
 	owners.GET("/:owner_id/overview", h.getOwnerOverview)
 	owners.PATCH("/:owner_id", h.updateOwner)
+	owners.PATCH("/:owner_id/testing-account", h.setOwnerTestingAccount)
 	owners.DELETE("/:owner_id", h.deleteOwner)
 	owners.PATCH("/:owner_id/restore", h.restoreOwner)
 	owners.DELETE("/:owner_id/force", h.forceDeleteOwner)
@@ -66,6 +67,7 @@ func (h *Handler) RegisterRoutes(api *gin.RouterGroup) {
 	outlets.GET("/all-deleted", h.listAllGlobalOutletsDeleted)
 	outlets.GET("/trash", h.listGlobalOutletsTrash)
 	outlets.GET("/unscoped", h.listGlobalOutletsUnscoped)
+	outlets.GET("/export/download", h.downloadGlobalOutletExcel)
 	outlets.GET("/subscription-statuses", h.listOutletSubscriptionStatuses)
 	outlets.GET("/subscription-statuses/all", h.listAllOutletSubscriptionStatuses)
 	outlets.GET("/:outlet_id", h.getGlobalOutlet)
@@ -154,22 +156,55 @@ func (h *Handler) exportOwners(c *gin.Context) {
 	httpx.Success(c, http.StatusOK, rows)
 }
 
-// downloadOwnerOutletExcel — download file Excel Data Owner-Outlet dari Excel asli (terfilter tanggal)
+// exportDateParams reads the same date_from/date_to (and start_date/end_date) aliases the download
+// handlers have always accepted, on top of whatever listParams already recognizes
+// (created_from/created_to), so switching these handlers to the DB-driven path doesn't silently
+// drop a filter the frontend is already sending.
+func exportDateParams(c *gin.Context, params *ListParams) (dateFromDisplay, dateToDisplay string) {
+	dateFromDisplay = c.Query("date_from")
+	if dateFromDisplay == "" {
+		dateFromDisplay = c.Query("start_date")
+	}
+	dateToDisplay = c.Query("date_to")
+	if dateToDisplay == "" {
+		dateToDisplay = c.Query("end_date")
+	}
+	if params.CreatedFrom == nil && dateFromDisplay != "" {
+		if t, err := parseDateOnly(dateFromDisplay); err == nil {
+			params.CreatedFrom = t
+		}
+	}
+	if params.CreatedTo == nil && dateToDisplay != "" {
+		if t, err := parseDateOnly(dateToDisplay); err == nil {
+			params.CreatedTo = t
+		}
+	}
+	return dateFromDisplay, dateToDisplay
+}
+
+// downloadOwnerOutletExcel — download file Excel Data Owner-Outlet, sumber data dari database
+// (bukan dari file Excel asli) supaya selalu mencerminkan state CRM saat ini, termasuk owner/outlet
+// hasil migrasi seeder.
 func (h *Handler) downloadOwnerOutletExcel(c *gin.Context) {
 	if !actorCanManageOwners(currentActor(c)) {
 		httpx.Error(c, http.StatusForbidden, "FORBIDDEN", "not allowed to perform this action", nil)
 		return
 	}
-	dateFrom := c.Query("date_from")
-	if dateFrom == "" {
-		dateFrom = c.Query("start_date")
+	params, err := listParams(c)
+	if err != nil {
+		httpx.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
+		return
 	}
-	dateTo := c.Query("date_to")
-	if dateTo == "" {
-		dateTo = c.Query("end_date")
-	}
+	params.All = true
+	dateFrom, dateTo := exportDateParams(c, &params)
 
-	data, err := reporting.BuildOwnerOutletFromExcel(dateFrom, dateTo)
+	rows, err := h.service.ExportOwnerOutlets(c.Request.Context(), currentActor(c), params)
+	if err != nil {
+		httpx.Error(c, http.StatusInternalServerError, "EXPORT_ERROR", err.Error(), nil)
+		return
+	}
+	items := ToAdminOwnerOutletRows(rows)
+	data, err := reporting.BuildAdminOwnerOutletXLSX("Report Owner & Outlet", "Data Owner Outlet", reporting.GetAdminOwnerOutletColumns(), items, dateFrom, dateTo)
 	if err != nil {
 		httpx.Error(c, http.StatusInternalServerError, "EXPORT_ERROR", err.Error(), nil)
 		return
@@ -187,22 +222,27 @@ func (h *Handler) downloadOwnerOutletExcel(c *gin.Context) {
 	c.Data(http.StatusOK, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", data)
 }
 
-// downloadOwnerExcel — download file Excel Data Owner (unique owners) dari Excel asli (terfilter tanggal)
+// downloadOwnerExcel — download file Excel Data Owner (unique owners), sumber data dari database.
 func (h *Handler) downloadOwnerExcel(c *gin.Context) {
 	if !actorCanManageOwners(currentActor(c)) {
 		httpx.Error(c, http.StatusForbidden, "FORBIDDEN", "not allowed to perform this action", nil)
 		return
 	}
-	dateFrom := c.Query("date_from")
-	if dateFrom == "" {
-		dateFrom = c.Query("start_date")
+	params, err := listParams(c)
+	if err != nil {
+		httpx.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
+		return
 	}
-	dateTo := c.Query("date_to")
-	if dateTo == "" {
-		dateTo = c.Query("end_date")
-	}
+	params.All = true
+	dateFrom, dateTo := exportDateParams(c, &params)
 
-	data, err := reporting.BuildOwnerFromExcel(dateFrom, dateTo)
+	rows, err := h.service.ExportOwnerOutlets(c.Request.Context(), currentActor(c), params)
+	if err != nil {
+		httpx.Error(c, http.StatusInternalServerError, "EXPORT_ERROR", err.Error(), nil)
+		return
+	}
+	items := ToAdminOwnerRows(rows)
+	data, err := reporting.BuildAdminOwnerOutletXLSX("Report Data Owner", "Data Owner", reporting.GetAdminOwnerColumns(), items, dateFrom, dateTo)
 	if err != nil {
 		httpx.Error(c, http.StatusInternalServerError, "EXPORT_ERROR", err.Error(), nil)
 		return
@@ -214,6 +254,40 @@ func (h *Handler) downloadOwnerExcel(c *gin.Context) {
 	} else {
 		timestamp := time.Now().Format("20060102_150405")
 		filename = fmt.Sprintf("Data_Owner_%s.xlsx", timestamp)
+	}
+
+	c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
+	c.Data(http.StatusOK, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", data)
+}
+
+// downloadGlobalOutletExcel â€” download file Excel Data Owner-Outlet berdasarkan filter outlet global.
+func (h *Handler) downloadGlobalOutletExcel(c *gin.Context) {
+	params, err := listParams(c)
+	if err != nil {
+		httpx.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
+		return
+	}
+	params.All = true
+	dateFrom, dateTo := exportDateParams(c, &params)
+
+	rows, err := h.service.ExportGlobalOutlets(c.Request.Context(), currentActor(c), params)
+	if err != nil {
+		httpx.Error(c, http.StatusInternalServerError, "EXPORT_ERROR", err.Error(), nil)
+		return
+	}
+	items := ToAdminOwnerOutletRows(rows)
+	data, err := reporting.BuildAdminOwnerOutletXLSX("Report Owner & Outlet", "Data Owner Outlet", reporting.GetAdminOwnerOutletColumns(), items, dateFrom, dateTo)
+	if err != nil {
+		httpx.Error(c, http.StatusInternalServerError, "EXPORT_ERROR", err.Error(), nil)
+		return
+	}
+
+	filename := "Data_Owner_Outlet.xlsx"
+	if dateFrom != "" && dateTo != "" {
+		filename = fmt.Sprintf("Data_Owner_Outlet_%s_%s.xlsx", dateFrom, dateTo)
+	} else {
+		timestamp := time.Now().Format("20060102_150405")
+		filename = fmt.Sprintf("Data_Owner_Outlet_%s.xlsx", timestamp)
 	}
 
 	c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
@@ -269,6 +343,27 @@ func (h *Handler) updateOwner(c *gin.Context) {
 		return
 	}
 	response, err := h.service.UpdateOwner(c.Request.Context(), currentActor(c), ownerID, req)
+	if err != nil {
+		writeError(c, err)
+		return
+	}
+	httpx.Success(c, http.StatusOK, response)
+}
+
+type setTestingAccountRequest struct {
+	IsTestingAccount bool `json:"is_testing_account"`
+}
+
+func (h *Handler) setOwnerTestingAccount(c *gin.Context) {
+	ownerID, ok := parseParamID(c, "owner_id")
+	if !ok {
+		return
+	}
+	var req setTestingAccountRequest
+	if !bindJSON(c, &req) {
+		return
+	}
+	response, err := h.service.SetTestingAccount(c.Request.Context(), currentActor(c), ownerID, req.IsTestingAccount)
 	if err != nil {
 		writeError(c, err)
 		return
@@ -621,24 +716,25 @@ func listParams(c *gin.Context) (ListParams, error) {
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))
 	params := ListParams{
-		Query:              c.Query("q"),
-		Code:               c.Query("code"),
-		Name:               c.Query("name"),
-		Phone:              c.Query("phone"),
-		BrandName:          c.Query("brand_name"),
-		Province:           c.Query("province"),
-		City:               c.Query("city"),
+		Query:        c.Query("q"),
+		OwnerKeyword: c.Query("owner_keyword"),
+		Code:         c.Query("code"),
+		Name:         c.Query("name"),
+		Phone:        c.Query("phone"),
+		BrandName:    c.Query("brand_name"),
+		Province:     c.Query("province"),
+		City:         c.Query("city"),
 		SubscriptionStatus: func() string {
 			if s := c.Query("subscription_status"); s != "" {
 				return s
 			}
 			return c.Query("status")
 		}(),
-		SubscriptionMonth:  c.Query("subscription_month"),
-		All:                false,
-		Page:               page,
-		Limit:              limit,
-		Sort:               c.Query("sort"),
+		SubscriptionMonth: c.Query("subscription_month"),
+		All:               false,
+		Page:              page,
+		Limit:             limit,
+		Sort:              c.Query("sort"),
 	}
 	if ownerID, err := strconv.ParseInt(c.Query("owner_id"), 10, 64); err == nil && ownerID > 0 {
 		params.OwnerID = &ownerID
@@ -701,6 +797,6 @@ func writeError(c *gin.Context, err error) {
 	case errors.Is(err, ErrForbidden):
 		httpx.Error(c, http.StatusForbidden, "FORBIDDEN", err.Error(), nil)
 	default:
-		httpx.Error(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Terjadi kesalahan pada server", nil)
+		httpx.InternalServerError(c, "Terjadi kesalahan pada server", err)
 	}
 }

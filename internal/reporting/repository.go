@@ -186,31 +186,31 @@ func paginateQuery(base string, page, limit int) string {
 }
 
 func scanRows(rows *sql.Rows, columns []string) ([]map[string]any, error) {
-    defer rows.Close()
-    items := make([]map[string]any, 0)
-    for rows.Next() {
-        values := make([]any, len(columns))
-        dest := make([]any, len(columns))
-        for i := range values {
-            dest[i] = &values[i]
-        }
-        if err := rows.Scan(dest...); err != nil {
-            return nil, err
-        }
-        row := make(map[string]any, len(columns))
-        for i, col := range columns {
-            switch v := values[i].(type) {
-            case []byte:
-                row[col] = string(v)
-            case nil:                  // ← TAMBAH INI
-                row[col] = ""
-            default:
-                row[col] = v
-            }
-        }
-        items = append(items, row)
-    }
-    return items, rows.Err()
+	defer rows.Close()
+	items := make([]map[string]any, 0)
+	for rows.Next() {
+		values := make([]any, len(columns))
+		dest := make([]any, len(columns))
+		for i := range values {
+			dest[i] = &values[i]
+		}
+		if err := rows.Scan(dest...); err != nil {
+			return nil, err
+		}
+		row := make(map[string]any, len(columns))
+		for i, col := range columns {
+			switch v := values[i].(type) {
+			case []byte:
+				row[col] = string(v)
+			case nil: // ← TAMBAH INI
+				row[col] = ""
+			default:
+				row[col] = v
+			}
+		}
+		items = append(items, row)
+	}
+	return items, rows.Err()
 }
 
 func countFromSubquery(ctx context.Context, db *sql.DB, query string, args ...any) (int64, error) {
@@ -412,28 +412,7 @@ func reportColumns(reportKey string) ([]ReportColumn, error) {
 			{Key: "jumlah_outlet", Label: "Jumlah Outlet", Type: "number"},
 		}, nil
 	case ReportAdminOwnerOutlet:
-		return []ReportColumn{
-			{Key: "no", Label: "No", Type: "number"},
-			{Key: "date_of_work", Label: "Date of Work", Type: "string"},
-			{Key: "nama_penginput", Label: "Nama Penginput", Type: "string"},
-			{Key: "kategori_akun", Label: "Kategori Akun", Type: "string"},
-			{Key: "kode_baris", Label: "Kode Baris", Type: "string"},
-			{Key: "owner_code", Label: "Kode Owner", Type: "string"},
-			{Key: "owner_name", Label: "Nama Owner", Type: "string"},
-			{Key: "owner_email", Label: "Email Owner", Type: "string"},
-			{Key: "owner_phone", Label: "No Hp Owner", Type: "string"},
-			{Key: "outlet_phone", Label: "No. Hp Outlet", Type: "string"},
-			{Key: "create_date_project", Label: "Create Date Project", Type: "string"},
-			{Key: "bulan", Label: "Bulan", Type: "string"},
-			{Key: "brand_name", Label: "Nama Project/BRAND", Type: "string"},
-			{Key: "outlet_name", Label: "Nama Outlet", Type: "string"},
-			{Key: "kelurahan", Label: "Kelurahan", Type: "string"},
-			{Key: "kecamatan", Label: "Kecamatan", Type: "string"},
-			{Key: "kota", Label: "Kota", Type: "string"},
-			{Key: "provinsi", Label: "Provinsi", Type: "string"},
-			{Key: "alamat_lengkap", Label: "Alamat Lengkap", Type: "string"},
-			{Key: "jumlah_outlet", Label: "Jumlah Outlet", Type: "number"},
-		}, nil
+		return GetAdminOwnerOutletColumns(), nil
 	case ReportAdminNewSubscribe:
 		return []ReportColumn{
 			{Key: "date_of_work", Label: "Date Of Work", Type: "date"},

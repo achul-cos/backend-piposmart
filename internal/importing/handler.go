@@ -32,6 +32,7 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 		imports.GET("", h.ListBatches)
 		imports.GET("/all", h.ListAllBatches)
 		imports.GET("/all-deleted", h.ListAllBatches)
+		imports.GET("/template/owner", h.DownloadOwnerTemplate)
 		imports.GET("/:id", h.GetBatch)
 		imports.GET("/:id/file", h.ViewOriginalFile)
 		imports.GET("/:id/file/download", h.DownloadOriginalFile)
@@ -43,6 +44,30 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 		imports.POST("/:id/rows/:row_id/relink", h.RelinkRow)
 		imports.GET("/summary", h.GetSummary)
 	}
+}
+
+// DownloadOwnerTemplate godoc
+// @Summary Download template import owner
+// @Description Mengunduh template Excel sederhana untuk import owner sesuai kolom yang dipakai frontend saat ini.
+// @Tags imports
+// @Produce application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
+// @Success 200 {file} binary
+// @Router /imports/template/owner [get]
+func (h *Handler) DownloadOwnerTemplate(c *gin.Context) {
+	data, err := buildOwnerImportTemplateXLSX()
+	if err != nil {
+		httpx.SetPrivateErrorDetails(c, err.Error())
+		httpx.Error(c, http.StatusInternalServerError, "TEMPLATE_ERROR", "gagal membuat template import owner", gin.H{
+			"root_cause":       "Backend gagal menyiapkan file template import owner.",
+			"solution":         "Coba unduh ulang beberapa saat lagi. Jika tetap gagal, periksa aset template dan storage server.",
+			"frontend_prevent": "Tampilkan retry action saat unduh template gagal, dan tampilkan pesan bahwa ini bukan kesalahan input user.",
+			"request_id":       httpx.RequestID(c),
+		})
+		return
+	}
+
+	c.Header("Content-Disposition", `attachment; filename="template-import-owner.xlsx"`)
+	c.Data(http.StatusOK, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", data)
 }
 
 // Upload godoc
@@ -450,7 +475,8 @@ func writeImportError(c *gin.Context, err error) {
 	case errors.Is(err, ErrRelinkEntityRequired):
 		httpx.Error(c, http.StatusBadRequest, "RELINK_ENTITY_REQUIRED", err.Error(), importErrorDetails("RELINK_ENTITY_REQUIRED", err, requestID))
 	default:
-		httpx.Error(c, http.StatusInternalServerError, "INTERNAL_ERROR", "unexpected error", importErrorDetails("INTERNAL_ERROR", err, requestID))
+		httpx.SetPrivateErrorDetails(c, err.Error())
+		httpx.Error(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Terjadi kesalahan pada server", importErrorDetails("INTERNAL_ERROR", err, requestID))
 	}
 }
 

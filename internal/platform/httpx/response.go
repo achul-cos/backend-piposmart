@@ -2,6 +2,14 @@ package httpx
 
 import "github.com/gin-gonic/gin"
 
+const (
+	contextErrorStatusKey  = "_httpx_error_status"
+	contextErrorCodeKey    = "_httpx_error_code"
+	contextErrorMessageKey = "_httpx_error_message"
+	contextErrorDetailsKey = "_httpx_error_details"
+	contextErrorPrivateKey = "_httpx_error_private_details"
+)
+
 type SuccessEnvelope struct {
 	Data any          `json:"data"`
 	Meta ResponseMeta `json:"meta"`
@@ -37,6 +45,11 @@ func Success(c *gin.Context, status int, data any) {
 }
 
 func Error(c *gin.Context, status int, code, message string, details any) {
+	c.Set(contextErrorStatusKey, status)
+	c.Set(contextErrorCodeKey, code)
+	c.Set(contextErrorMessageKey, message)
+	c.Set(contextErrorDetailsKey, details)
+
 	c.AbortWithStatusJSON(status, ErrorEnvelope{
 		Error: APIError{
 			Code:      code,
@@ -45,6 +58,49 @@ func Error(c *gin.Context, status int, code, message string, details any) {
 			RequestID: RequestID(c),
 		},
 	})
+}
+
+func SetPrivateErrorDetails(c *gin.Context, details any) {
+	c.Set(contextErrorPrivateKey, details)
+}
+
+func InternalServerError(c *gin.Context, message string, err error) {
+	if err != nil {
+		SetPrivateErrorDetails(c, err.Error())
+	}
+	Error(c, 500, "INTERNAL_ERROR", message, nil)
+}
+
+type ErrorInfo struct {
+	Status  int
+	Code    string
+	Message string
+	Details any
+	Private any
+}
+
+func CurrentError(c *gin.Context) (ErrorInfo, bool) {
+	statusValue, ok := c.Get(contextErrorStatusKey)
+	if !ok {
+		return ErrorInfo{}, false
+	}
+
+	status, _ := statusValue.(int)
+	code, _ := c.Get(contextErrorCodeKey)
+	message, _ := c.Get(contextErrorMessageKey)
+	details, _ := c.Get(contextErrorDetailsKey)
+	privateDetails, _ := c.Get(contextErrorPrivateKey)
+
+	codeString, _ := code.(string)
+	messageString, _ := message.(string)
+
+	return ErrorInfo{
+		Status:  status,
+		Code:    codeString,
+		Message: messageString,
+		Details: details,
+		Private: privateDetails,
+	}, true
 }
 
 func RequestID(c *gin.Context) string {

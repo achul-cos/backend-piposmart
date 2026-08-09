@@ -2,6 +2,7 @@ package customer
 
 import (
 	"database/sql"
+	"strings"
 	"time"
 )
 
@@ -24,18 +25,19 @@ type Actor struct {
 }
 
 type Owner struct {
-	ID          int64
-	Code        string
-	Name        string
-	Phone       sql.NullString
-	Email       sql.NullString
-	BrandName   sql.NullString
-	Province    sql.NullString
-	City        sql.NullString
-	District    sql.NullString
-	SubDistrict sql.NullString
-	Address     sql.NullString
+	ID                    int64
+	Code                  string
+	Name                  string
+	Phone                 sql.NullString
+	Email                 sql.NullString
+	BrandName             sql.NullString
+	Province              sql.NullString
+	City                  sql.NullString
+	District              sql.NullString
+	SubDistrict           sql.NullString
+	Address               sql.NullString
 	Status                string
+	IsTestingAccount      bool
 	OutletCount           int64
 	SubscribedOutletCount int64
 	SubscriptionStatus    string
@@ -44,19 +46,19 @@ type Owner struct {
 }
 
 type Outlet struct {
-	ID        int64
-	OwnerID   sql.NullInt64
-	Code      string
-	Name      string
-	Phone     sql.NullString
-	Province  sql.NullString
-	City      sql.NullString
+	ID          int64
+	OwnerID     sql.NullInt64
+	Code        string
+	Name        string
+	Phone       sql.NullString
+	Province    sql.NullString
+	City        sql.NullString
 	District    sql.NullString
 	SubDistrict sql.NullString
-	Address   sql.NullString
-	Status    string
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	Address     sql.NullString
+	Status      string
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
 }
 
 type OutletOverview struct {
@@ -140,18 +142,19 @@ type OwnerOverview struct {
 }
 
 type OwnerResponse struct {
-	ID          int64     `json:"id"`
-	Code        string    `json:"code"`
-	Name        string    `json:"name"`
-	Phone       string    `json:"phone,omitempty"`
-	Email       string    `json:"email,omitempty"`
-	BrandName   string    `json:"brand_name,omitempty"`
-	Province    string    `json:"province,omitempty"`
-	City        string    `json:"city,omitempty"`
-	District    string    `json:"district,omitempty"`
-	SubDistrict string    `json:"sub_district,omitempty"`
-	Address     string    `json:"address,omitempty"`
+	ID                    int64     `json:"id"`
+	Code                  string    `json:"code"`
+	Name                  string    `json:"name"`
+	Phone                 string    `json:"phone,omitempty"`
+	Email                 string    `json:"email,omitempty"`
+	BrandName             string    `json:"brand_name,omitempty"`
+	Province              string    `json:"province,omitempty"`
+	City                  string    `json:"city,omitempty"`
+	District              string    `json:"district,omitempty"`
+	SubDistrict           string    `json:"sub_district,omitempty"`
+	Address               string    `json:"address,omitempty"`
 	Status                string    `json:"status"`
+	IsTestingAccount      bool      `json:"is_testing_account"`
 	SubscriptionStatus    string    `json:"subscription_status,omitempty"`
 	SubscribedOutletCount int64     `json:"subscribed_outlet_count,omitempty"`
 	OutletCount           int64     `json:"outlet_count,omitempty"`
@@ -160,19 +163,19 @@ type OwnerResponse struct {
 }
 
 type OutletResponse struct {
-	ID        int64     `json:"id"`
-	OwnerID   *int64    `json:"owner_id"`
-	Code      string    `json:"code"`
-	Name      string    `json:"name"`
-	Phone     string    `json:"phone,omitempty"`
-	Province  string    `json:"province,omitempty"`
-	City      string    `json:"city,omitempty"`
+	ID          int64     `json:"id"`
+	OwnerID     *int64    `json:"owner_id"`
+	Code        string    `json:"code"`
+	Name        string    `json:"name"`
+	Phone       string    `json:"phone,omitempty"`
+	Province    string    `json:"province,omitempty"`
+	City        string    `json:"city,omitempty"`
 	District    string    `json:"district,omitempty"`
 	SubDistrict string    `json:"sub_district,omitempty"`
-	Address   string    `json:"address,omitempty"`
-	Status    string    `json:"status"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	Address     string    `json:"address,omitempty"`
+	Status      string    `json:"status"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 type OwnerBriefResponse struct {
@@ -274,54 +277,67 @@ type OwnerOverviewResponse struct {
 	UpdatedAt   time.Time            `json:"updated_at"`
 }
 
+// ownerOverviewSubscriptionLabel intentionally returns the frontend-facing code the current
+// Owner overview card and its TS type expect. The list endpoints can still expose richer internal
+// codes such as SUBSCRIBE/TRIAL/NOT_SUBSCRIBE, but this overview widget is presently binary:
+// subscribed vs not subscribed.
+func ownerOverviewSubscriptionLabel(status string) string {
+	switch strings.ToUpper(strings.TrimSpace(status)) {
+	case OwnerSubscriptionStatusSubscribed, "BERLANGGANAN", "ACTIVE":
+		return "BERLANGGANAN"
+	default:
+		return OwnerSubscriptionStatusNotSubscribed
+	}
+}
+
 type CreateOwnerRequest struct {
-	Code      string `json:"code" binding:"required"`
-	Name      string `json:"name" binding:"required"`
-	Phone     string `json:"phone"`
-	Email     string `json:"email"`
-	BrandName string `json:"brand_name"`
-	Province  string `json:"province"`
-	City      string `json:"city"`
-	District    string `json:"district"`
-	SubDistrict string `json:"sub_district"`
-	Address   string `json:"address"`
-	CreatedAt *time.Time `json:"created_at,omitempty"`
+	Code        string     `json:"code" binding:"required"`
+	Name        string     `json:"name" binding:"required"`
+	Phone       string     `json:"phone"`
+	Email       string     `json:"email"`
+	BrandName   string     `json:"brand_name"`
+	Province    string     `json:"province"`
+	City        string     `json:"city"`
+	District    string     `json:"district"`
+	SubDistrict string     `json:"sub_district"`
+	Address     string     `json:"address"`
+	CreatedAt   *time.Time `json:"created_at,omitempty"`
 }
 
 type UpdateOwnerRequest struct {
-	Code      *string `json:"code"`
-	Name      *string `json:"name"`
-	Phone     *string `json:"phone"`
-	Email     *string `json:"email"`
-	BrandName *string `json:"brand_name"`
-	Province  *string `json:"province"`
-	City      *string `json:"city"`
+	Code        *string `json:"code"`
+	Name        *string `json:"name"`
+	Phone       *string `json:"phone"`
+	Email       *string `json:"email"`
+	BrandName   *string `json:"brand_name"`
+	Province    *string `json:"province"`
+	City        *string `json:"city"`
 	District    *string `json:"district"`
 	SubDistrict *string `json:"sub_district"`
-	Address   *string `json:"address"`
+	Address     *string `json:"address"`
 }
 
 type CreateOutletRequest struct {
-	Code     string `json:"code"`
-	Name     string `json:"name" binding:"required"`
-	Phone    string `json:"phone"`
-	Province string `json:"province"`
-	City     string `json:"city"`
-	District    string `json:"district"`
-	SubDistrict string `json:"sub_district"`
-	Address  string `json:"address"`
-	CreatedAt *time.Time `json:"created_at,omitempty"`
+	Code        string     `json:"code"`
+	Name        string     `json:"name" binding:"required"`
+	Phone       string     `json:"phone"`
+	Province    string     `json:"province"`
+	City        string     `json:"city"`
+	District    string     `json:"district"`
+	SubDistrict string     `json:"sub_district"`
+	Address     string     `json:"address"`
+	CreatedAt   *time.Time `json:"created_at,omitempty"`
 }
 
 type UpdateOutletRequest struct {
-	Code     *string `json:"code"`
-	Name     *string `json:"name"`
-	Phone    *string `json:"phone"`
-	Province *string `json:"province"`
-	City     *string `json:"city"`
+	Code        *string `json:"code"`
+	Name        *string `json:"name"`
+	Phone       *string `json:"phone"`
+	Province    *string `json:"province"`
+	City        *string `json:"city"`
 	District    *string `json:"district"`
 	SubDistrict *string `json:"sub_district"`
-	Address  *string `json:"address"`
+	Address     *string `json:"address"`
 }
 
 type BulkIDRequest struct {
@@ -380,6 +396,7 @@ type OutletUpdateInput struct {
 
 type ListParams struct {
 	Query              string
+	OwnerKeyword       string
 	Code               string
 	Name               string
 	Phone              string
@@ -452,6 +469,7 @@ func NewOwnerResponse(owner Owner) OwnerResponse {
 		SubDistrict:           owner.SubDistrict.String,
 		Address:               owner.Address.String,
 		Status:                owner.Status,
+		IsTestingAccount:      owner.IsTestingAccount,
 		SubscriptionStatus:    subStatus,
 		SubscribedOutletCount: owner.SubscribedOutletCount,
 		OutletCount:           owner.OutletCount,
@@ -467,35 +485,35 @@ func NewOutletResponse(outlet Outlet) OutletResponse {
 		ownerID = &value
 	}
 	return OutletResponse{
-		ID:        outlet.ID,
-		OwnerID:   ownerID,
-		Code:      outlet.Code,
-		Name:      outlet.Name,
-		Phone:     outlet.Phone.String,
-		Province:  outlet.Province.String,
-		City:      outlet.City.String,
-		District:  outlet.District.String,
+		ID:          outlet.ID,
+		OwnerID:     ownerID,
+		Code:        outlet.Code,
+		Name:        outlet.Name,
+		Phone:       outlet.Phone.String,
+		Province:    outlet.Province.String,
+		City:        outlet.City.String,
+		District:    outlet.District.String,
 		SubDistrict: outlet.SubDistrict.String,
-		Address:   outlet.Address.String,
-		Status:    outlet.Status,
-		CreatedAt: outlet.CreatedAt,
-		UpdatedAt: outlet.UpdatedAt,
+		Address:     outlet.Address.String,
+		Status:      outlet.Status,
+		CreatedAt:   outlet.CreatedAt,
+		UpdatedAt:   outlet.UpdatedAt,
 	}
 }
 
 func NewOutletOverviewResponse(item OutletOverview) OutletOverviewResponse {
 	return OutletOverviewResponse{
-		ID:       item.ID,
-		Owner:    newOwnerBriefResponse(item),
-		Code:     item.Code,
-		Name:     item.Name,
-		Phone:    item.Phone.String,
-		Province: item.Province.String,
-		City:     item.City.String,
-		District: item.District.String,
+		ID:          item.ID,
+		Owner:       newOwnerBriefResponse(item),
+		Code:        item.Code,
+		Name:        item.Name,
+		Phone:       item.Phone.String,
+		Province:    item.Province.String,
+		City:        item.City.String,
+		District:    item.District.String,
 		SubDistrict: item.SubDistrict.String,
-		Address:  item.Address.String,
-		Status:   item.Status,
+		Address:     item.Address.String,
+		Status:      item.Status,
 		SubscriptionSummary: SubscriptionSummaryResponse{
 			TotalSubscriptions:       item.SubscriptionCount,
 			ActiveSubscriptions:      item.ActiveSubscriptionCount,
@@ -530,18 +548,18 @@ func NewOutletDetailResponse(item OutletOverview) OutletDetailResponse {
 
 func NewOwnerOverviewResponse(item OwnerOverview) OwnerOverviewResponse {
 	return OwnerOverviewResponse{
-		ID:        item.ID,
-		Code:      item.Code,
-		Name:      item.Name,
-		Phone:     item.Phone.String,
-		Email:     item.Email.String,
-		BrandName: item.BrandName.String,
-		Province:  item.Province.String,
-		City:      item.City.String,
-		District:  item.District.String,
+		ID:          item.ID,
+		Code:        item.Code,
+		Name:        item.Name,
+		Phone:       item.Phone.String,
+		Email:       item.Email.String,
+		BrandName:   item.BrandName.String,
+		Province:    item.Province.String,
+		City:        item.City.String,
+		District:    item.District.String,
 		SubDistrict: item.SubDistrict.String,
-		Address:   item.Address.String,
-		Status:    item.Status,
+		Address:     item.Address.String,
+		Status:      item.Status,
 		Balance: OwnerBalanceResponse{
 			Wallet: WalletBriefResponse{
 				ID:            item.WalletID,
@@ -559,7 +577,7 @@ func NewOwnerOverviewResponse(item OwnerOverview) OwnerOverviewResponse {
 		},
 		OwnerStatus: OwnerStatusResponse{
 			AgeStatus:             item.AgeStatus,
-			SubscriptionStatus:    item.SubscriptionStatus,
+			SubscriptionStatus:    ownerOverviewSubscriptionLabel(item.SubscriptionStatus),
 			SubscribedOutletCount: item.SubscribedOutletCount,
 			OutletCount:           item.OutletCount,
 		},

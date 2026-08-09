@@ -43,9 +43,18 @@ type Owner struct {
 	BrandName       string
 	Province        string
 	City            string
+	District        string
+	SubDistrict     string
 	Address         string
 	CreatedAt       time.Time
 	EnteredByUserID sql.NullInt64
+	// IsTestingAccount marks an owner whose data only exists because a piposmart employee
+	// installed the app to learn/demo it, not a real prospective customer — excluded from the
+	// sales/lead pipeline. TestingMarkedBy/TestingMarkedAt are NULL when this was inferred from
+	// import data (source "Kategori Akun" = "Akun Testing") rather than a specific admin action.
+	IsTestingAccount      bool
+	TestingMarkedByUserID sql.NullInt64
+	TestingMarkedAt       sql.NullTime
 }
 
 type Outlet struct {
@@ -54,8 +63,13 @@ type Outlet struct {
 	Phone           string
 	Province        string
 	City            string
+	District        string
+	SubDistrict     string
 	Address         string
 	EnteredByUserID sql.NullInt64
+	// RowCode is "Kode Baris" — the raw per-row identifier from the original source spreadsheet,
+	// tracked per outlet row (one owner can have several outlets, each with its own Kode Baris).
+	RowCode string
 }
 
 type Lead struct {
@@ -292,8 +306,8 @@ func (f *Factory) CreateOwner(ctx context.Context, tx *sql.Tx, owner Owner) (int
 		createdAt = time.Now()
 	}
 	_, err := tx.ExecContext(ctx, `
-		INSERT INTO owners (code, name, phone, email, brand_name, province, city, address, status, entered_by_user_id, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?, ?)
+		INSERT INTO owners (code, name, phone, email, brand_name, province, city, district, sub_district, address, status, entered_by_user_id, created_at, is_testing_account, testing_marked_by_user_id, testing_marked_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?, ?, ?, ?, ?)
 		ON DUPLICATE KEY UPDATE
 			name = VALUES(name),
 			phone = VALUES(phone),
@@ -301,11 +315,19 @@ func (f *Factory) CreateOwner(ctx context.Context, tx *sql.Tx, owner Owner) (int
 			brand_name = VALUES(brand_name),
 			province = VALUES(province),
 			city = VALUES(city),
+			district = VALUES(district),
+			sub_district = VALUES(sub_district),
 			address = VALUES(address),
 			status = 'ACTIVE',
 			entered_by_user_id = VALUES(entered_by_user_id),
+			-- GREATEST only ever upgrades FALSE->TRUE on re-seed/upsert, never un-flags a testing
+			-- account that was already set (by import or by an admin) back to FALSE.
+			is_testing_account = GREATEST(is_testing_account, VALUES(is_testing_account)),
+			testing_marked_by_user_id = COALESCE(testing_marked_by_user_id, VALUES(testing_marked_by_user_id)),
+			testing_marked_at = COALESCE(testing_marked_at, VALUES(testing_marked_at)),
 			deleted_at = NULL`,
-		owner.Code, owner.Name, owner.Phone, owner.Email, owner.BrandName, owner.Province, owner.City, owner.Address, owner.EnteredByUserID, createdAt,
+		owner.Code, owner.Name, owner.Phone, owner.Email, owner.BrandName, owner.Province, owner.City, owner.District, owner.SubDistrict, owner.Address, owner.EnteredByUserID, createdAt,
+		owner.IsTestingAccount, owner.TestingMarkedByUserID, owner.TestingMarkedAt,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("seed owner %s: %w", owner.Code, err)
@@ -315,19 +337,22 @@ func (f *Factory) CreateOwner(ctx context.Context, tx *sql.Tx, owner Owner) (int
 
 func (f *Factory) CreateOutlet(ctx context.Context, tx *sql.Tx, ownerID int64, outlet Outlet) (int64, error) {
 	_, err := tx.ExecContext(ctx, `
-		INSERT INTO outlets (owner_id, code, name, phone, province, city, address, status, entered_by_user_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?)
+		INSERT INTO outlets (owner_id, code, row_code, name, phone, province, city, district, sub_district, address, status, entered_by_user_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?)
 		ON DUPLICATE KEY UPDATE
 			owner_id = VALUES(owner_id),
+			row_code = VALUES(row_code),
 			name = VALUES(name),
 			phone = VALUES(phone),
 			province = VALUES(province),
 			city = VALUES(city),
+			district = VALUES(district),
+			sub_district = VALUES(sub_district),
 			address = VALUES(address),
 			status = 'ACTIVE',
 			entered_by_user_id = VALUES(entered_by_user_id),
 			deleted_at = NULL`,
-		ownerID, outlet.Code, outlet.Name, outlet.Phone, outlet.Province, outlet.City, outlet.Address, outlet.EnteredByUserID,
+		ownerID, outlet.Code, outlet.RowCode, outlet.Name, outlet.Phone, outlet.Province, outlet.City, outlet.District, outlet.SubDistrict, outlet.Address, outlet.EnteredByUserID,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("seed outlet %s: %w", outlet.Code, err)

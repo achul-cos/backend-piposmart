@@ -193,6 +193,8 @@ type ownerOutletRow struct {
 	OutletName  string `json:"outlet_name"`
 	OutletPhone string `json:"outlet_phone,omitempty"`
 	City        string `json:"city,omitempty"`
+	District    string `json:"district,omitempty"`
+	SubDistrict string `json:"sub_district,omitempty"`
 	Province    string `json:"province,omitempty"`
 	Address     string `json:"address,omitempty"`
 	DateOfWork  string `json:"date_of_work,omitempty"`
@@ -200,19 +202,24 @@ type ownerOutletRow struct {
 
 func parseOwnerOutletRow(row []string, idx headerIndex) (ownerOutletRow, []string) {
 	var errs []string
-	r := ownerOutletRow{
-		OwnerCode:  cellValue(row, idx, "Kode Owner"),
-		OwnerName:  cellValue(row, idx, "Nama Owner"),
-		OwnerEmail: cellValue(row, idx, "Email Owner"),
-		BrandName:  cellValue(row, idx, "Nama Project/BRAND"),
-		OutletName: cellValue(row, idx, "Nama Outlet"),
-		City:       cellValue(row, idx, "Kota"),
-		Province:   cellValue(row, idx, "Provinsi"),
-		Address: joinNonEmpty(
-			cellValue(row, idx, "Alamat Lengkap"),
+	address := cellValue(row, idx, "Alamat Lengkap")
+	if address == "" {
+		address = joinNonEmpty(
 			prefixIfPresent("Kel. ", cellValue(row, idx, "Kelurahan")),
 			prefixIfPresent("Kec. ", cellValue(row, idx, "Kecamatan")),
-		),
+		)
+	}
+	r := ownerOutletRow{
+		OwnerCode:   cellValue(row, idx, "Kode Owner"),
+		OwnerName:   cellValue(row, idx, "Nama Owner"),
+		OwnerEmail:  cellValue(row, idx, "Email Owner"),
+		BrandName:   cellValue(row, idx, "Nama Project/BRAND"),
+		OutletName:  cellValue(row, idx, "Nama Outlet"),
+		City:        cellValue(row, idx, "Kota"),
+		District:    cellValue(row, idx, "Kecamatan"),
+		SubDistrict: cellValue(row, idx, "Kelurahan"),
+		Province:    cellValue(row, idx, "Provinsi"),
+		Address:     address,
 	}
 
 	if r.OwnerCode == "" {

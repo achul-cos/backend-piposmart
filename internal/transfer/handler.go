@@ -190,6 +190,6 @@ func writeError(c *gin.Context, err error) {
 	case errors.Is(err, ErrAlreadyMatched):
 		httpx.Error(c, http.StatusConflict, "ALREADY_MATCHED", err.Error(), nil)
 	default:
-		httpx.Error(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Terjadi kesalahan pada server", nil)
+		httpx.InternalServerError(c, "Terjadi kesalahan pada server", err)
 	}
 }

@@ -110,6 +110,8 @@ func TestParseOwnerOutletRow_Valid(t *testing.T) {
 	row[idx["NO. HP OUTLET"]] = "082387091945"
 	row[idx["NAMA PROJECT/BRAND"]] = "dlaundry"
 	row[idx["NAMA OUTLET"]] = "Suka Mulia"
+	row[idx["KELURAHAN"]] = "Sukajadi"
+	row[idx["KECAMATAN"]] = "Senapelan"
 	row[idx["KOTA"]] = "Kota Pekanbaru"
 	row[idx["PROVINSI"]] = "Riau"
 	row[idx["ALAMAT LENGKAP"]] = "jln Diponegoro VII no 1a"
@@ -123,6 +125,12 @@ func TestParseOwnerOutletRow_Valid(t *testing.T) {
 	}
 	if parsed.OwnerPhone == "" {
 		t.Fatal("expected owner phone to be normalized, got empty")
+	}
+	if parsed.SubDistrict != "Sukajadi" || parsed.District != "Senapelan" {
+		t.Fatalf("expected kelurahan/kecamatan to be parsed separately, got %+v", parsed)
+	}
+	if parsed.Address != "jln Diponegoro VII no 1a" {
+		t.Fatalf("expected address to stay clean without duplicated kel/kec, got %q", parsed.Address)
 	}
 }
 
