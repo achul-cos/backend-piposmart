@@ -15,10 +15,15 @@ import (
 	"github.com/pressly/goose/v3"
 )
 
-func Run(ctx context.Context, cfg config.Config, command string, output io.Writer) error {
+func Run(ctx context.Context, cfg config.Config, command string, output io.Writer) (err error) {
 	if !isSupportedCommand(command) {
 		return fmt.Errorf("perintah migration %q tidak didukung; gunakan up, down, reset, clear, status, atau version", command)
 	}
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			err = fmt.Errorf("goose panic: %v", recovered)
+		}
+	}()
 
 	db, err := sql.Open("mysql", cfg.Database.DSN())
 	if err != nil {

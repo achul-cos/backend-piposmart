@@ -5,15 +5,19 @@ import (
 	"database/sql"
 	"log"
 
+	"backend_crm_piposmart/internal/platform/config"
 	"backend_crm_piposmart/internal/platform/seeder"
 
 	_ "github.com/go-sql-driver/mysql"
 )
 
 func main() {
-	dsn := "root:@tcp(localhost:3306)/crm_piposmart?parseTime=true&loc=Local"
+	cfg, err := config.Load()
+	if err != nil {
+		log.Fatalf("Failed to load config: %v", err)
+	}
 
-	db, err := sql.Open("mysql", dsn)
+	db, err := sql.Open("mysql", cfg.Database.DSN())
 	if err != nil {
 		log.Fatalf("Failed to open DB: %v", err)
 	}
@@ -30,7 +34,7 @@ func main() {
 
 	// Determine admin ID for assignment
 	var adminID int64
-	err = tx.QueryRowContext(context.Background(), "SELECT u.id FROM users u JOIN roles r ON u.role_id = r.id WHERE r.name = 'ADMIN' LIMIT 1").Scan(&adminID)
+	err = tx.QueryRowContext(context.Background(), "SELECT u.id FROM users u JOIN roles r ON u.role_id = r.id WHERE r.code = 'ADMIN' LIMIT 1").Scan(&adminID)
 	if err != nil {
 		log.Printf("Warning: no admin found: %v", err)
 		adminID = 1

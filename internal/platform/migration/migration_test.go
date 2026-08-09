@@ -3,6 +3,7 @@ package migration
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -67,6 +68,34 @@ func TestExpectedSQLMigrationsArePresent(t *testing.T) {
 		if !sqlFiles[item] {
 			t.Fatalf("migration SQL %q tidak ditemukan; files=%v", item, sqlFiles)
 		}
+	}
+}
+
+func TestMigrationVersionsAreUnique(t *testing.T) {
+	root := repositoryRoot(t)
+	entries, err := os.ReadDir(filepath.Join(root, "migrations"))
+	if err != nil {
+		t.Fatalf("read migrations: %v", err)
+	}
+
+	versionPattern := regexp.MustCompile(`^(\d{14})_.*\.sql$`)
+	seen := map[string]string{}
+
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".sql") {
+			continue
+		}
+
+		match := versionPattern.FindStringSubmatch(entry.Name())
+		if len(match) != 2 {
+			t.Fatalf("migration SQL %q tidak mengikuti pola versi Goose", entry.Name())
+		}
+
+		version := match[1]
+		if previous, exists := seen[version]; exists {
+			t.Fatalf("duplicate migration version %s ditemukan pada %q dan %q", version, previous, entry.Name())
+		}
+		seen[version] = entry.Name()
 	}
 }
 

@@ -27,15 +27,24 @@ type mitraRow struct {
 
 func readMitraExcel() ([]mitraRow, error) {
 	var results []mitraRow
-	fn := filepath.Join("asset", "data_admin", "06. Data Bonus Mitra 2025-2026 (Copy).xlsx")
+	searchPaths := []string{
+		filepath.Join("asset", "data_admin", "06. Data Bonus Mitra 2025-2026 (Copy).xlsx"),
+		filepath.Join("..", "asset", "data_admin", "06. Data Bonus Mitra 2025-2026 (Copy).xlsx"),
+		filepath.Join("backend", "asset", "data_admin", "06. Data Bonus Mitra 2025-2026 (Copy).xlsx"),
+	}
 
-	f, err := excelize.OpenFile(fn)
-	if err != nil {
-		fn = filepath.Join("..", "asset", "data_admin", "06. Data Bonus Mitra 2025-2026 (Copy).xlsx")
+	var (
+		f   *excelize.File
+		err error
+	)
+	for _, fn := range searchPaths {
 		f, err = excelize.OpenFile(fn)
-		if err != nil {
-			return nil, nil // Skip if not found
+		if err == nil {
+			break
 		}
+	}
+	if err != nil {
+		return nil, nil // Skip if not found
 	}
 	defer f.Close()
 
@@ -129,7 +138,11 @@ func SeedMitraFromExcel(ctx context.Context, tx *sql.Tx, adminID int64, salesEma
 
 	// Build users map for fuzzy PIC search
 	users := make(map[string]int64)
-	userRows, err := tx.QueryContext(ctx, "SELECT u.id, u.name, u.email FROM users u JOIN roles r ON u.role_id = r.id WHERE r.name = 'SALES' OR r.name = 'ADMIN'")
+	userRows, err := tx.QueryContext(ctx, `
+		SELECT u.id, u.name, u.email
+		FROM users u
+		JOIN roles r ON u.role_id = r.id
+		WHERE r.code IN ('SALES', 'SUPERVISOR', 'ADMIN')`)
 	if err == nil {
 		for userRows.Next() {
 			var id int64
@@ -203,7 +216,8 @@ func SeedMitraFromExcel(ctx context.Context, tx *sql.Tx, adminID int64, salesEma
 				address=VALUES(address),
 				province=VALUES(province),
 				city=VALUES(city),
-				district=VALUES(district)
+				district=VALUES(district),
+				status='ACTIVE'
 		`, ptID, row.Code, row.Name, row.Phone, row.Email, row.Address, row.Province, row.City, row.District, createdAt)
 		if err != nil {
 			return fmt.Errorf("insert partner %d (%s): %w", i+1, row.Code, err)
@@ -236,16 +250,44 @@ func SeedMitraFromExcel(ctx context.Context, tx *sql.Tx, adminID int64, salesEma
 		}
 
 		if picID != 0 {
-			_, err = tx.ExecContext(ctx, `
-				INSERT INTO partner_assignments 
-					(partner_id, user_id, assigned_by_id, assigned_at, active, created_at)
-				VALUES (?, ?, ?, ?, true, ?)
-			`, partnerID, picID, adminID, createdAt, createdAt)
-			if err != nil {
-				// Assignment might already exist from a prior sync; keep the import idempotent.
+			if err := syncSeedPartnerAssignment(ctx, tx, partnerID, picID, adminID, createdAt); err != nil {
+				return fmt.Errorf("assign partner %d (%s): %w", partnerID, row.Code, err)
 			}
 		}
 	}
 
 	return nil
+}
+
+func syncSeedPartnerAssignment(ctx context.Context, tx *sql.Tx, partnerID, picID, adminID int64, assignedAt time.Time) error {
+	var currentAssignmentID int64
+	var currentUserID int64
+	err := tx.QueryRowContext(ctx, `
+		SELECT id, user_id
+		FROM partner_assignments
+		WHERE partner_id = ? AND active = 1
+		ORDER BY id DESC
+		LIMIT 1`, partnerID).Scan(&currentAssignmentID, &currentUserID)
+	switch {
+	case err == nil:
+		if currentUserID == picID {
+			return nil
+		}
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE partner_assignments
+			SET active = FALSE, unassigned_at = ?, updated_at = NOW()
+			WHERE id = ?`, assignedAt, currentAssignmentID); err != nil {
+			return err
+		}
+	case err != sql.ErrNoRows:
+		return err
+	}
+
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO partner_assignments
+			(partner_id, user_id, assigned_by_id, assigned_at, active, created_at, updated_at)
+		VALUES (?, ?, ?, ?, TRUE, ?, ?)`,
+		partnerID, picID, adminID, assignedAt, assignedAt, assignedAt,
+	)
+	return err
 }
