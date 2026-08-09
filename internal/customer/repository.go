@@ -1502,6 +1502,9 @@ func (r *Repository) exportOwnerOutletRows(ctx context.Context, where string, ar
 		}
 		results = append(results, rowMap)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 	if err := r.enrichOwnerOutletExportRows(ctx, results); err != nil {
 		return nil, err
 	}
