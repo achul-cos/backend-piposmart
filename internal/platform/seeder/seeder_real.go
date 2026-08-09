@@ -336,6 +336,9 @@ func seedDemoReal(ctx context.Context, tx *sql.Tx, options Options) error {
 	if err := SeedSubscriptionsFromExcel(ctx, tx, fake, adminID, fallbackSalesEmail); err != nil {
 		return fmt.Errorf("seed subscriptions from excel: %w", err)
 	}
+	if err := SeedMitraFromExcel(ctx, tx, adminID, nil); err != nil {
+		return fmt.Errorf("seed mitra from excel: %w", err)
+	}
 
 	return nil
 }

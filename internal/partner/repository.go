@@ -153,15 +153,19 @@ func (r *Repository) UpdatePartnerType(ctx context.Context, id int64, pt Partner
 func (r *Repository) CreatePartner(ctx context.Context, p Partner) (int64, error) {
 	query := `
 		INSERT INTO partners (
-			partner_type_id, code, name, phone, email, address,
+			partner_type_id, code, name, phone, email, province, city, district, sub_district, address,
 			bank_account_encrypted, bank_account_last4, status, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	result, err := r.db.ExecContext(ctx, query,
 		p.PartnerTypeID,
 		p.Code,
 		p.Name,
 		p.Phone,
 		p.Email,
+		p.Province,
+		p.City,
+		p.District,
+		p.SubDistrict,
 		p.Address,
 		p.BankAccountEncrypted,
 		p.BankAccountLast4,
@@ -180,14 +184,17 @@ func (r *Repository) CreatePartner(ctx context.Context, p Partner) (int64, error
 
 func (r *Repository) GetPartnerByID(ctx context.Context, id int64) (*Partner, error) {
 	query := `
-		SELECT id, partner_type_id, code, name, phone, email, address,
-		       bank_account_encrypted, bank_account_last4, status, created_at, updated_at
-		FROM partners
-		WHERE id = ?`
+		SELECT p.id, p.partner_type_id, p.code, p.name, p.phone, p.email, p.province, p.city, p.district, p.sub_district, p.address,
+		       p.bank_account_encrypted, p.bank_account_last4, p.status, p.created_at, p.updated_at, u.name as pic_name, o.name as owner_name
+		FROM partners p
+		LEFT JOIN partner_assignments pa ON p.id = pa.partner_id AND pa.active = 1
+		LEFT JOIN users u ON pa.user_id = u.id
+		LEFT JOIN owners o ON p.code = o.code
+		WHERE p.id = ?`
 	var p Partner
 	err := r.db.QueryRowContext(ctx, query, id).Scan(
-		&p.ID, &p.PartnerTypeID, &p.Code, &p.Name, &p.Phone, &p.Email, &p.Address,
-		&p.BankAccountEncrypted, &p.BankAccountLast4, &p.Status, &p.CreatedAt, &p.UpdatedAt)
+		&p.ID, &p.PartnerTypeID, &p.Code, &p.Name, &p.Phone, &p.Email, &p.Province, &p.City, &p.District, &p.SubDistrict, &p.Address,
+		&p.BankAccountEncrypted, &p.BankAccountLast4, &p.Status, &p.CreatedAt, &p.UpdatedAt, &p.PicName, &p.OwnerName)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
@@ -199,14 +206,17 @@ func (r *Repository) GetPartnerByID(ctx context.Context, id int64) (*Partner, er
 
 func (r *Repository) GetPartnerByCode(ctx context.Context, code string) (*Partner, error) {
 	query := `
-		SELECT id, partner_type_id, code, name, phone, email, address,
-		       bank_account_encrypted, bank_account_last4, status, created_at, updated_at
-		FROM partners
-		WHERE code = ?`
+		SELECT p.id, p.partner_type_id, p.code, p.name, p.phone, p.email, p.province, p.city, p.district, p.sub_district, p.address,
+		       p.bank_account_encrypted, p.bank_account_last4, p.status, p.created_at, p.updated_at, u.name as pic_name, o.name as owner_name
+		FROM partners p
+		LEFT JOIN partner_assignments pa ON p.id = pa.partner_id AND pa.active = 1
+		LEFT JOIN users u ON pa.user_id = u.id
+		LEFT JOIN owners o ON p.code = o.code
+		WHERE p.code = ?`
 	var p Partner
 	err := r.db.QueryRowContext(ctx, query, code).Scan(
-		&p.ID, &p.PartnerTypeID, &p.Code, &p.Name, &p.Phone, &p.Email, &p.Address,
-		&p.BankAccountEncrypted, &p.BankAccountLast4, &p.Status, &p.CreatedAt, &p.UpdatedAt)
+		&p.ID, &p.PartnerTypeID, &p.Code, &p.Name, &p.Phone, &p.Email, &p.Province, &p.City, &p.District, &p.SubDistrict, &p.Address,
+		&p.BankAccountEncrypted, &p.BankAccountLast4, &p.Status, &p.CreatedAt, &p.UpdatedAt, &p.PicName, &p.OwnerName)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
@@ -221,27 +231,27 @@ func (r *Repository) ListPartners(ctx context.Context, params PartnerListParams)
 	whereParts := []string{"1 = 1"}
 	if strings.TrimSpace(params.Search) != "" {
 		pattern := "%" + strings.TrimSpace(params.Search) + "%"
-		whereParts = append(whereParts, "(name LIKE ? OR code LIKE ?)")
+		whereParts = append(whereParts, "(p.name LIKE ? OR p.code LIKE ?)")
 		args = append(args, pattern, pattern)
 	}
 	if params.CreatedFrom != nil {
-		whereParts = append(whereParts, "created_at >= ?")
+		whereParts = append(whereParts, "p.created_at >= ?")
 		args = append(args, *params.CreatedFrom)
 	}
 	if params.CreatedTo != nil {
-		whereParts = append(whereParts, "created_at < ?")
+		whereParts = append(whereParts, "p.created_at < ?")
 		args = append(args, params.CreatedTo.AddDate(0, 0, 1))
 	}
 	where := "WHERE " + strings.Join(whereParts, " AND ")
 	// Count query
-	countQuery := "SELECT COUNT(*) FROM partners " + where
+	countQuery := "SELECT COUNT(*) FROM partners p " + where
 	var total int64
 	err := r.db.QueryRowContext(ctx, countQuery, args...).Scan(&total)
 	if err != nil {
 		return nil, 0, err
 	}
 	// Data query
-	query := "SELECT id, partner_type_id, code, name, phone, email, address, bank_account_encrypted, bank_account_last4, status, created_at, updated_at FROM partners " + where + " ORDER BY name"
+	query := "SELECT p.id, p.partner_type_id, p.code, p.name, p.phone, p.email, p.province, p.city, p.district, p.sub_district, p.address, p.bank_account_encrypted, p.bank_account_last4, p.status, p.created_at, p.updated_at, u.name as pic_name, o.name as owner_name FROM partners p LEFT JOIN partner_assignments pa ON p.id = pa.partner_id AND pa.active = 1 LEFT JOIN users u ON pa.user_id = u.id LEFT JOIN owners o ON p.code = o.code " + where + " ORDER BY p.name"
 	dataArgs := append([]any{}, args...)
 	if params.Limit > 0 {
 		query += " LIMIT ? OFFSET ?"
@@ -256,8 +266,9 @@ func (r *Repository) ListPartners(ctx context.Context, params PartnerListParams)
 	for rows.Next() {
 		var p Partner
 		if err := rows.Scan(
-			&p.ID, &p.PartnerTypeID, &p.Code, &p.Name, &p.Phone, &p.Email, &p.Address,
-			&p.BankAccountEncrypted, &p.BankAccountLast4, &p.Status, &p.CreatedAt, &p.UpdatedAt); err != nil {
+			&p.ID, &p.PartnerTypeID, &p.Code, &p.Name, &p.Phone, &p.Email, &p.Province, &p.City, &p.District,
+			&p.SubDistrict, &p.Address, &p.BankAccountEncrypted, &p.BankAccountLast4, &p.Status, &p.CreatedAt, &p.UpdatedAt, &p.PicName, &p.OwnerName,
+		); err != nil {
 			return nil, 0, err
 		}
 		list = append(list, p)
@@ -271,12 +282,12 @@ func (r *Repository) ListPartners(ctx context.Context, params PartnerListParams)
 func (r *Repository) UpdatePartner(ctx context.Context, id int64, p Partner) error {
 	query := `
 		UPDATE partners
-		SET name = ?, phone = ?, email = ?, address = ?,
+		SET name = ?, phone = ?, email = ?, province = ?, city = ?, district = ?, sub_district = ?, address = ?,
 		    bank_account_encrypted = ?, bank_account_last4 = ?,
 		    status = ?, updated_at = NOW()
 		WHERE id = ?`
 	result, err := r.db.ExecContext(ctx, query,
-		p.Name, p.Phone, p.Email, p.Address,
+		p.Name, p.Phone, p.Email, p.Province, p.City, p.District, p.SubDistrict, p.Address,
 		p.BankAccountEncrypted, p.BankAccountLast4, p.Status, id)
 	if err != nil {
 		return err

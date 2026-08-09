@@ -12,23 +12,23 @@ import (
 )
 
 type mitraRow struct {
-	Code        string
-	Name        string
-	Category    string
-	CreatedAt   string
-	Province    string
-	City        string
-	District    string
-	Address     string
-	Phone       string
-	Email       string
-	PIC         string
+	Code      string
+	Name      string
+	Category  string
+	CreatedAt string
+	Province  string
+	City      string
+	District  string
+	Address   string
+	Phone     string
+	Email     string
+	PIC       string
 }
 
 func readMitraExcel() ([]mitraRow, error) {
 	var results []mitraRow
 	fn := filepath.Join("asset", "data_admin", "06. Data Bonus Mitra 2025-2026 (Copy).xlsx")
-	
+
 	f, err := excelize.OpenFile(fn)
 	if err != nil {
 		fn = filepath.Join("..", "asset", "data_admin", "06. Data Bonus Mitra 2025-2026 (Copy).xlsx")
@@ -81,7 +81,6 @@ func readMitraExcel() ([]mitraRow, error) {
 			break
 		}
 	}
-
 	if headerRowIdx == -1 {
 		return nil, fmt.Errorf("mitra headers not found")
 	}
@@ -91,7 +90,7 @@ func readMitraExcel() ([]mitraRow, error) {
 		if len(row) == 0 {
 			continue
 		}
-		
+
 		code := getCol(row, colCode)
 		if code == "" {
 			continue
@@ -130,7 +129,7 @@ func SeedMitraFromExcel(ctx context.Context, tx *sql.Tx, adminID int64, salesEma
 
 	// Build users map for fuzzy PIC search
 	users := make(map[string]int64)
-	userRows, err := tx.QueryContext(ctx, "SELECT id, name, email FROM users WHERE role = 'SALES' OR role = 'ADMIN'")
+	userRows, err := tx.QueryContext(ctx, "SELECT u.id, u.name, u.email FROM users u JOIN roles r ON u.role_id = r.id WHERE r.name = 'SALES' OR r.name = 'ADMIN'")
 	if err == nil {
 		for userRows.Next() {
 			var id int64
@@ -156,7 +155,7 @@ func SeedMitraFromExcel(ctx context.Context, tx *sql.Tx, adminID int64, salesEma
 		}
 		ptRows.Close()
 	}
-	
+
 	defaultPtID := int64(1)
 	if len(partnerTypes) > 0 {
 		for _, id := range partnerTypes {
@@ -243,7 +242,7 @@ func SeedMitraFromExcel(ctx context.Context, tx *sql.Tx, adminID int64, salesEma
 				VALUES (?, ?, ?, ?, true, ?)
 			`, partnerID, picID, adminID, createdAt, createdAt)
 			if err != nil {
-				// Assignment might already exist, ignore error for simplicity or handle gracefully
+				// Assignment might already exist from a prior sync; keep the import idempotent.
 			}
 		}
 	}

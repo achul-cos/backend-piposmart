@@ -280,6 +280,10 @@ func (s *Service) CreatePartner(ctx context.Context, actor identity.User, req Cr
 		Name:                 req.Name,
 		Phone:                ptrToSqlNullString(req.Phone),
 		Email:                ptrToSqlNullString(req.Email),
+		Province:             ptrToSqlNullString(req.Province),
+		City:                 ptrToSqlNullString(req.City),
+		District:             ptrToSqlNullString(req.District),
+		SubDistrict:          ptrToSqlNullString(req.SubDistrict),
 		Address:              ptrToSqlNullString(req.Address),
 		BankAccountEncrypted: encrypted,
 		BankAccountLast4:     last4,
@@ -372,6 +376,18 @@ func (s *Service) UpdatePartner(ctx context.Context, id int64, req UpdatePartner
 	}
 	if req.Email != nil {
 		p.Email = ptrToSqlNullString(req.Email)
+	}
+	if req.Province != nil {
+		p.Province = ptrToSqlNullString(req.Province)
+	}
+	if req.City != nil {
+		p.City = ptrToSqlNullString(req.City)
+	}
+	if req.District != nil {
+		p.District = ptrToSqlNullString(req.District)
+	}
+	if req.SubDistrict != nil {
+		p.SubDistrict = ptrToSqlNullString(req.SubDistrict)
 	}
 	if req.Address != nil {
 		p.Address = ptrToSqlNullString(req.Address)
