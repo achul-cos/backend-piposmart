@@ -190,6 +190,7 @@ type ownerOutletRow struct {
 	OwnerEmail  string `json:"owner_email,omitempty"`
 	OwnerPhone  string `json:"owner_phone"`
 	BrandName   string `json:"brand_name,omitempty"`
+	RowCode     string `json:"row_code,omitempty"`
 	OutletName  string `json:"outlet_name"`
 	OutletPhone string `json:"outlet_phone,omitempty"`
 	City        string `json:"city,omitempty"`
@@ -214,6 +215,7 @@ func parseOwnerOutletRow(row []string, idx headerIndex) (ownerOutletRow, []strin
 		OwnerName:   cellValue(row, idx, "Nama Owner"),
 		OwnerEmail:  cellValue(row, idx, "Email Owner"),
 		BrandName:   cellValue(row, idx, "Nama Project/BRAND"),
+		RowCode:     cellValue(row, idx, "Kode Baris"),
 		OutletName:  cellValue(row, idx, "Nama Outlet"),
 		City:        cellValue(row, idx, "Kota"),
 		District:    cellValue(row, idx, "Kecamatan"),

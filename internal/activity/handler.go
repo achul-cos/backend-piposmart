@@ -24,6 +24,7 @@ func (h *Handler) RegisterRoutes(api *gin.RouterGroup) {
 	api.GET("/customer-interactions", h.listInteractions)
 	api.GET("/customer-interactions/all", h.listAllInteractions)
 	api.GET("/customer-interactions/all-deleted", h.listAllInteractions)
+	api.GET("/customer-interactions/:interaction_id", h.getInteraction)
 	api.GET("/follow-ups", h.listFollowUps)
 	api.GET("/follow-ups/all", h.listAllFollowUps)
 	api.GET("/follow-ups/all-deleted", h.listAllFollowUps)
@@ -182,6 +183,20 @@ func (h *Handler) listTrainings(c *gin.Context) {
 		return
 	}
 	response, err := h.service.ListTrainings(c.Request.Context(), user, params)
+	if err != nil {
+		writeError(c, err)
+		return
+	}
+	httpx.Success(c, http.StatusOK, response)
+}
+
+func (h *Handler) getInteraction(c *gin.Context) {
+	user, _ := identity.CurrentUser(c)
+	interactionID, ok := parsePathID(c, "interaction_id", "ID interaksi tidak valid")
+	if !ok {
+		return
+	}
+	response, err := h.service.GetInteraction(c.Request.Context(), user, interactionID)
 	if err != nil {
 		writeError(c, err)
 		return

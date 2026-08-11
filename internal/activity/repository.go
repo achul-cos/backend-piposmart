@@ -602,6 +602,33 @@ func (r *Repository) findTrainingByIDVisible(ctx context.Context, actor identity
 	return item, err
 }
 
+func (r *Repository) findInteractionByIDVisible(ctx context.Context, actor identity.User, id int64) (CustomerInteraction, error) {
+	where, args := interactionWhere(actor, InteractionListParams{})
+	args = append(args, id)
+
+	item, err := scanInteraction(r.db.QueryRowContext(ctx, interactionSelect()+`
+		WHERE `+where+` AND ci.id = ?
+		LIMIT 1`, args...))
+	if err == sql.ErrNoRows {
+		return CustomerInteraction{}, ErrForbidden
+	}
+	return item, err
+}
+
+func (r *Repository) GetInteraction(ctx context.Context, actor identity.User, id int64) (CustomerInteraction, error) {
+	item, err := r.findInteractionByIDVisible(ctx, actor, id)
+	if err == nil {
+		return item, nil
+	}
+	if !errors.Is(err, ErrForbidden) {
+		return CustomerInteraction{}, err
+	}
+	if _, rawErr := r.findInteractionByIDRaw(ctx, id); rawErr != nil {
+		return CustomerInteraction{}, rawErr
+	}
+	return CustomerInteraction{}, ErrForbidden
+}
+
 func (r *Repository) GetTraining(ctx context.Context, actor identity.User, id int64) (TrainingReport, error) {
 	item, err := r.findTrainingByIDVisible(ctx, actor, id)
 	if err == nil {

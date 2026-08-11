@@ -75,6 +75,14 @@ func (s *Service) ListLeadTrainings(ctx context.Context, actor identity.User, le
 	return s.ListTrainings(ctx, actor, params)
 }
 
+func (s *Service) GetInteraction(ctx context.Context, actor identity.User, id int64) (CustomerInteractionResponse, error) {
+	item, err := s.repo.GetInteraction(ctx, actor, id)
+	if err != nil {
+		return CustomerInteractionResponse{}, err
+	}
+	return NewInteractionResponse(item), nil
+}
+
 func (s *Service) GetTraining(ctx context.Context, actor identity.User, id int64) (TrainingReportResponse, error) {
 	item, err := s.repo.GetTraining(ctx, actor, id)
 	if err != nil {

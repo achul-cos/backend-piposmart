@@ -334,6 +334,7 @@ func commitOwnerOutletRow(ctx context.Context, repo *Repository, customerService
 	outletCode := fmt.Sprintf("%s-OUT-%02d", r.OwnerCode, outletSeq+1)
 	outletResp, err := customerService.CreateOutlet(ctx, actor, ownerID, customer.CreateOutletRequest{
 		Code:        outletCode,
+		RowCode:     r.RowCode,
 		Name:        r.OutletName,
 		Phone:       r.OutletPhone,
 		Province:    r.Province,

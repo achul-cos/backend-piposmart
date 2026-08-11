@@ -148,6 +148,7 @@ func GetAdminOwnerColumns() []ReportColumn {
 	return []ReportColumn{
 		{Key: "no", Label: "No", Type: "number"},
 		{Key: "date_of_work", Label: "Date of Work", Type: "string"},
+		{Key: "nama_penginput", Label: "Nama Penginput", Type: "string"},
 		{Key: "kode_baris", Label: "Kode Baris", Type: "string"},
 		{Key: "owner_code", Label: "Kode Owner", Type: "string"},
 		{Key: "owner_name", Label: "Nama Owner", Type: "string"},
@@ -329,10 +330,7 @@ func BuildAdminOwnerOutletXLSX(reportTitle, sheetName string, columns []ReportCo
 		ActivePane:  "bottomRight",
 	})
 
-	lastColumn, _ := excelize.ColumnNumberToName(len(columns))
-	if len(items) > 0 {
-		_ = file.SetCellStyle(sheetName, "A8", fmt.Sprintf("%s%d", lastColumn, len(items)+headerRow), bodyStyle)
-	}
+	// The styles were already set per-cell in the loop above, so we don't need to overwrite the whole range with bodyStyle.
 
 	var buf bytes.Buffer
 	if err := file.Write(&buf); err != nil {

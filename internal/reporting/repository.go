@@ -831,16 +831,20 @@ func (r *Repository) buildReportQuery(actor Actor, reportKey string, params List
 			CAST(o.id AS CHAR) AS kode_baris,
 			o.code AS owner_code,
 			o.name AS owner_name,
-			COALESCE(o.email, '') AS owner_email,
-			COALESCE(o.phone, '') AS owner_phone,
+			COALESCE(NULLIF(o.email, ''), '') AS owner_email,
+			CASE
+				WHEN COALESCE(NULLIF(o.phone,''), '') REGEXP '^62[0-9]'
+				THEN CONCAT('0', SUBSTRING(COALESCE(NULLIF(o.phone,''), ''), 3))
+				ELSE COALESCE(NULLIF(o.phone,''), '')
+			END AS owner_phone,
 			DATE_FORMAT(o.created_at, '%d/%m/%Y') AS create_date_project,
 			` + monthNameIDSQL("o.created_at") + ` AS bulan,
-			COALESCE(o.brand_name, '') AS brand_name,
-			COALESCE(o.sub_district, '') AS kelurahan,
-			COALESCE(o.district, '') AS kecamatan,
-			COALESCE(o.city, '') AS kota,
-			COALESCE(o.province, '') AS provinsi,
-			COALESCE(o.address, '') AS alamat_lengkap,
+			CASE WHEN COALESCE(o.brand_name,'') LIKE '%#REF!%' OR COALESCE(o.brand_name,'') LIKE '%#VALUE!%' THEN '' ELSE COALESCE(o.brand_name, '') END AS brand_name,
+			COALESCE(NULLIF(o.sub_district, ''), '') AS kelurahan,
+			COALESCE(NULLIF(o.district, ''), '') AS kecamatan,
+			COALESCE(NULLIF(o.city, ''), '') AS kota,
+			COALESCE(NULLIF(o.province, ''), '') AS provinsi,
+			COALESCE(NULLIF(o.address, ''), '') AS alamat_lengkap,
 			COALESCE(outlets_count.total, 0) AS jumlah_outlet
 		FROM owners o
 		LEFT JOIN (SELECT owner_id, COUNT(id) AS total FROM outlets WHERE deleted_at IS NULL GROUP BY owner_id) outlets_count ON outlets_count.owner_id = o.id
@@ -878,21 +882,29 @@ func (r *Repository) buildReportQuery(actor Actor, reportKey string, params List
 			DATE_FORMAT(o.created_at, '%d/%m/%Y') AS date_of_work,
 			'-' AS nama_penginput,
 			'OWNER' AS kategori_akun,
-			CAST(o.id AS CHAR) AS kode_baris,
+			COALESCE(ot.row_code, '') AS kode_baris,
 			o.code AS owner_code,
 			o.name AS owner_name,
-			COALESCE(o.email, '') AS owner_email,
-			COALESCE(o.phone, '') AS owner_phone,
-			COALESCE(ot.phone, '') AS outlet_phone,
+			COALESCE(NULLIF(o.email, ''), '') AS owner_email,
+			CASE
+				WHEN COALESCE(NULLIF(o.phone,''), NULLIF(ot.phone,''), '') REGEXP '^62[0-9]'
+				THEN CONCAT('0', SUBSTRING(COALESCE(NULLIF(o.phone,''), NULLIF(ot.phone,''), ''), 3))
+				ELSE COALESCE(NULLIF(o.phone,''), NULLIF(ot.phone,''), '')
+			END AS owner_phone,
+			CASE
+				WHEN COALESCE(NULLIF(ot.phone,''), NULLIF(o.phone,''), '') REGEXP '^62[0-9]'
+				THEN CONCAT('0', SUBSTRING(COALESCE(NULLIF(ot.phone,''), NULLIF(o.phone,''), ''), 3))
+				ELSE COALESCE(NULLIF(ot.phone,''), NULLIF(o.phone,''), '')
+			END AS outlet_phone,
 			DATE_FORMAT(o.created_at, '%d/%m/%Y') AS create_date_project,
 			` + monthNameIDSQL("o.created_at") + ` AS bulan,
-			COALESCE(o.brand_name, '') AS brand_name,
-			COALESCE(ot.name, '') AS outlet_name,
-			COALESCE(ot.sub_district, o.sub_district, '') AS kelurahan,
-			COALESCE(ot.district, o.district, '') AS kecamatan,
-			COALESCE(ot.city, o.city, '') AS kota,
-			COALESCE(ot.province, o.province, '') AS provinsi,
-			COALESCE(ot.address, o.address, '') AS alamat_lengkap,
+			CASE WHEN COALESCE(o.brand_name,'') LIKE '%#REF!%' OR COALESCE(o.brand_name,'') LIKE '%#VALUE!%' THEN '' ELSE COALESCE(o.brand_name, '') END AS brand_name,
+			CASE WHEN COALESCE(ot.name,'') LIKE '%#REF!%' OR COALESCE(ot.name,'') LIKE '%#VALUE!%' THEN '' ELSE COALESCE(ot.name, '') END AS outlet_name,
+			COALESCE(NULLIF(ot.sub_district, ''), NULLIF(o.sub_district, ''), '') AS kelurahan,
+			COALESCE(NULLIF(ot.district, ''), NULLIF(o.district, ''), '') AS kecamatan,
+			COALESCE(NULLIF(ot.city, ''), NULLIF(o.city, ''), '') AS kota,
+			COALESCE(NULLIF(ot.province, ''), NULLIF(o.province, ''), '') AS provinsi,
+			COALESCE(NULLIF(ot.address, ''), NULLIF(o.address, ''), '') AS alamat_lengkap,
 			COALESCE(outlets_count.total, 0) AS jumlah_outlet
 		FROM owners o
 		LEFT JOIN outlets ot ON ot.owner_id = o.id AND ot.deleted_at IS NULL

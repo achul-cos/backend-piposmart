@@ -36,21 +36,57 @@ func ToAdminOwnerOutletRows(rows []map[string]any) []map[string]any {
 		if boolVal(row["is_testing_account"]) {
 			kategori = "Akun Testing"
 		}
+		namaPenginput := stringVal(row["entered_by_name"])
+		if namaPenginput == "" {
+			namaPenginput = "-"
+		}
+		kodeBaris := stringVal(row["row_code"])
+		if kodeBaris == "" {
+			// Fallback to owner_id if row_code is not yet populated
+			if id := int64Val(row["owner_id"]); id > 0 {
+				kodeBaris = fmt.Sprint(id)
+			} else {
+				kodeBaris = "-"
+			}
+		}
+		ownerName := stringVal(row["owner_name"])
+		if ownerName == "" {
+			ownerName = "-"
+		}
+		ownerEmail := stringVal(row["owner_email"])
+		if ownerEmail == "" {
+			ownerEmail = "-"
+		}
+		ownerPhone := stringVal(row["owner_phone"])
+		if ownerPhone == "" {
+			ownerPhone = "-"
+		}
+		kel := stringVal(row["outlet_sub_district"])
+		if kel == "" {
+			kel = "-"
+		}
+		kec := stringVal(row["outlet_district"])
+		if kec == "" {
+			kec = "-"
+		}
+		if code == "" {
+			code = "-"
+		}
 		item := map[string]any{
 			"date_of_work":        formatAdminDate(stringVal(row["owner_created_at"])),
-			"nama_penginput":      row["entered_by_name"],
+			"nama_penginput":      namaPenginput,
 			"kategori_akun":       kategori,
-			"kode_baris":          row["row_code"],
-			"owner_code":          row["owner_code"],
-			"owner_name":          row["owner_name"],
-			"owner_email":         row["owner_email"],
-			"owner_phone":         row["owner_phone"],
+			"kode_baris":          kodeBaris,
+			"owner_code":          code, // code is already stringVal(row["owner_code"])
+			"owner_name":          ownerName,
+			"owner_email":         ownerEmail,
+			"owner_phone":         ownerPhone,
 			"outlet_phone":        row["outlet_phone"],
 			"create_date_project": formatAdminDate(outletCreatedAt),
 			"brand_name":          row["brand_name"],
 			"outlet_name":         row["outlet_name"],
-			"kelurahan":           row["outlet_sub_district"],
-			"kecamatan":           row["outlet_district"],
+			"kelurahan":           kel,
+			"kecamatan":           kec,
 			"kota":                row["outlet_city"],
 			"provinsi":            row["outlet_province"],
 			"alamat_lengkap":      row["outlet_address"],
@@ -73,6 +109,20 @@ func ToAdminOwnerOutletRows(rows []map[string]any) []map[string]any {
 // per unique owner (deduped, first row encountered per owner_code kept), with a wallet balance
 // column instead of the per-outlet fields.
 func ToAdminOwnerRows(rows []map[string]any) []map[string]any {
+	earliestOutletAt := make(map[string]string, len(rows))
+	enteredByNameMap := make(map[string]string, len(rows))
+	for _, row := range rows {
+		code := stringVal(row["owner_code"])
+		createdAt := stringVal(row["outlet_created_at"])
+		if createdAt == "" {
+			continue
+		}
+		if cur, ok := earliestOutletAt[code]; !ok || createdAt < cur {
+			earliestOutletAt[code] = createdAt
+			enteredByNameMap[code] = stringVal(row["entered_by_name"])
+		}
+	}
+
 	seen := make(map[string]bool, len(rows))
 	out := make([]map[string]any, 0, len(rows))
 	for _, row := range rows {
@@ -81,17 +131,46 @@ func ToAdminOwnerRows(rows []map[string]any) []map[string]any {
 			continue
 		}
 		seen[code] = true
+
+		namaPenginput := enteredByNameMap[code]
+		if namaPenginput == "" {
+			namaPenginput = "-"
+		}
+		kodeBaris := stringVal(row["row_code"])
+		if kodeBaris == "" {
+			if id := int64Val(row["owner_id"]); id > 0 {
+				kodeBaris = fmt.Sprint(id)
+			} else {
+				kodeBaris = "-"
+			}
+		}
+		ownerName := stringVal(row["owner_name"])
+		ownerEmail := stringVal(row["owner_email"])
+		ownerPhone := stringVal(row["owner_phone"])
+		kel := stringVal(row["outlet_sub_district"])
+		if kel == "" {
+			kel = "-"
+		}
+		kec := stringVal(row["outlet_district"])
+		if kec == "" {
+			kec = "-"
+		}
+		if code == "" {
+			code = ""
+		}
+
 		out = append(out, map[string]any{
 			"date_of_work":        formatAdminDate(stringVal(row["owner_created_at"])),
-			"kode_baris":          row["row_code"],
-			"owner_code":          row["owner_code"],
-			"owner_name":          row["owner_name"],
-			"owner_email":         row["owner_email"],
-			"owner_phone":         row["owner_phone"],
+			"nama_penginput":      namaPenginput,
+			"kode_baris":          kodeBaris,
+			"owner_code":          code,
+			"owner_name":          ownerName,
+			"owner_email":         ownerEmail,
+			"owner_phone":         ownerPhone,
 			"create_date_project": formatAdminDate(stringVal(row["outlet_created_at"])),
 			"brand_name":          row["brand_name"],
-			"kelurahan":           row["outlet_sub_district"],
-			"kecamatan":           row["outlet_district"],
+			"kelurahan":           kel,
+			"kecamatan":           kec,
 			"kota":                row["outlet_city"],
 			"provinsi":            row["outlet_province"],
 			"alamat_lengkap":      row["outlet_address"],

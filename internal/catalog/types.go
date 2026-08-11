@@ -62,6 +62,7 @@ type Promotion struct {
 	CreatedAt        time.Time
 	UpdatedAt        time.Time
 	Benefits         []Benefit
+	PlanIDs          []int64
 }
 
 type Benefit struct {
@@ -124,6 +125,7 @@ type PromotionResponse struct {
 	EffectiveTo      string            `json:"effective_to,omitempty"`
 	Active           bool              `json:"active"`
 	Benefits         []BenefitResponse `json:"benefits,omitempty"`
+	PlanIDs          []int64           `json:"plan_ids,omitempty"`
 	CreatedAt        time.Time         `json:"created_at"`
 	UpdatedAt        time.Time         `json:"updated_at"`
 }
@@ -325,6 +327,7 @@ func NewPromotionResponse(item Promotion) PromotionResponse {
 		EffectiveTo:      formatNullDate(item.EffectiveTo),
 		Active:           item.Active,
 		Benefits:         benefits,
+		PlanIDs:          item.PlanIDs,
 		CreatedAt:        item.CreatedAt,
 		UpdatedAt:        item.UpdatedAt,
 	}

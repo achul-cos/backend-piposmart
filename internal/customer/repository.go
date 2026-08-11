@@ -388,14 +388,14 @@ func (r *Repository) ForceDeleteOwners(ctx context.Context, ids []int64) (int64,
 	return result.RowsAffected()
 }
 
-func (r *Repository) CreateOutlet(ctx context.Context, ownerID int64, req CreateOutletRequest, normalizedPhone string) (Outlet, error) {
+func (r *Repository) CreateOutlet(ctx context.Context, actor Actor, ownerID int64, req CreateOutletRequest, normalizedPhone string) (Outlet, error) {
 	if _, err := r.findOwnerByIDRaw(ctx, ownerID); err != nil {
 		return Outlet{}, err
 	}
-	return r.createOutlet(ctx, r.db, ownerID, req, normalizedPhone)
+	return r.createOutlet(ctx, r.db, actor, ownerID, req, normalizedPhone)
 }
 
-func (r *Repository) CreateOutlets(ctx context.Context, ownerID int64, requests []CreateOutletRequest, normalizedPhones []string) ([]Outlet, error) {
+func (r *Repository) CreateOutlets(ctx context.Context, actor Actor, ownerID int64, requests []CreateOutletRequest, normalizedPhones []string) ([]Outlet, error) {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
@@ -408,7 +408,7 @@ func (r *Repository) CreateOutlets(ctx context.Context, ownerID int64, requests 
 
 	outlets := make([]Outlet, 0, len(requests))
 	for index, req := range requests {
-		outlet, err := r.createOutlet(ctx, tx, ownerID, req, normalizedPhones[index])
+		outlet, err := r.createOutlet(ctx, tx, actor, ownerID, req, normalizedPhones[index])
 		if err != nil {
 			return nil, err
 		}
@@ -420,16 +420,17 @@ func (r *Repository) CreateOutlets(ctx context.Context, ownerID int64, requests 
 	return outlets, nil
 }
 
-func (r *Repository) createOutlet(ctx context.Context, q queryExecutor, ownerID int64, req CreateOutletRequest, normalizedPhone string) (Outlet, error) {
+func (r *Repository) createOutlet(ctx context.Context, q queryExecutor, actor Actor, ownerID int64, req CreateOutletRequest, normalizedPhone string) (Outlet, error) {
 	code := trim(req.Code)
 	if code == "" {
 		code = fmt.Sprintf("OTL-%d", time.Now().UnixNano()/1e6)
 	}
 	query := `
-		INSERT INTO outlets (owner_id, code, name, phone, province, city, district, sub_district, address, status`
+		INSERT INTO outlets (owner_id, code, row_code, name, phone, province, city, district, sub_district, address, status, entered_by_user_id`
 	args := []any{
 		ownerID,
 		code,
+		nullableString(req.RowCode),
 		trim(req.Name),
 		nullableString(normalizedPhone),
 		nullableString(req.Province),
@@ -437,8 +438,9 @@ func (r *Repository) createOutlet(ctx context.Context, q queryExecutor, ownerID 
 		nullableString(req.District),
 		nullableString(req.SubDistrict),
 		nullableString(req.Address),
+		actor.ID,
 	}
-	values := `) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE'`
+	values := `) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?`
 	if req.CreatedAt != nil {
 		query += `, created_at`
 		values += `, ?`
@@ -469,7 +471,7 @@ func (r *Repository) findOutletByID(ctx context.Context, q queryExecutor, ownerI
 		deletedClause = ""
 	}
 	outlet, err := scanOutlet(q.QueryRowContext(ctx, `
-		SELECT id, owner_id, code, name, phone, province, city, district, sub_district, address, status, created_at, updated_at
+		SELECT id, owner_id, code, name, phone, province, city, district, sub_district, address, status, entered_by_user_id, created_at, updated_at
 		FROM outlets
 		WHERE id = ? AND owner_id = ? `+deletedClause, outletID, ownerID))
 	if err == sql.ErrNoRows {
@@ -500,7 +502,7 @@ func (r *Repository) ListOutlets(ctx context.Context, actor Actor, ownerID int64
 		return nil, 0, err
 	}
 	query := `
-		SELECT id, owner_id, code, name, phone, province, city, district, sub_district, address, status, created_at, updated_at
+		SELECT id, owner_id, code, name, phone, province, city, district, sub_district, address, status, entered_by_user_id, created_at, updated_at
 		FROM outlets ot
 		WHERE ` + where + `
 		ORDER BY ` + orderBy
@@ -797,6 +799,7 @@ func scanOutlet(row scanner) (Outlet, error) {
 		&outlet.SubDistrict,
 		&outlet.Address,
 		&outlet.Status,
+		&outlet.EnteredByUserID,
 		&outlet.CreatedAt,
 		&outlet.UpdatedAt,
 	)
@@ -838,6 +841,8 @@ func scanOutletOverview(row scanner) (OutletOverview, error) {
 		&item.SubDistrict,
 		&item.Address,
 		&item.Status,
+		&item.EnteredByUserID,
+		&item.EnteredByName,
 		&item.SubscriptionCount,
 		&item.ActiveSubscriptionCount,
 		&item.LatestSubscriptionStatus,
@@ -1170,6 +1175,8 @@ func outletOverviewSelect() string {
 			ot.sub_district,
 			ot.address,
 			ot.status,
+			ot.entered_by_user_id,
+			u.name AS entered_by_name,
 			(
 				SELECT COUNT(*)
 				FROM subscriptions s
@@ -1204,7 +1211,8 @@ func outletOverviewSelect() string {
 			ot.created_at,
 			ot.updated_at
 		FROM outlets ot
-		LEFT JOIN owners o ON o.id = ot.owner_id`
+		LEFT JOIN owners o ON o.id = ot.owner_id
+		LEFT JOIN users u ON u.id = ot.entered_by_user_id`
 }
 
 // ownerOverviewSelect is the Owner-level analog of outletOverviewSelect: wallet balance and its
@@ -1440,9 +1448,9 @@ func (r *Repository) exportOwnerOutletRows(ctx context.Context, where string, ar
 		CASE WHEN COALESCE(o.name,'') LIKE '%#REF!%' OR COALESCE(o.name,'') LIKE '%#VALUE!%' THEN '' ELSE COALESCE(o.name, '') END AS owner_name,
 		COALESCE(o.email, '') AS owner_email,
 		CASE
-			WHEN COALESCE(o.phone,'') REGEXP '^62[0-9]'
-			THEN CONCAT('0', SUBSTRING(o.phone, 3))
-			ELSE COALESCE(o.phone, '')
+			WHEN COALESCE(NULLIF(o.phone,''), NULLIF(ot.phone,''), '') REGEXP '^62[0-9]'
+			THEN CONCAT('0', SUBSTRING(COALESCE(NULLIF(o.phone,''), NULLIF(ot.phone,''), ''), 3))
+			ELSE COALESCE(NULLIF(o.phone,''), NULLIF(ot.phone,''), '')
 		END AS owner_phone,
 		CASE WHEN COALESCE(o.brand_name,'') LIKE '%#REF!%' OR COALESCE(o.brand_name,'') LIKE '%#VALUE!%' THEN '' ELSE COALESCE(o.brand_name, '') END AS brand_name,
 		DATE_FORMAT(o.created_at, '%Y-%m-%dT%H:%i:%sZ') AS owner_created_at,
@@ -1451,15 +1459,15 @@ func (r *Repository) exportOwnerOutletRows(ctx context.Context, where string, ar
 		COALESCE(ot.code, '') AS outlet_code,
 		CASE WHEN COALESCE(ot.name,'') LIKE '%#REF!%' OR COALESCE(ot.name,'') LIKE '%#VALUE!%' THEN '' ELSE COALESCE(ot.name, '') END AS outlet_name,
 		CASE
-			WHEN COALESCE(ot.phone,'') REGEXP '^62[0-9]'
-			THEN CONCAT('0', SUBSTRING(ot.phone, 3))
-			ELSE COALESCE(ot.phone, '')
+			WHEN COALESCE(NULLIF(ot.phone,''), NULLIF(o.phone,''), '') REGEXP '^62[0-9]'
+			THEN CONCAT('0', SUBSTRING(COALESCE(NULLIF(ot.phone,''), NULLIF(o.phone,''), ''), 3))
+			ELSE COALESCE(NULLIF(ot.phone,''), NULLIF(o.phone,''), '')
 		END AS outlet_phone,
-		COALESCE(ot.city, o.city, '') AS outlet_city,
-		COALESCE(ot.province, o.province, '') AS outlet_province,
-		COALESCE(ot.district, o.district, '') AS outlet_district,
-		COALESCE(ot.sub_district, o.sub_district, '') AS outlet_sub_district,
-		COALESCE(ot.address, o.address, '') AS outlet_address,
+		COALESCE(NULLIF(ot.city, ''), NULLIF(o.city, ''), '') AS outlet_city,
+		COALESCE(NULLIF(ot.province, ''), NULLIF(o.province, ''), '') AS outlet_province,
+		COALESCE(NULLIF(ot.district, ''), NULLIF(o.district, ''), '') AS outlet_district,
+		COALESCE(NULLIF(ot.sub_district, ''), NULLIF(o.sub_district, ''), '') AS outlet_sub_district,
+		COALESCE(NULLIF(ot.address, ''), NULLIF(o.address, ''), '') AS outlet_address,
 		COALESCE(DATE_FORMAT(ot.created_at, '%Y-%m-%dT%H:%i:%sZ'), '') AS outlet_created_at,
 		(SELECT COUNT(*) FROM outlets ot2 WHERE ot2.owner_id = o.id AND ot2.deleted_at IS NULL) AS outlet_count,
 		COALESCE((SELECT wa.balance FROM wallet_accounts wa WHERE wa.owner_id = o.id AND wa.deleted_at IS NULL ORDER BY wa.id LIMIT 1), 0) AS owner_balance

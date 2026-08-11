@@ -56,9 +56,10 @@ type Outlet struct {
 	District    sql.NullString
 	SubDistrict sql.NullString
 	Address     sql.NullString
-	Status      string
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	Status             string
+	EnteredByUserID    sql.NullInt64
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
 }
 
 type OutletOverview struct {
@@ -79,6 +80,8 @@ type OutletOverview struct {
 	SubDistrict              sql.NullString
 	Address                  sql.NullString
 	Status                   string
+	EnteredByUserID          sql.NullInt64
+	EnteredByName            sql.NullString
 	SubscriptionCount        int64
 	ActiveSubscriptionCount  int64
 	LatestSubscriptionStatus sql.NullString
@@ -173,9 +176,11 @@ type OutletResponse struct {
 	District    string    `json:"district,omitempty"`
 	SubDistrict string    `json:"sub_district,omitempty"`
 	Address     string    `json:"address,omitempty"`
-	Status      string    `json:"status"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	Status          string    `json:"status"`
+	EnteredByUserID *int64    `json:"entered_by_user_id,omitempty"`
+	EnteredByName   string    `json:"entered_by_name,omitempty"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
 }
 
 type OwnerBriefResponse struct {
@@ -220,6 +225,8 @@ type OutletOverviewResponse struct {
 	SubDistrict         string                      `json:"sub_district,omitempty"`
 	Address             string                      `json:"address,omitempty"`
 	Status              string                      `json:"status"`
+	EnteredByUserID     *int64                      `json:"entered_by_user_id,omitempty"`
+	EnteredByName       string                      `json:"entered_by_name,omitempty"`
 	SubscriptionSummary SubscriptionSummaryResponse `json:"subscription_summary"`
 	CreatedAt           time.Time                   `json:"created_at"`
 	UpdatedAt           time.Time                   `json:"updated_at"`
@@ -237,6 +244,8 @@ type OutletDetailResponse struct {
 	SubDistrict         string                      `json:"sub_district,omitempty"`
 	Address             string                      `json:"address,omitempty"`
 	Status              string                      `json:"status"`
+	EnteredByUserID     *int64                      `json:"entered_by_user_id,omitempty"`
+	EnteredByName       string                      `json:"entered_by_name,omitempty"`
 	SubscriptionSummary SubscriptionSummaryResponse `json:"subscription_summary"`
 	CreatedAt           time.Time                   `json:"created_at"`
 	UpdatedAt           time.Time                   `json:"updated_at"`
@@ -319,6 +328,7 @@ type UpdateOwnerRequest struct {
 
 type CreateOutletRequest struct {
 	Code        string     `json:"code"`
+	RowCode     string     `json:"row_code"`
 	Name        string     `json:"name" binding:"required"`
 	Phone       string     `json:"phone"`
 	Province    string     `json:"province"`
@@ -331,6 +341,7 @@ type CreateOutletRequest struct {
 
 type UpdateOutletRequest struct {
 	Code        *string `json:"code"`
+	RowCode     *string `json:"row_code"`
 	Name        *string `json:"name"`
 	Phone       *string `json:"phone"`
 	Province    *string `json:"province"`
@@ -379,13 +390,15 @@ type BulkOutletUpdateRequest struct {
 }
 
 type BulkOutletUpdateItem struct {
-	ID       int64   `json:"id" binding:"required,min=1"`
-	Code     *string `json:"code"`
-	Name     *string `json:"name"`
-	Phone    *string `json:"phone"`
-	Province *string `json:"province"`
-	City     *string `json:"city"`
-	Address  *string `json:"address"`
+	ID          int64   `json:"id" binding:"required,min=1"`
+	Code        *string `json:"code,omitempty"`
+	Name        *string `json:"name,omitempty"`
+	Phone       *string `json:"phone,omitempty"`
+	Province    *string `json:"province,omitempty"`
+	City        *string `json:"city,omitempty"`
+	District    *string `json:"district,omitempty"`
+	SubDistrict *string `json:"sub_district,omitempty"`
+	Address     *string `json:"address,omitempty"`
 }
 
 type OutletUpdateInput struct {
@@ -484,36 +497,49 @@ func NewOutletResponse(outlet Outlet) OutletResponse {
 		value := outlet.OwnerID.Int64
 		ownerID = &value
 	}
+	var enteredByUserID *int64
+	if outlet.EnteredByUserID.Valid {
+		value := outlet.EnteredByUserID.Int64
+		enteredByUserID = &value
+	}
 	return OutletResponse{
-		ID:          outlet.ID,
-		OwnerID:     ownerID,
-		Code:        outlet.Code,
-		Name:        outlet.Name,
-		Phone:       outlet.Phone.String,
-		Province:    outlet.Province.String,
-		City:        outlet.City.String,
-		District:    outlet.District.String,
-		SubDistrict: outlet.SubDistrict.String,
-		Address:     outlet.Address.String,
-		Status:      outlet.Status,
-		CreatedAt:   outlet.CreatedAt,
-		UpdatedAt:   outlet.UpdatedAt,
+		ID:              outlet.ID,
+		OwnerID:         ownerID,
+		Code:            outlet.Code,
+		Name:            outlet.Name,
+		Phone:           outlet.Phone.String,
+		Province:        outlet.Province.String,
+		City:            outlet.City.String,
+		District:        outlet.District.String,
+		SubDistrict:     outlet.SubDistrict.String,
+		Address:         outlet.Address.String,
+		Status:          outlet.Status,
+		EnteredByUserID: enteredByUserID,
+		CreatedAt:       outlet.CreatedAt,
+		UpdatedAt:       outlet.UpdatedAt,
 	}
 }
 
 func NewOutletOverviewResponse(item OutletOverview) OutletOverviewResponse {
+	var enteredByUserID *int64
+	if item.EnteredByUserID.Valid {
+		value := item.EnteredByUserID.Int64
+		enteredByUserID = &value
+	}
 	return OutletOverviewResponse{
-		ID:          item.ID,
-		Owner:       newOwnerBriefResponse(item),
-		Code:        item.Code,
-		Name:        item.Name,
-		Phone:       item.Phone.String,
-		Province:    item.Province.String,
-		City:        item.City.String,
-		District:    item.District.String,
-		SubDistrict: item.SubDistrict.String,
-		Address:     item.Address.String,
-		Status:      item.Status,
+		ID:              item.ID,
+		Owner:           newOwnerBriefResponse(item),
+		Code:            item.Code,
+		Name:            item.Name,
+		Phone:           item.Phone.String,
+		Province:        item.Province.String,
+		City:            item.City.String,
+		District:        item.District.String,
+		SubDistrict:     item.SubDistrict.String,
+		Address:         item.Address.String,
+		Status:          item.Status,
+		EnteredByUserID: enteredByUserID,
+		EnteredByName:   item.EnteredByName.String,
 		SubscriptionSummary: SubscriptionSummaryResponse{
 			TotalSubscriptions:       item.SubscriptionCount,
 			ActiveSubscriptions:      item.ActiveSubscriptionCount,
@@ -540,6 +566,8 @@ func NewOutletDetailResponse(item OutletOverview) OutletDetailResponse {
 		SubDistrict:         overview.SubDistrict,
 		Address:             overview.Address,
 		Status:              overview.Status,
+		EnteredByUserID:     overview.EnteredByUserID,
+		EnteredByName:       overview.EnteredByName,
 		SubscriptionSummary: overview.SubscriptionSummary,
 		CreatedAt:           overview.CreatedAt,
 		UpdatedAt:           overview.UpdatedAt,

@@ -191,25 +191,29 @@ func (f *Factory) BuildOwner(index int) Owner {
 	city := cityOptions[f.rng.Intn(len(cityOptions))]
 
 	return Owner{
-		Code:      fmt.Sprintf("OWN-%05d", index),
-		Name:      fmt.Sprintf("Owner %03d", index),
-		Phone:     fmt.Sprintf("62813%08d", 200000+index),
-		Email:     fmt.Sprintf("owner%03d@example.test", index),
-		BrandName: fmt.Sprintf("Laundry Cerah %03d", index),
-		Province:  province,
-		City:      city,
-		Address:   fmt.Sprintf("Jl. Demo CRM No. %d, %s", index, city),
+		Code:        fmt.Sprintf("OWN-%05d", index),
+		Name:        fmt.Sprintf("Owner %03d", index),
+		Phone:       fmt.Sprintf("62813%08d", 200000+index),
+		Email:       fmt.Sprintf("owner%03d@example.test", index),
+		BrandName:   fmt.Sprintf("Laundry Cerah %03d", index),
+		Province:    province,
+		City:        city,
+		District:    fmt.Sprintf("Kecamatan Demo %02d", index),
+		SubDistrict: fmt.Sprintf("Kelurahan Demo %02d", index),
+		Address:     fmt.Sprintf("Jl. Demo CRM No. %d, %s", index, city),
 	}
 }
 
 func (f *Factory) BuildOutlet(ownerCode string, index int, owner Owner) Outlet {
 	return Outlet{
-		Code:     fmt.Sprintf("%s-OUT-%02d", ownerCode, index),
-		Name:     fmt.Sprintf("%s Outlet %02d", owner.BrandName, index),
-		Phone:    fmt.Sprintf("62821%08d", 300000+index),
-		Province: owner.Province,
-		City:     owner.City,
-		Address:  fmt.Sprintf("Jl. Outlet Demo No. %d, %s", index, owner.City),
+		Code:        fmt.Sprintf("%s-OUT-%02d", ownerCode, index),
+		Name:        fmt.Sprintf("%s Outlet %02d", owner.BrandName, index),
+		Phone:       fmt.Sprintf("62821%08d", 300000+index),
+		Province:    owner.Province,
+		City:        owner.City,
+		District:    owner.District,
+		SubDistrict: owner.SubDistrict,
+		Address:     fmt.Sprintf("Jl. Outlet Demo No. %d, %s", index, owner.City),
 	}
 }
 

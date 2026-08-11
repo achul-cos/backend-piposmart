@@ -5,12 +5,12 @@ UPDATE owners
 SET
     sub_district = CASE
         WHEN COALESCE(sub_district, '') = '' AND address LIKE '%, Kel. %'
-            THEN TRIM(SUBSTRING_INDEX(SUBSTRING_INDEX(address, ', Kel. ', -1), ', Kec. ', 1))
+            THEN LEFT(TRIM(SUBSTRING_INDEX(SUBSTRING_INDEX(address, ', Kel. ', -1), ', Kec. ', 1)), 50)
         ELSE sub_district
     END,
     district = CASE
         WHEN COALESCE(district, '') = '' AND address LIKE '%, Kec. %'
-            THEN TRIM(SUBSTRING_INDEX(address, ', Kec. ', -1))
+            THEN LEFT(TRIM(SUBSTRING_INDEX(address, ', Kec. ', -1)), 50)
         ELSE district
     END,
     address = CASE
@@ -29,12 +29,12 @@ UPDATE outlets
 SET
     sub_district = CASE
         WHEN COALESCE(sub_district, '') = '' AND address LIKE '%, Kel. %'
-            THEN TRIM(SUBSTRING_INDEX(SUBSTRING_INDEX(address, ', Kel. ', -1), ', Kec. ', 1))
+            THEN LEFT(TRIM(SUBSTRING_INDEX(SUBSTRING_INDEX(address, ', Kel. ', -1), ', Kec. ', 1)), 50)
         ELSE sub_district
     END,
     district = CASE
         WHEN COALESCE(district, '') = '' AND address LIKE '%, Kec. %'
-            THEN TRIM(SUBSTRING_INDEX(address, ', Kec. ', -1))
+            THEN LEFT(TRIM(SUBSTRING_INDEX(address, ', Kec. ', -1)), 50)
         ELSE district
     END,
     address = CASE

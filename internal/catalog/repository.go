@@ -303,6 +303,9 @@ func (r *Repository) ListPromotions(ctx context.Context, params ListParams) ([]P
 	if err := r.attachBenefits(ctx, items); err != nil {
 		return nil, 0, err
 	}
+	if err := r.attachPlanIDs(ctx, items); err != nil {
+		return nil, 0, err
+	}
 	return items, total, nil
 }
 
@@ -362,6 +365,9 @@ func (r *Repository) FindPromotionByID(ctx context.Context, id int64) (Promotion
 	}
 	items := []Promotion{item}
 	if err := r.attachBenefits(ctx, items); err != nil {
+		return Promotion{}, err
+	}
+	if err := r.attachPlanIDs(ctx, items); err != nil {
 		return Promotion{}, err
 	}
 	return items[0], nil
@@ -608,6 +614,35 @@ func (r *Repository) attachBenefits(ctx context.Context, promotions []Promotion)
 			return err
 		}
 		promotions[index[benefit.PromotionID]].Benefits = append(promotions[index[benefit.PromotionID]].Benefits, benefit)
+	}
+	return rows.Err()
+}
+
+func (r *Repository) attachPlanIDs(ctx context.Context, promotions []Promotion) error {
+	if len(promotions) == 0 {
+		return nil
+	}
+	ids := make([]int64, 0, len(promotions))
+	index := map[int64]int{}
+	for i := range promotions {
+		ids = append(ids, promotions[i].ID)
+		index[promotions[i].ID] = i
+		// Initialize slice to avoid null in json response
+		promotions[i].PlanIDs = []int64{}
+	}
+	
+	// placeholders function is already helper in repository
+	rows, err := r.db.QueryContext(ctx, "SELECT promotion_id, plan_id FROM promotion_plan_eligibilities WHERE promotion_id IN ("+placeholders(len(ids))+")", int64SliceToAny(ids)...)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var promoID, planID int64
+		if err := rows.Scan(&promoID, &planID); err != nil {
+			return err
+		}
+		promotions[index[promoID]].PlanIDs = append(promotions[index[promoID]].PlanIDs, planID)
 	}
 	return rows.Err()
 }

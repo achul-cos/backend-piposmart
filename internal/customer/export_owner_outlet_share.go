@@ -182,7 +182,7 @@ func (r *Repository) loadAdminOwnerExportSnapshots(ctx context.Context, ownerIDs
 				COALESCE(ci.note, '') AS note
 			FROM customer_interactions ci
 			WHERE ci.deleted_at IS NULL
-			  AND ci.type = 'NOTE'
+			  AND ci.interaction_type = 'NOTE'
 			  AND ci.note LIKE 'Share ke %'
 			  AND ci.owner_id IN (`+inClause+`)
 		) ranked

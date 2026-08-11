@@ -275,11 +275,20 @@ func (s *Service) CreateOutlet(ctx context.Context, actor Actor, ownerID int64, 
 	if !actorCanManageOwners(actor) {
 		return OutletResponse{}, ErrForbidden
 	}
-	phone, err := NormalizePhone(req.Phone)
+	
+	phone := req.Phone
+	if phone == "" {
+		owner, err := s.repo.FindOwnerByID(ctx, actor, ownerID)
+		if err == nil && owner.Phone.Valid {
+			phone = owner.Phone.String
+		}
+	}
+	
+	normalizedPhone, err := NormalizePhone(phone)
 	if err != nil {
 		return OutletResponse{}, err
 	}
-	outlet, err := s.repo.CreateOutlet(ctx, ownerID, req, phone)
+	outlet, err := s.repo.CreateOutlet(ctx, actor, ownerID, req, normalizedPhone)
 	if err != nil {
 		return OutletResponse{}, err
 	}
@@ -293,15 +302,26 @@ func (s *Service) BulkCreateOutlets(ctx context.Context, actor Actor, ownerID in
 	if len(req.Items) == 0 {
 		return OutletBulkResponse{}, ErrEmptyBulk
 	}
+	
+	var fallbackPhone string
+	owner, err := s.repo.FindOwnerByID(ctx, actor, ownerID)
+	if err == nil && owner.Phone.Valid {
+		fallbackPhone = owner.Phone.String
+	}
+	
 	phones := make([]string, len(req.Items))
 	for index, item := range req.Items {
-		phone, err := NormalizePhone(item.Phone)
+		phone := item.Phone
+		if phone == "" {
+			phone = fallbackPhone
+		}
+		normalizedPhone, err := NormalizePhone(phone)
 		if err != nil {
 			return OutletBulkResponse{}, err
 		}
-		phones[index] = phone
+		phones[index] = normalizedPhone
 	}
-	outlets, err := s.repo.CreateOutlets(ctx, ownerID, req.Items, phones)
+	outlets, err := s.repo.CreateOutlets(ctx, actor, ownerID, req.Items, phones)
 	if err != nil {
 		return OutletBulkResponse{}, err
 	}
@@ -339,15 +359,22 @@ func (s *Service) UpdateOutlet(ctx context.Context, actor Actor, ownerID, outlet
 	if !actorCanManageOwners(actor) {
 		return OutletResponse{}, ErrForbidden
 	}
-	var phone *string
+	var normalizedPhone *string
 	if req.Phone != nil {
-		normalized, err := NormalizePhone(*req.Phone)
+		phone := *req.Phone
+		if phone == "" {
+			owner, err := s.repo.FindOwnerByID(ctx, actor, ownerID)
+			if err == nil && owner.Phone.Valid {
+				phone = owner.Phone.String
+			}
+		}
+		normalized, err := NormalizePhone(phone)
 		if err != nil {
 			return OutletResponse{}, err
 		}
-		phone = &normalized
+		normalizedPhone = &normalized
 	}
-	outlet, err := s.repo.UpdateOutlet(ctx, ownerID, outletID, req, phone)
+	outlet, err := s.repo.UpdateOutlet(ctx, ownerID, outletID, req, normalizedPhone)
 	if err != nil {
 		return OutletResponse{}, err
 	}
@@ -361,27 +388,40 @@ func (s *Service) BulkUpdateOutlets(ctx context.Context, actor Actor, ownerID in
 	if len(req.Items) == 0 {
 		return OutletBulkResponse{}, ErrEmptyBulk
 	}
+	
+	var fallbackPhone string
+	owner, err := s.repo.FindOwnerByID(ctx, actor, ownerID)
+	if err == nil && owner.Phone.Valid {
+		fallbackPhone = owner.Phone.String
+	}
+	
 	updates := make([]OutletUpdateInput, 0, len(req.Items))
 	for _, item := range req.Items {
-		var phone *string
+		var normalizedPhone *string
 		if item.Phone != nil {
-			normalized, err := NormalizePhone(*item.Phone)
+			phone := *item.Phone
+			if phone == "" {
+				phone = fallbackPhone
+			}
+			normalized, err := NormalizePhone(phone)
 			if err != nil {
 				return OutletBulkResponse{}, err
 			}
-			phone = &normalized
+			normalizedPhone = &normalized
 		}
 		updates = append(updates, OutletUpdateInput{
 			ID: item.ID,
 			Request: UpdateOutletRequest{
-				Code:     item.Code,
-				Name:     item.Name,
-				Phone:    item.Phone,
-				Province: item.Province,
-				City:     item.City,
-				Address:  item.Address,
+				Code:        item.Code,
+				Name:        item.Name,
+				Phone:       item.Phone,
+				Province:    item.Province,
+				City:        item.City,
+				District:    item.District,
+				SubDistrict: item.SubDistrict,
+				Address:     item.Address,
 			},
-			NormalizedPhone: phone,
+			NormalizedPhone: normalizedPhone,
 		})
 	}
 	outlets, err := s.repo.UpdateOutlets(ctx, ownerID, updates)
