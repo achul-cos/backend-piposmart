@@ -77,7 +77,17 @@ func seedDemoLarge(ctx context.Context, tx *sql.Tx, options Options) error {
 	}
 
 	timeline := generateGrowthTimeline(options.From, options.To, ownerCount, options.Variation, rng)
-	progress := newProgressBar(len(timeline))
+	progress := newSeedProgressPrinter(2, []string{"owners", "outlets", "leads", "interactions", "trainings", "topups", "debits", "closings", "orders"})
+	progress.StartStage("owner pipeline", "owners", len(timeline))
+	progress.SetMetric("owners", 0)
+	progress.SetMetric("outlets", 0)
+	progress.SetMetric("leads", 0)
+	progress.SetMetric("interactions", 0)
+	progress.SetMetric("trainings", 0)
+	progress.SetMetric("topups", 0)
+	progress.SetMetric("debits", 0)
+	progress.SetMetric("closings", 0)
+	progress.SetMetric("orders", 0)
 
 	for idx, createdAt := range timeline {
 		ownerIndex := idx + 1
@@ -86,6 +96,7 @@ func seedDemoLarge(ctx context.Context, tx *sql.Tx, options Options) error {
 		if err != nil {
 			return fmt.Errorf("create owner %d: %w", ownerIndex, err)
 		}
+		progress.AddMetric("owners", 1)
 
 		outletCount := largeSeedOutletCount(rng)
 		var firstOutletID int64
@@ -98,6 +109,7 @@ func seedDemoLarge(ctx context.Context, tx *sql.Tx, options Options) error {
 			if outletIndex == 1 {
 				firstOutletID = outletID
 			}
+			progress.AddMetric("outlets", 1)
 		}
 
 		salesEmail := salesEmails[rng.Intn(len(salesEmails))]
@@ -109,6 +121,7 @@ func seedDemoLarge(ctx context.Context, tx *sql.Tx, options Options) error {
 		if err != nil {
 			return fmt.Errorf("create lead owner=%d: %w", ownerIndex, err)
 		}
+		progress.AddMetric("leads", 1)
 
 		willClose := rng.Intn(100) < closingRatePercent
 		interactionCount := interactionsPerLeadMin + rng.Intn(interactionsPerLeadSpan)
@@ -122,6 +135,7 @@ func seedDemoLarge(ctx context.Context, tx *sql.Tx, options Options) error {
 			if _, err := fake.CreateInteraction(ctx, tx, leadID, interaction); err != nil {
 				return fmt.Errorf("create interaction owner=%d lead=%d idx=%d: %w", ownerIndex, leadID, interactionIndex, err)
 			}
+			progress.AddMetric("interactions", 1)
 
 			if !trainingCreated && remarkScore == 2 && rng.Intn(100) < 35 {
 				training := fake.BuildTrainingReport(interactionIndex, rng.Intn(100) < 55)
@@ -134,6 +148,7 @@ func seedDemoLarge(ctx context.Context, tx *sql.Tx, options Options) error {
 					return fmt.Errorf("create training owner=%d lead=%d: %w", ownerIndex, leadID, err)
 				}
 				trainingCreated = true
+				progress.AddMetric("trainings", 1)
 			}
 		}
 
@@ -157,6 +172,7 @@ func seedDemoLarge(ctx context.Context, tx *sql.Tx, options Options) error {
 			if _, err := fake.CreateWalletTopup(ctx, tx, ownerID, topup); err != nil {
 				return fmt.Errorf("create standalone topup owner=%d: %w", ownerIndex, err)
 			}
+			progress.AddMetric("topups", 1)
 			if topup.Status == "ACCEPTED" && rng.Intn(100) < 20 {
 				debit := fake.BuildWalletDebit(ownerIndex, largeSeedStandaloneDebitAmount(rng))
 				debit.OccurredAt = clampToAsOf(topup.PaidAt.AddDate(0, 0, 2+rng.Intn(12)), options.AsOf)
@@ -166,6 +182,7 @@ func seedDemoLarge(ctx context.Context, tx *sql.Tx, options Options) error {
 				if _, err := fake.CreateWalletDebit(ctx, tx, ownerID, debit); err != nil {
 					return fmt.Errorf("create standalone debit owner=%d: %w", ownerIndex, err)
 				}
+				progress.AddMetric("debits", 1)
 			}
 		}
 
@@ -186,6 +203,7 @@ func seedDemoLarge(ctx context.Context, tx *sql.Tx, options Options) error {
 			if err != nil {
 				return fmt.Errorf("create closing owner=%d lead=%d: %w", ownerIndex, leadID, err)
 			}
+			progress.AddMetric("closings", 1)
 
 			if scenario.Status != "REJECTED" && rng.Intn(100) < 72 {
 				order := fake.BuildSubscriptionOrder(ownerIndex, scenario.PlanCode, scenario.PromotionCode, sql.NullInt64{Int64: closingID, Valid: true})
@@ -207,10 +225,12 @@ func seedDemoLarge(ctx context.Context, tx *sql.Tx, options Options) error {
 				if _, err := fake.CreateWalletTopup(ctx, tx, ownerID, topup); err != nil {
 					return fmt.Errorf("create linked topup owner=%d: %w", ownerIndex, err)
 				}
+				progress.AddMetric("topups", 1)
 
 				if _, err := fake.CreateSubscriptionOrder(ctx, tx, ownerID, order); err != nil {
 					return fmt.Errorf("create linked subscription owner=%d: %w", ownerIndex, err)
 				}
+				progress.AddMetric("orders", 1)
 			}
 		} else if rng.Intn(100) < 6 {
 			topupPaidAt := clampToAsOf(leadCreatedAt.AddDate(0, 0, 14+rng.Intn(30)).Add(9*time.Hour), options.AsOf)
@@ -233,19 +253,26 @@ func seedDemoLarge(ctx context.Context, tx *sql.Tx, options Options) error {
 			if _, err := fake.CreateWalletTopup(ctx, tx, ownerID, topup); err != nil {
 				return fmt.Errorf("create hanging topup owner=%d: %w", ownerIndex, err)
 			}
+			progress.AddMetric("topups", 1)
 
 			if _, err := fake.CreateSubscriptionOrder(ctx, tx, ownerID, order); err != nil {
 				return fmt.Errorf("create hanging order owner=%d: %w", ownerIndex, err)
 			}
+			progress.AddMetric("orders", 1)
 		}
 
-		progress.update(ownerIndex)
+		progress.Update(ownerIndex)
 	}
-	progress.finish()
+	progress.FinishStage()
+	progress.StartStage("partner demo", "steps", 1)
+	progress.Update(0)
 
 	if err := seedPartnersDemo(ctx, tx, fake); err != nil {
 		return err
 	}
+	progress.Update(1)
+	progress.FinishStage()
+	progress.Close()
 
 	return nil
 }

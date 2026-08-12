@@ -167,7 +167,11 @@ func seedDemoReal(ctx context.Context, tx *sql.Tx, options Options) error {
 	_ = rng
 
 	timeline := generateGrowthTimeline(options.From, options.To, targetCount, options.Variation, rng)
-	progress := newProgressBar(targetCount)
+	progress := newSeedProgressPrinter(3, []string{"owners", "outlets", "leads", "topups", "transfers", "orders", "mitra", "assignments"})
+	progress.StartStage("owner/outlet/lead", "rows", targetCount)
+	progress.SetMetric("owners", 0)
+	progress.SetMetric("outlets", 0)
+	progress.SetMetric("leads", 0)
 
 	seenOwners := make(map[string]int64)
 	seenOutlets := make(map[string]bool)
@@ -263,6 +267,7 @@ func seedDemoReal(ctx context.Context, tx *sql.Tx, options Options) error {
 			}
 			ownerID = newOwnerID
 			seenOwners[ownerCode] = ownerID
+			progress.AddMetric("owners", 1)
 		}
 
 		outletName := row.OutletName
@@ -275,7 +280,7 @@ func seedDemoReal(ctx context.Context, tx *sql.Tx, options Options) error {
 
 		outletKey := ownerCode + "|" + strings.ToLower(strings.TrimSpace(outletName))
 		if seenOutlets[outletKey] {
-			progress.update(ownerIndex)
+			progress.Update(ownerIndex)
 			continue
 		}
 		seenOutlets[outletKey] = true
@@ -310,6 +315,7 @@ func seedDemoReal(ctx context.Context, tx *sql.Tx, options Options) error {
 		if err != nil {
 			return fmt.Errorf("create real outlet owner=%d: %w", ownerIndex, err)
 		}
+		progress.AddMetric("outlets", 1)
 		// Ensure outlet created_at is historical
 		_, _ = tx.ExecContext(ctx, "UPDATE outlets SET created_at = ? WHERE id = ?", createdAt, outletID)
 
@@ -320,12 +326,13 @@ func seedDemoReal(ctx context.Context, tx *sql.Tx, options Options) error {
 			if err := seedRealLeadForOwner(ctx, tx, fake, ownerID, outletID, ownerCode, row, createdAt, enteredBy, supervisorID, salesEmailByKey, options.AsOf); err != nil {
 				return fmt.Errorf("create real lead owner=%d: %w", ownerIndex, err)
 			}
+			progress.AddMetric("leads", 1)
 		}
 
-		progress.update(ownerIndex)
+		progress.Update(ownerIndex)
 	}
 
-	progress.finish()
+	progress.FinishStage()
 
 	// 4. Chain subscription/closing data from the "New & Subscribe" archives onto the owner→lead
 	// data just seeded above (needs the leads created in the loop, so runs after it). Some archive
@@ -333,12 +340,43 @@ func seedDemoReal(ctx context.Context, tx *sql.Tx, options Options) error {
 	// file at all — those get created on the fly, assigned to the "Tanpa PIC" fallback sales
 	// account (same placeholder identity used elsewhere in this seeder for un-attributed leads).
 	fallbackSalesEmail := salesEmailByKey[salesIdentityKey(noPICIdentity)]
-	if err := SeedSubscriptionsFromExcel(ctx, tx, fake, adminID, fallbackSalesEmail); err != nil {
+	progress.StartStage("subscription/topup/transfer", "rows", 0)
+	progress.SetMetric("owners", 0)
+	progress.SetMetric("outlets", 0)
+	progress.SetMetric("leads", 0)
+	progress.SetMetric("topups", 0)
+	progress.SetMetric("transfers", 0)
+	progress.SetMetric("orders", 0)
+	if err := SeedSubscriptionsFromExcel(ctx, tx, fake, adminID, fallbackSalesEmail, func(current, total int, stats subscriptionSeedStats) {
+		if progress.total != total {
+			progress.total = total
+		}
+		progress.SetMetric("owners", stats.NewOwners)
+		progress.SetMetric("outlets", stats.NewOutlets)
+		progress.SetMetric("leads", stats.NewLeads)
+		progress.SetMetric("topups", stats.Topups)
+		progress.SetMetric("transfers", stats.Transfers)
+		progress.SetMetric("orders", stats.Orders)
+		progress.Update(current)
+	}); err != nil {
 		return fmt.Errorf("seed subscriptions from excel: %w", err)
 	}
-	if err := SeedMitraFromExcel(ctx, tx, adminID, nil); err != nil {
+	progress.FinishStage()
+	progress.StartStage("mitra", "rows", 0)
+	progress.SetMetric("mitra", 0)
+	progress.SetMetric("assignments", 0)
+	if err := SeedMitraFromExcel(ctx, tx, adminID, nil, func(current, total int, stats mitraSeedStats) {
+		if progress.total != total {
+			progress.total = total
+		}
+		progress.SetMetric("mitra", stats.Partners)
+		progress.SetMetric("assignments", stats.Assignments)
+		progress.Update(current)
+	}); err != nil {
 		return fmt.Errorf("seed mitra from excel: %w", err)
 	}
+	progress.FinishStage()
+	progress.Close()
 
 	return nil
 }

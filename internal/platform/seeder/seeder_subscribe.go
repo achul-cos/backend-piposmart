@@ -435,6 +435,14 @@ func loadOwnerPhoneIndex(ctx context.Context, tx *sql.Tx) (map[string]int64, err
 // in the database. Only when neither matches does it create a brand-new owner+outlet (and, for a
 // brand-new owner, a minimal customer_leads row under the "Tanpa PIC" fallback sales identity, so
 // the closing/order chain below has a lead to attach to instead of landing as a HANGING_ORDER).
+type ownerOutletResolution struct {
+	OwnerID   int64
+	OutletID  int64
+	NewOwner  bool
+	NewOutlet bool
+	NewLead   bool
+}
+
 func resolveOwnerAndOutlet(
 	ctx context.Context,
 	tx *sql.Tx,
@@ -444,29 +452,28 @@ func resolveOwnerAndOutlet(
 	fallbackSalesEmail string,
 	createdAt time.Time,
 	rowIndex int,
-) (ownerID int64, err error) {
+) (result ownerOutletResolution, err error) {
 	code := strings.TrimSpace(row.OwnerCode)
 	phoneKey := normalizePhoneForMatch(row.OwnerPhone)
 
 	var ownerFound bool
 	if code != "" {
-		lookupErr := tx.QueryRowContext(ctx, "SELECT id FROM owners WHERE code = ? AND deleted_at IS NULL LIMIT 1", code).Scan(&ownerID)
+		lookupErr := tx.QueryRowContext(ctx, "SELECT id FROM owners WHERE code = ? AND deleted_at IS NULL LIMIT 1", code).Scan(&result.OwnerID)
 		if lookupErr == nil {
 			ownerFound = true
 		} else if lookupErr != sql.ErrNoRows {
-			return 0, lookupErr
+			return result, lookupErr
 		}
 	}
 	if !ownerFound && len(phoneKey) >= minMatchablePhoneDigits {
 		if id, ok := ownerPhoneIndex[phoneKey]; ok {
-			ownerID = id
+			result.OwnerID = id
 			ownerFound = true
 		}
 	}
 
-	isNewOwner := false
 	if !ownerFound {
-		isNewOwner = true
+		result.NewOwner = true
 		ownerName := strings.TrimSpace(row.OwnerName)
 		if ownerName == "" {
 			ownerName = "-"
@@ -494,11 +501,11 @@ func resolveOwnerAndOutlet(
 			CreatedAt: createdAt,
 		})
 		if createErr != nil {
-			return 0, fmt.Errorf("create owner from new & subscribe archive: %w", createErr)
+			return result, fmt.Errorf("create owner from new & subscribe archive: %w", createErr)
 		}
-		ownerID = newOwnerID
+		result.OwnerID = newOwnerID
 		if len(phoneKey) >= minMatchablePhoneDigits {
-			ownerPhoneIndex[phoneKey] = ownerID
+			ownerPhoneIndex[phoneKey] = result.OwnerID
 		}
 	}
 
@@ -511,19 +518,20 @@ func resolveOwnerAndOutlet(
 	var outletFound bool
 	lookupErr := tx.QueryRowContext(ctx,
 		"SELECT id FROM outlets WHERE owner_id = ? AND LOWER(name) = LOWER(?) AND deleted_at IS NULL LIMIT 1",
-		ownerID, outletName).Scan(&outletID)
+		result.OwnerID, outletName).Scan(&outletID)
 	if lookupErr == nil {
 		outletFound = true
 	} else if lookupErr != sql.ErrNoRows {
-		return 0, lookupErr
+		return result, lookupErr
 	}
 	if !outletFound {
+		result.NewOutlet = true
 		var outletCount int
-		if err := tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM outlets WHERE owner_id = ?", ownerID).Scan(&outletCount); err != nil {
-			return 0, err
+		if err := tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM outlets WHERE owner_id = ?", result.OwnerID).Scan(&outletCount); err != nil {
+			return result, err
 		}
-		outletCode := fmt.Sprintf("OUT-NS-%d-%02d", ownerID, outletCount+1)
-		newOutletID, createErr := fake.CreateOutlet(ctx, tx, ownerID, factory.Outlet{
+		outletCode := fmt.Sprintf("OUT-NS-%d-%02d", result.OwnerID, outletCount+1)
+		newOutletID, createErr := fake.CreateOutlet(ctx, tx, result.OwnerID, factory.Outlet{
 			Code:     outletCode,
 			Name:     outletName,
 			Phone:    strings.TrimSpace(row.OwnerPhone),
@@ -531,17 +539,19 @@ func resolveOwnerAndOutlet(
 			City:     row.City,
 		})
 		if createErr != nil {
-			return 0, fmt.Errorf("create outlet from new & subscribe archive owner=%d: %w", ownerID, createErr)
+			return result, fmt.Errorf("create outlet from new & subscribe archive owner=%d: %w", result.OwnerID, createErr)
 		}
 		outletID = newOutletID
 		if _, err := tx.ExecContext(ctx, "UPDATE outlets SET created_at = ? WHERE id = ?", createdAt, outletID); err != nil {
-			return 0, err
+			return result, err
 		}
 	}
+	result.OutletID = outletID
 
-	if isNewOwner {
+	if result.NewOwner {
+		result.NewLead = true
 		lead := factory.Lead{
-			Code:             fmt.Sprintf("LEAD-NS-%d", ownerID),
+			Code:             fmt.Sprintf("LEAD-NS-%d", result.OwnerID),
 			SourceType:       "IMPORT",
 			SourceReference:  "excel:new-subscribe-archive",
 			Stage:            "NEW",
@@ -549,15 +559,15 @@ func resolveOwnerAndOutlet(
 			NextFollowUpAt:   createdAt.AddDate(0, 0, 7),
 			ActiveSalesEmail: fallbackSalesEmail,
 		}
-		if _, err := fake.CreateLead(ctx, tx, ownerID, outletID, lead); err != nil {
-			return 0, fmt.Errorf("create lead from new & subscribe archive owner=%d: %w", ownerID, err)
+		if _, err := fake.CreateLead(ctx, tx, result.OwnerID, result.OutletID, lead); err != nil {
+			return result, fmt.Errorf("create lead from new & subscribe archive owner=%d: %w", result.OwnerID, err)
 		}
 	}
 
-	return ownerID, nil
+	return result, nil
 }
 
-func SeedSubscriptionsFromExcel(ctx context.Context, tx *sql.Tx, fake *factory.Factory, adminID int64, fallbackSalesEmail string) error {
+func SeedSubscriptionsFromExcel(ctx context.Context, tx *sql.Tx, fake *factory.Factory, adminID int64, fallbackSalesEmail string, progress subscriptionSeedProgress) error {
 	_ = adminID // kept for call-site compatibility; CreateWalletTopup/CreateSubscriptionOrder resolve their own admin actor internally
 	rows, err := readNewAndSubscribeExcel()
 	if err != nil {
@@ -572,6 +582,12 @@ func SeedSubscriptionsFromExcel(ctx context.Context, tx *sql.Tx, fake *factory.F
 		return err
 	}
 
+	stats := subscriptionSeedStats{}
+	reportProgress := func(current int) {
+		if progress != nil {
+			progress(current, len(rows), stats)
+		}
+	}
 	for i, row := range rows {
 		// 1. Parse dates first — a brand-new owner/outlet (see step 2) needs a historically
 		// plausible created_at, not "now".
@@ -591,10 +607,14 @@ func SeedSubscriptionsFromExcel(ctx context.Context, tx *sql.Tx, fake *factory.F
 
 		// 2. Relate to an existing owner/outlet when possible (by code, then by phone);
 		// only create a new owner/outlet when neither matches (see resolveOwnerAndOutlet doc).
-		ownerID, err := resolveOwnerAndOutlet(ctx, tx, fake, row, ownerPhoneIndex, fallbackSalesEmail, ownerCreatedAt, i)
+		resolution, err := resolveOwnerAndOutlet(ctx, tx, fake, row, ownerPhoneIndex, fallbackSalesEmail, ownerCreatedAt, i)
 		if err != nil {
 			return fmt.Errorf("resolve owner row=%d: %w", i, err)
 		}
+		ownerID := resolution.OwnerID
+		stats.NewOwners += boolToInt(resolution.NewOwner)
+		stats.NewOutlets += boolToInt(resolution.NewOutlet)
+		stats.NewLeads += boolToInt(resolution.NewLead)
 
 		// Per-transaction key: year + the row's position in the combined multi-file/multi-year
 		// slice. `i` alone already guarantees global uniqueness across the whole run — the row's
@@ -642,17 +662,20 @@ func SeedSubscriptionsFromExcel(ctx context.Context, tx *sql.Tx, fake *factory.F
 			if err != nil {
 				return fmt.Errorf("create topup owner=%s: %w", row.OwnerCode, err)
 			}
+			stats.Topups++
 			if shouldSeedTransferForTopup(topup) {
 				matchedTransfer := buildMatchedTransferForSubscribeTopup(keySuffix, topup, paymentID)
 				if _, err := fake.CreateTransfer(ctx, tx, ownerID, matchedTransfer); err != nil {
 					return fmt.Errorf("create matched transfer owner=%s: %w", row.OwnerCode, err)
 				}
+				stats.Transfers++
 			}
 		}
 
 		// 4. Topup-only row (or nothing at all this row) — no closing/order, regardless of what
 		// Tenor/Paket Membership/Status say (see hasPurchaseIntent doc comment).
 		if !hasPurchaseIntent(row) {
+			reportProgress(i + 1)
 			continue
 		}
 
@@ -719,6 +742,7 @@ func SeedSubscriptionsFromExcel(ctx context.Context, tx *sql.Tx, fake *factory.F
 				if _, err := fake.CreateWalletTopup(ctx, tx, ownerID, backfill); err != nil {
 					return fmt.Errorf("create synthetic backfill topup owner=%s: %w", row.OwnerCode, err)
 				}
+				stats.Topups++
 			}
 		}
 
@@ -735,6 +759,7 @@ func SeedSubscriptionsFromExcel(ctx context.Context, tx *sql.Tx, fake *factory.F
 			})
 			if cErr != nil {
 				if strings.Contains(cErr.Error(), "tidak ditemukan") || strings.Contains(cErr.Error(), "no rows in result set") {
+					reportProgress(i + 1)
 					continue
 				}
 				return fmt.Errorf("create closing owner=%s: %w", row.OwnerCode, cErr)
@@ -756,10 +781,13 @@ func SeedSubscriptionsFromExcel(ctx context.Context, tx *sql.Tx, fake *factory.F
 		}
 		if _, err := fake.CreateSubscriptionOrder(ctx, tx, ownerID, order); err != nil {
 			if strings.Contains(err.Error(), "tidak ditemukan") || strings.Contains(err.Error(), "no rows in result set") {
+				reportProgress(i + 1)
 				continue
 			}
 			return fmt.Errorf("create subscription owner=%s: %w", row.OwnerCode, err)
 		}
+		stats.Orders++
+		reportProgress(i + 1)
 	}
 	return nil
 }

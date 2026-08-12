@@ -127,7 +127,7 @@ func readMitraExcel() ([]mitraRow, error) {
 	return results, nil
 }
 
-func SeedMitraFromExcel(ctx context.Context, tx *sql.Tx, adminID int64, salesEmails []string) error {
+func SeedMitraFromExcel(ctx context.Context, tx *sql.Tx, adminID int64, salesEmails []string, progress mitraSeedProgress) error {
 	rows, err := readMitraExcel()
 	if err != nil {
 		return err
@@ -180,6 +180,13 @@ func SeedMitraFromExcel(ctx context.Context, tx *sql.Tx, adminID int64, salesEma
 		defaultPtID = refID
 	}
 
+	stats := mitraSeedStats{}
+	reportProgress := func(current int) {
+		if progress != nil {
+			progress(current, len(rows), stats)
+		}
+	}
+
 	for i, row := range rows {
 		createdAt := parseDateRobust(row.CreatedAt)
 		if createdAt.IsZero() {
@@ -222,11 +229,13 @@ func SeedMitraFromExcel(ctx context.Context, tx *sql.Tx, adminID int64, salesEma
 		if err != nil {
 			return fmt.Errorf("insert partner %d (%s): %w", i+1, row.Code, err)
 		}
+		stats.Partners++
 
 		partnerID, err := res.LastInsertId()
 		if err != nil || partnerID == 0 {
 			err = tx.QueryRowContext(ctx, "SELECT id FROM partners WHERE code = ?", row.Code).Scan(&partnerID)
 			if err != nil {
+				reportProgress(i + 1)
 				continue
 			}
 		}
@@ -250,16 +259,19 @@ func SeedMitraFromExcel(ctx context.Context, tx *sql.Tx, adminID int64, salesEma
 		}
 
 		if picID != 0 {
-			if err := syncSeedPartnerAssignment(ctx, tx, partnerID, picID, adminID, createdAt); err != nil {
+			changed, err := syncSeedPartnerAssignment(ctx, tx, partnerID, picID, adminID, createdAt)
+			if err != nil {
 				return fmt.Errorf("assign partner %d (%s): %w", partnerID, row.Code, err)
 			}
+			stats.Assignments += boolToInt(changed)
 		}
+		reportProgress(i + 1)
 	}
 
 	return nil
 }
 
-func syncSeedPartnerAssignment(ctx context.Context, tx *sql.Tx, partnerID, picID, adminID int64, assignedAt time.Time) error {
+func syncSeedPartnerAssignment(ctx context.Context, tx *sql.Tx, partnerID, picID, adminID int64, assignedAt time.Time) (bool, error) {
 	var currentAssignmentID int64
 	var currentUserID int64
 	err := tx.QueryRowContext(ctx, `
@@ -271,16 +283,16 @@ func syncSeedPartnerAssignment(ctx context.Context, tx *sql.Tx, partnerID, picID
 	switch {
 	case err == nil:
 		if currentUserID == picID {
-			return nil
+			return false, nil
 		}
 		if _, err := tx.ExecContext(ctx, `
 			UPDATE partner_assignments
 			SET active = FALSE, unassigned_at = ?, updated_at = NOW()
 			WHERE id = ?`, assignedAt, currentAssignmentID); err != nil {
-			return err
+			return false, err
 		}
 	case err != sql.ErrNoRows:
-		return err
+		return false, err
 	}
 
 	_, err = tx.ExecContext(ctx, `
@@ -289,5 +301,5 @@ func syncSeedPartnerAssignment(ctx context.Context, tx *sql.Tx, partnerID, picID
 		VALUES (?, ?, ?, ?, TRUE, ?, ?)`,
 		partnerID, picID, adminID, assignedAt, assignedAt, assignedAt,
 	)
-	return err
+	return err == nil, err
 }
