@@ -39,6 +39,7 @@ func (h *Handler) RegisterRoutes(api *gin.RouterGroup) {
 	owners.GET("/export/download-owner", h.downloadOwnerExcel)
 	owners.GET("/:owner_id", h.getOwner)
 	owners.GET("/:owner_id/overview", h.getOwnerOverview)
+	owners.GET("/:owner_id/history", h.listOwnerHistories)
 	owners.PATCH("/:owner_id", h.updateOwner)
 	owners.PATCH("/:owner_id/testing-account", h.setOwnerTestingAccount)
 	owners.DELETE("/:owner_id", h.deleteOwner)
@@ -56,6 +57,7 @@ func (h *Handler) RegisterRoutes(api *gin.RouterGroup) {
 	owners.DELETE("/:owner_id/outlets/bulk", h.bulkDeleteOutlets)
 	owners.DELETE("/:owner_id/outlets/bulk/force", h.bulkForceDeleteOutlets)
 	owners.GET("/:owner_id/outlets/:outlet_id", h.getOutlet)
+	owners.GET("/:owner_id/outlets/:outlet_id/history", h.listOutletHistories)
 	owners.PATCH("/:owner_id/outlets/:outlet_id", h.updateOutlet)
 	owners.DELETE("/:owner_id/outlets/:outlet_id", h.deleteOutlet)
 	owners.PATCH("/:owner_id/outlets/:outlet_id/restore", h.restoreOutlet)
@@ -342,7 +344,21 @@ func (h *Handler) updateOwner(c *gin.Context) {
 	if !bindJSON(c, &req) {
 		return
 	}
-	response, err := h.service.UpdateOwner(c.Request.Context(), currentActor(c), ownerID, req)
+	meta := RequestMeta{IPAddress: c.ClientIP(), UserAgent: c.Request.UserAgent(), RequestID: httpx.RequestID(c)}
+	response, err := h.service.UpdateOwnerWithMeta(c.Request.Context(), currentActor(c), ownerID, req, meta)
+	if err != nil {
+		writeError(c, err)
+		return
+	}
+	httpx.Success(c, http.StatusOK, response)
+}
+
+func (h *Handler) listOwnerHistories(c *gin.Context) {
+	ownerID, ok := parseParamID(c, "owner_id")
+	if !ok {
+		return
+	}
+	response, err := h.service.ListOwnerHistories(c.Request.Context(), currentActor(c), ownerID)
 	if err != nil {
 		writeError(c, err)
 		return
@@ -600,7 +616,21 @@ func (h *Handler) updateOutlet(c *gin.Context) {
 	if !bindJSON(c, &req) {
 		return
 	}
-	response, err := h.service.UpdateOutlet(c.Request.Context(), currentActor(c), ownerID, outletID, req)
+	meta := RequestMeta{IPAddress: c.ClientIP(), UserAgent: c.Request.UserAgent(), RequestID: httpx.RequestID(c)}
+	response, err := h.service.UpdateOutletWithMeta(c.Request.Context(), currentActor(c), ownerID, outletID, req, meta)
+	if err != nil {
+		writeError(c, err)
+		return
+	}
+	httpx.Success(c, http.StatusOK, response)
+}
+
+func (h *Handler) listOutletHistories(c *gin.Context) {
+	ownerID, outletID, ok := parseOwnerOutletID(c)
+	if !ok {
+		return
+	}
+	response, err := h.service.ListOutletHistories(c.Request.Context(), currentActor(c), ownerID, outletID)
 	if err != nil {
 		writeError(c, err)
 		return

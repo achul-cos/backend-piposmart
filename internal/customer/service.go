@@ -104,8 +104,20 @@ func (s *Service) RestoreOwner(ctx context.Context, actor Actor, id int64) (Owne
 }
 
 func (s *Service) UpdateOwner(ctx context.Context, actor Actor, id int64, req UpdateOwnerRequest) (OwnerResponse, error) {
+	return s.UpdateOwnerWithMeta(ctx, actor, id, req, RequestMeta{})
+}
+
+// UpdateOwnerWithMeta is UpdateOwner plus request metadata for the audit_logs entry. Kept as a
+// separate entry point (rather than changing UpdateOwner's signature) so existing callers that
+// don't have request metadata (e.g. bulk update, scraper's normal PATCH call) keep working
+// unchanged - both paths still get audited, just with meta zero-valued when unavailable.
+func (s *Service) UpdateOwnerWithMeta(ctx context.Context, actor Actor, id int64, req UpdateOwnerRequest, meta RequestMeta) (OwnerResponse, error) {
 	if !actorCanManageOwners(actor) {
 		return OwnerResponse{}, ErrForbidden
+	}
+	before, err := s.repo.FindOwnerByID(ctx, actor, id)
+	if err != nil {
+		return OwnerResponse{}, err
 	}
 	var phone *string
 	if req.Phone != nil {
@@ -119,7 +131,9 @@ func (s *Service) UpdateOwner(ctx context.Context, actor Actor, id int64, req Up
 	if err != nil {
 		return OwnerResponse{}, err
 	}
-	return NewOwnerResponse(owner), nil
+	response := NewOwnerResponse(owner)
+	_ = s.repo.Audit(ctx, actor.ID, "owner.update", entityTypeOwner, id, NewOwnerResponse(before), response, meta)
+	return response, nil
 }
 
 // SetTestingAccount lets an admin flag an owner as a testing account (a piposmart employee's
@@ -275,7 +289,7 @@ func (s *Service) CreateOutlet(ctx context.Context, actor Actor, ownerID int64, 
 	if !actorCanManageOwners(actor) {
 		return OutletResponse{}, ErrForbidden
 	}
-	
+
 	phone := req.Phone
 	if phone == "" {
 		owner, err := s.repo.FindOwnerByID(ctx, actor, ownerID)
@@ -283,7 +297,7 @@ func (s *Service) CreateOutlet(ctx context.Context, actor Actor, ownerID int64, 
 			phone = owner.Phone.String
 		}
 	}
-	
+
 	normalizedPhone, err := NormalizePhone(phone)
 	if err != nil {
 		return OutletResponse{}, err
@@ -302,13 +316,13 @@ func (s *Service) BulkCreateOutlets(ctx context.Context, actor Actor, ownerID in
 	if len(req.Items) == 0 {
 		return OutletBulkResponse{}, ErrEmptyBulk
 	}
-	
+
 	var fallbackPhone string
 	owner, err := s.repo.FindOwnerByID(ctx, actor, ownerID)
 	if err == nil && owner.Phone.Valid {
 		fallbackPhone = owner.Phone.String
 	}
-	
+
 	phones := make([]string, len(req.Items))
 	for index, item := range req.Items {
 		phone := item.Phone
@@ -356,8 +370,18 @@ func (s *Service) RestoreOutlet(ctx context.Context, actor Actor, ownerID, outle
 }
 
 func (s *Service) UpdateOutlet(ctx context.Context, actor Actor, ownerID, outletID int64, req UpdateOutletRequest) (OutletResponse, error) {
+	return s.UpdateOutletWithMeta(ctx, actor, ownerID, outletID, req, RequestMeta{})
+}
+
+// UpdateOutletWithMeta is UpdateOutlet plus request metadata for the audit_logs entry - same
+// rationale as UpdateOwnerWithMeta above.
+func (s *Service) UpdateOutletWithMeta(ctx context.Context, actor Actor, ownerID, outletID int64, req UpdateOutletRequest, meta RequestMeta) (OutletResponse, error) {
 	if !actorCanManageOwners(actor) {
 		return OutletResponse{}, ErrForbidden
+	}
+	before, err := s.repo.FindOutletByID(ctx, actor, ownerID, outletID)
+	if err != nil {
+		return OutletResponse{}, err
 	}
 	var normalizedPhone *string
 	if req.Phone != nil {
@@ -378,7 +402,9 @@ func (s *Service) UpdateOutlet(ctx context.Context, actor Actor, ownerID, outlet
 	if err != nil {
 		return OutletResponse{}, err
 	}
-	return NewOutletResponse(outlet), nil
+	response := NewOutletResponse(outlet)
+	_ = s.repo.Audit(ctx, actor.ID, "outlet.update", entityTypeOutlet, outletID, NewOutletResponse(before), response, meta)
+	return response, nil
 }
 
 func (s *Service) BulkUpdateOutlets(ctx context.Context, actor Actor, ownerID int64, req BulkOutletUpdateRequest) (OutletBulkResponse, error) {
@@ -388,13 +414,13 @@ func (s *Service) BulkUpdateOutlets(ctx context.Context, actor Actor, ownerID in
 	if len(req.Items) == 0 {
 		return OutletBulkResponse{}, ErrEmptyBulk
 	}
-	
+
 	var fallbackPhone string
 	owner, err := s.repo.FindOwnerByID(ctx, actor, ownerID)
 	if err == nil && owner.Phone.Valid {
 		fallbackPhone = owner.Phone.String
 	}
-	
+
 	updates := make([]OutletUpdateInput, 0, len(req.Items))
 	for _, item := range req.Items {
 		var normalizedPhone *string
