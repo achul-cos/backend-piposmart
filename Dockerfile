@@ -29,6 +29,7 @@ WORKDIR /app
 
 COPY --from=builder /out/crm /app/crm
 COPY migrations /app/migrations
+COPY asset /app/asset
 
 USER crm
 

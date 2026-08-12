@@ -40,7 +40,7 @@ func main() {
 		adminID = 1
 	}
 
-	err = seeder.SeedMitraFromExcel(context.Background(), tx, adminID, nil)
+	err = seeder.SeedMitraFromExcel(context.Background(), tx, adminID, nil, nil)
 	if err != nil {
 		tx.Rollback()
 		log.Fatalf("Failed to seed mitra: %v", err)

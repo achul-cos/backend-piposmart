@@ -44,7 +44,7 @@ func main() {
 
 	fake := factory.New(1, time.Date(2026, 8, 4, 0, 0, 0, 0, time.UTC))
 	fmt.Println("Seeding subscriptions from Excel...")
-	if err := seeder.SeedSubscriptionsFromExcel(ctx, tx, fake, adminID); err != nil {
+	if err := seeder.SeedSubscriptionsFromExcel(ctx, tx, fake, adminID, "", nil); err != nil {
 		log.Fatalf("seed error: %v", err)
 	}
 

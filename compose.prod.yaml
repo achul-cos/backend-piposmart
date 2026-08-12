@@ -1,0 +1,111 @@
+name: crm-piposmart-backend-prod
+
+services:
+  mysql:
+    image: mysql:8.4
+    restart: unless-stopped
+    env_file:
+      - .env.production
+    environment:
+      MYSQL_DATABASE: ${DB_NAME}
+      MYSQL_USER: ${DB_USER}
+      MYSQL_PASSWORD: ${DB_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      TZ: UTC
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --innodb-buffer-pool-size=256M
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - mysqladmin ping -h 127.0.0.1 -u root -p"$${MYSQL_ROOT_PASSWORD}" --silent
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+
+  setup:
+    build:
+      context: .
+    restart: "no"
+    env_file:
+      - .env.production
+    environment:
+      DB_HOST: mysql
+      MIGRATION_DIR: /app/migrations
+      SETUP_RUN_MIGRATE: ${SETUP_RUN_MIGRATE:-true}
+      SETUP_RUN_SEED_MASTER: ${SETUP_RUN_SEED_MASTER:-true}
+      SETUP_RUN_BOOTSTRAP_ADMIN: ${SETUP_RUN_BOOTSTRAP_ADMIN:-true}
+      SETUP_RUN_DEMO_SEED: ${SETUP_RUN_DEMO_SEED:-false}
+      SETUP_DEMO_PRESET: ${SETUP_DEMO_PRESET:-minimal}
+      SETUP_DEMO_SEED: ${SETUP_DEMO_SEED:-20260723}
+      SETUP_DEMO_FROM: ${SETUP_DEMO_FROM:-2026-07-28}
+      SETUP_DEMO_TO: ${SETUP_DEMO_TO:-2026-07-28}
+      SETUP_DEMO_SCALE: ${SETUP_DEMO_SCALE:-1}
+      SETUP_DEMO_VARIATION: ${SETUP_DEMO_VARIATION:-0.5}
+    command:
+      - setup
+    depends_on:
+      mysql:
+        condition: service_healthy
+    volumes:
+      - uploads:/app/storage/uploads
+      - exports:/app/storage/exports
+
+  api:
+    build:
+      context: .
+    restart: unless-stopped
+    env_file:
+      - .env.production
+    environment:
+      DB_HOST: mysql
+      MIGRATION_DIR: /app/migrations
+    command:
+      - api
+    ports:
+      - "${APP_PORT:-8080}:8080"
+    volumes:
+      - uploads:/app/storage/uploads
+      - exports:/app/storage/exports
+    depends_on:
+      setup:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD
+        - wget
+        - -q
+        - -O
+        - "-"
+        - http://127.0.0.1:8080/health/live
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  worker:
+    build:
+      context: .
+    restart: unless-stopped
+    env_file:
+      - .env.production
+    environment:
+      DB_HOST: mysql
+      MIGRATION_DIR: /app/migrations
+    command:
+      - worker
+    depends_on:
+      setup:
+        condition: service_completed_successfully
+    volumes:
+      - uploads:/app/storage/uploads
+      - exports:/app/storage/exports
+
+volumes:
+  mysql_data:
+  uploads:
+  exports:
