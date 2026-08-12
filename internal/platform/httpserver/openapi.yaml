@@ -4,7 +4,7 @@ info:
   version: 0.17.0-sprint-16
   description: API CRM Piposmart dengan Partner Type, Partner (Encrypted & Masked Bank Account), PIC Assignment, Lead Referrals, Subscription Order, Reconciliation Sprint 11, Partner Commission Sprint 12, penambahan route trash/unscoped owner-outlet dan rekap status langganan outlet Sprint 14b/14c, histori import persisten dengan viewer/download file asli Sprint 14 history, route /all dan /all-deleted lintas modul untuk kebutuhan frontend mengambil full dataset tanpa pagination, penambahan manajemen akun Admin dan Supervisor beserta reset password lintas role pada Sprint 14f, dokumentasi Analytics Sprint 14g1 sampai 14g5, revisi Sprint 15b agar satu interaction dapat menyimpan status CALL dan CHAT sekaligus dalam satu record, serta penambahan Dashboard Reporting dan Async Report Export Sprint 16.
 servers:
-  - url: http://localhost:8080
+  - url: /
 paths:
   /:
     get:
