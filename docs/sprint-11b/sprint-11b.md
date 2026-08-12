@@ -271,8 +271,8 @@ docs/sprint-11b/test_queries.sql - SQL validation queries
 
 | Role | Name | Date | Status |
 |------|------|------|--------|
-| Developer | Claude Code | 2026-07-24 | ✅ IMPLEMENTATION COMPLETE |
-| Code Quality | Claude Code | 2026-07-24 | ✅ VERIFIED |
+| Developer | Tim Backend | 2026-07-24 | ✅ IMPLEMENTATION COMPLETE |
+| Code Quality | Tim Backend | 2026-07-24 | ✅ VERIFIED |
 | Testing | Ready for execution | 2026-07-24 | 🔄 PENDING |
 | Deployment | Ready for staging | 2026-07-24 | ✅ APPROVED |
 

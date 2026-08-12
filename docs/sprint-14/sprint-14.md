@@ -59,5 +59,5 @@ Keputusan yang Dibutuhkan:
 Rencana Sprint Berikutnya (Sprint 15 — Import Transaksi, Mitra, dan Data Sales):
 - Framework import (`import_batches`/`import_rows`/`job_queue`/pola deteksi-profil-dari-header-asli) sudah siap dipakai ulang — Sprint 15 tinggal menambah profil baru (New & Subscribe, Monthly Active, Data Bonus Mitra, Data Call & Chat Sales) mengikuti pola yang sama persis, bukan membangun ulang.
 - File Excel asli untuk Sprint 15 sudah teridentifikasi di `c:/piposmart/data_admin/` (`02. New & Subscribe`, `03. Nasabah Baru Per Provinsi`, `05. Monthly Active`, `06. Data Bonus Mitra`) dan `c:/piposmart/data_sales/` — perlu diinspeksi header asli sebelum planning, mengikuti kebiasaan yang sama seperti Sprint 14.
-- Audit roadmap standar akan dijalankan sebelum Sprint 15 dimulai (`backend_crm_piposmart/CLAUDE.md`), mengecek Sprint 14 delivered persis sesuai DoD roadmap — hasil audit ini sudah tercermin di laporan ini (status GREEN, semua Committed Deliverables Completed).
+- Audit roadmap standar akan dijalankan sebelum Sprint 15 dimulai, mengecek Sprint 14 delivered persis sesuai DoD roadmap — hasil audit ini sudah tercermin di laporan ini (status GREEN, semua Committed Deliverables Completed).
 

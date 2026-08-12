@@ -520,7 +520,7 @@ After execution, fill in:
 
 | Role | Name | Date | Status |
 |------|------|------|--------|
-| Test Plan Author | Claude Code | 2026-07-24 | ✅ COMPLETE |
+| Test Plan Author | Tim Backend | 2026-07-24 | ✅ COMPLETE |
 | Test Executor | [To be filled] | - | 🔄 PENDING |
 | QA Lead | [To be filled] | - | 🔄 PENDING |
 | PM/Release | [To be filled] | - | 🔄 PENDING |

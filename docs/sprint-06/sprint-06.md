@@ -80,7 +80,7 @@ Smoke test API: 12/12 PASS.
 
 ## Impediments
 
-- Docker CLI tidak tersedia pada shell Codex, sehingga Docker runtime tetap perlu
+- Docker CLI tidak tersedia pada shell audit saat itu, sehingga Docker runtime tetap perlu
   diverifikasi langsung di workstation.
 - Integration test DB otomatis untuk activity/training belum dibuat lengkap.
 

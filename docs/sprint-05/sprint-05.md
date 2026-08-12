@@ -14,7 +14,7 @@ Sprint 5
 
 Sprint Goal tercapai untuk vertical slice ownership dan assignment lead sesuai
 briefing terbaru. Status belum `GREEN` karena integration test database otomatis
-dan verifikasi Docker runtime dari environment Codex belum tersedia.
+dan verifikasi Docker runtime dari environment audit saat itu belum tersedia.
 
 ## Sprint Goal
 
@@ -83,7 +83,7 @@ Smoke test API tambahan: 11/11 PASS.
 
 ## Impediments
 
-- Docker CLI belum tersedia pada environment shell Codex, meskipun user sudah
+- Docker CLI belum tersedia pada environment shell saat audit, meskipun user sudah
   menginstall Docker di workstation.
 - Integration test DB otomatis belum tersedia.
 

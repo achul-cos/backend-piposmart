@@ -56,4 +56,4 @@ Keputusan yang Dibutuhkan:
 
 Rencana Sprint Berikutnya (Sprint 14 — Import Framework dan Data Customer):
 - Job queue generik dari Sprint 13 (`internal/platform/jobqueue`) sudah siap dipakai — Sprint 14 tinggal menambah job type baru (`IMPORT_*`) dan handler-nya, tidak perlu membangun ulang mekanisme worker/retry/stale-reclaim.
-- Audit roadmap standar akan dijalankan sebelum Sprint 14 dimulai (`backend_crm_piposmart/CLAUDE.md`), mengecek Sprint 13 delivered persis sesuai DoD roadmap tanpa under/over-deliver — hasil audit ini sudah tercermin di laporan ini (status GREEN, semua Committed Deliverables Completed).
+- Audit roadmap standar akan dijalankan sebelum Sprint 14 dimulai, mengecek Sprint 13 delivered persis sesuai DoD roadmap tanpa under/over-deliver — hasil audit ini sudah tercermin di laporan ini (status GREEN, semua Committed Deliverables Completed).
