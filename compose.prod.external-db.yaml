@@ -79,6 +79,8 @@ services:
     volumes:
       - uploads:/app/storage/uploads
       - exports:/app/storage/exports
+    healthcheck:
+      disable: true
     networks:
       - external_db
 

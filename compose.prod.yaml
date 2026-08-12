@@ -104,6 +104,8 @@ services:
     volumes:
       - uploads:/app/storage/uploads
       - exports:/app/storage/exports
+    healthcheck:
+      disable: true
 
 volumes:
   mysql_data:

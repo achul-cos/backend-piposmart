@@ -119,6 +119,8 @@ services:
     depends_on:
       setup:
         condition: service_completed_successfully
+    healthcheck:
+      disable: true
 
   seed:
     build:
