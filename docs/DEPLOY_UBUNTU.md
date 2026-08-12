@@ -50,11 +50,52 @@ Catatan:
 
 - `SETUP_RUN_DEMO_SEED=false` sudah default untuk production.
 - `SETUP_RUN_BOOTSTRAP_ADMIN=true` aman untuk first deploy, tapi setelah admin awal terbentuk biasanya bisa diubah ke `false`.
+- `DB_HOST=mysql` dan `EXTERNAL_DB_NETWORK=mysql-stack_default` adalah default aman untuk dua mode deploy berbeda:
+  - `compose.prod.yaml` untuk MySQL bawaan stack backend
+  - `compose.prod.external-db.yaml` untuk MySQL container existing di VPS
 
-## 4. Build dan jalankan
+## 4A. Mode standar: backend + MySQL dalam satu stack
+
+Pakai file ini bila backend ingin membawa container MySQL sendiri:
 
 ```bash
 docker compose -f compose.prod.yaml --env-file .env.production up -d --build
+```
+
+## 4B. Mode VPS existing DB: pakai MySQL container yang sudah ada
+
+Pakai mode ini bila VPS sudah punya MySQL container terpisah, misalnya:
+
+- container: `Core-Database`
+- network Docker: `mysql-stack_default`
+- alias database di network: `db`
+
+Untuk mode ini, atur `.env.production` seperti berikut:
+
+```env
+DB_HOST=db
+DB_PORT=3306
+EXTERNAL_DB_NETWORK=mysql-stack_default
+```
+
+Kalau database target belum ada, buat dulu:
+
+```bash
+docker exec -it Core-Database mysql -uroot -p
+```
+
+Lalu di shell MySQL:
+
+```sql
+CREATE DATABASE IF NOT EXISTS crm_piposmart
+CHARACTER SET utf8mb4
+COLLATE utf8mb4_unicode_ci;
+```
+
+Setelah itu jalankan backend dengan compose khusus external DB:
+
+```bash
+docker compose -f compose.prod.external-db.yaml --env-file .env.production up -d --build
 ```
 
 ## 5. Verifikasi
@@ -67,11 +108,26 @@ curl http://127.0.0.1:8080/health/live
 curl http://127.0.0.1:8080/health/ready
 ```
 
+Untuk mode external DB, cukup ganti file compose pada setiap command verifikasi:
+
+```bash
+docker compose -f compose.prod.external-db.yaml --env-file .env.production ps
+docker compose -f compose.prod.external-db.yaml --env-file .env.production logs -f setup
+docker compose -f compose.prod.external-db.yaml --env-file .env.production logs -f api
+```
+
 ## 6. Update release berikutnya
 
 ```bash
 git pull
 docker compose -f compose.prod.yaml --env-file .env.production up -d --build
+```
+
+Untuk mode external DB:
+
+```bash
+git pull
+docker compose -f compose.prod.external-db.yaml --env-file .env.production up -d --build
 ```
 
 ## 7. Rollback cepat
@@ -81,6 +137,13 @@ Paling aman pakai image tag per-release. Kalau masih build langsung dari source,
 ```bash
 git checkout <commit-atau-tag-lama>
 docker compose -f compose.prod.yaml --env-file .env.production up -d --build
+```
+
+Untuk mode external DB:
+
+```bash
+git checkout <commit-atau-tag-lama>
+docker compose -f compose.prod.external-db.yaml --env-file .env.production up -d --build
 ```
 
 ## Catatan audit
