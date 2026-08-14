@@ -314,16 +314,17 @@ type CreateOwnerRequest struct {
 }
 
 type UpdateOwnerRequest struct {
-	Code        *string `json:"code"`
-	Name        *string `json:"name"`
-	Phone       *string `json:"phone"`
-	Email       *string `json:"email"`
-	BrandName   *string `json:"brand_name"`
-	Province    *string `json:"province"`
-	City        *string `json:"city"`
-	District    *string `json:"district"`
-	SubDistrict *string `json:"sub_district"`
-	Address     *string `json:"address"`
+	Code        *string    `json:"code"`
+	Name        *string    `json:"name"`
+	Phone       *string    `json:"phone"`
+	Email       *string    `json:"email"`
+	BrandName   *string    `json:"brand_name"`
+	Province    *string    `json:"province"`
+	City        *string    `json:"city"`
+	District    *string    `json:"district"`
+	SubDistrict *string    `json:"sub_district"`
+	Address     *string    `json:"address"`
+	CreatedAt   *time.Time `json:"created_at"`
 }
 
 type CreateOutletRequest struct {

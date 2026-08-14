@@ -22,7 +22,7 @@ func TestSanitizeSpreadsheetCell(t *testing.T) {
 	}
 }
 
-func TestGetAdminOwnerOutletColumnsIncludesShareColumnsUntilTen(t *testing.T) {
+func TestGetAdminOwnerOutletColumnsIncludesShareColumnsUntilFive(t *testing.T) {
 	columns := GetAdminOwnerOutletColumns()
 	labels := make(map[string]bool, len(columns))
 	for _, column := range columns {
@@ -33,11 +33,14 @@ func TestGetAdminOwnerOutletColumnsIncludesShareColumnsUntilTen(t *testing.T) {
 		for _, label := range []string{
 			fmt.Sprintf("Tanggal Dibagikan %d", index),
 			fmt.Sprintf("Share %d", index),
-			fmt.Sprintf("Kategori Nasabah %d", index),
 		} {
 			if !labels[label] {
 				t.Fatalf("missing export column label %q", label)
 			}
 		}
+	}
+	// "Kategori Nasabah" repeats for each share group (no number suffix, matching reference Excel)
+	if !labels["Kategori Nasabah"] {
+		t.Fatal("missing export column label \"Kategori Nasabah\"")
 	}
 }

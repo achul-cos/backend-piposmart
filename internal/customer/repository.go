@@ -291,6 +291,7 @@ func (r *Repository) updateOwner(ctx context.Context, q queryExecutor, input Own
 	district := current.District
 	subDistrict := current.SubDistrict
 	address := current.Address
+	createdAt := current.CreatedAt
 
 	if input.Request.Code != nil {
 		code = trim(*input.Request.Code)
@@ -322,12 +323,15 @@ func (r *Repository) updateOwner(ctx context.Context, q queryExecutor, input Own
 	if input.Request.SubDistrict != nil {
 		subDistrict = nullableString(*input.Request.SubDistrict)
 	}
+	if input.Request.CreatedAt != nil {
+		createdAt = *input.Request.CreatedAt
+	}
 
 	_, err = q.ExecContext(ctx, `
 		UPDATE owners
-		SET code = ?, name = ?, phone = ?, email = ?, brand_name = ?, province = ?, city = ?, district = ?, sub_district = ?, address = ?
+		SET code = ?, name = ?, phone = ?, email = ?, brand_name = ?, province = ?, city = ?, district = ?, sub_district = ?, address = ?, created_at = ?
 		WHERE id = ? AND deleted_at IS NULL`,
-		code, name, phone, email, brandName, province, city, district, subDistrict, address, input.ID,
+		code, name, phone, email, brandName, province, city, district, subDistrict, address, createdAt, input.ID,
 	)
 	if err != nil {
 		return Owner{}, mapDuplicateError(err)
@@ -1470,7 +1474,9 @@ func (r *Repository) exportOwnerOutletRows(ctx context.Context, where string, ar
 		COALESCE(NULLIF(ot.address, ''), NULLIF(o.address, ''), '') AS outlet_address,
 		COALESCE(DATE_FORMAT(ot.created_at, '%Y-%m-%dT%H:%i:%sZ'), '') AS outlet_created_at,
 		(SELECT COUNT(*) FROM outlets ot2 WHERE ot2.owner_id = o.id AND ot2.deleted_at IS NULL) AS outlet_count,
-		COALESCE((SELECT wa.balance FROM wallet_accounts wa WHERE wa.owner_id = o.id AND wa.deleted_at IS NULL ORDER BY wa.id LIMIT 1), 0) AS owner_balance
+		COALESCE((SELECT wa.balance FROM wallet_accounts wa WHERE wa.owner_id = o.id AND wa.deleted_at IS NULL ORDER BY wa.id LIMIT 1), 0) AS owner_balance,
+		COALESCE((SELECT DATE_FORMAT(s.active_from, '%Y-%m-%dT%H:%i:%sZ') FROM subscriptions s WHERE s.owner_id = o.id AND s.deleted_at IS NULL ORDER BY s.active_from ASC LIMIT 1), '') AS subscription_start_date,
+		COALESCE((SELECT p.name FROM partner_referrals pr JOIN partners p ON p.id = pr.partner_id JOIN customer_leads cl ON cl.id = pr.lead_id WHERE cl.owner_id = o.id AND cl.deleted_at IS NULL ORDER BY pr.created_at DESC LIMIT 1), '') AS mitra_name
 	FROM owners o
 	LEFT JOIN outlets ot ON ot.owner_id = o.id AND ot.deleted_at IS NULL
 	LEFT JOIN users u ON u.id = o.entered_by_user_id

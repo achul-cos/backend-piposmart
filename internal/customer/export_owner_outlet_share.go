@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-const adminOwnerOutletShareLimit = 10
+const adminOwnerOutletShareLimit = 5
 
 type adminShareSnapshot struct {
 	Date     string
@@ -127,22 +127,37 @@ func (r *Repository) loadAdminOwnerExportSnapshots(ctx context.Context, ownerIDs
 		return nil, err
 	}
 
+	type rawAssignment struct {
+		Date string
+		Name string
+	}
+	type rawNote struct {
+		Date     string
+		Name     string
+		Category string
+	}
+
+	ownerAssignments := make(map[int64][]rawAssignment)
+	ownerNotes := make(map[int64][]rawNote)
+
 	assignmentRows, err := r.db.QueryContext(ctx, `
-		SELECT owner_id, rn, assigned_at, share_name
+		SELECT owner_id, assigned_at, share_name
 		FROM (
 			SELECT
 				la.owner_id,
-				ROW_NUMBER() OVER (PARTITION BY la.owner_id ORDER BY la.started_at ASC, la.id ASC) AS rn,
+				ROW_NUMBER() OVER (PARTITION BY la.owner_id ORDER BY la.started_at DESC) AS rn,
 				DATE_FORMAT(la.started_at, '%Y-%m-%dT%H:%i:%sZ') AS assigned_at,
 				COALESCE(u.name, '') AS share_name
 			FROM lead_assignments la
 			LEFT JOIN users u ON u.id = la.to_user_id
 			WHERE la.deleted_at IS NULL
 			  AND la.to_role = 'SALES'
+			  AND u.name IS NOT NULL
 			  AND la.owner_id IN (`+inClause+`)
+			GROUP BY la.owner_id, la.to_user_id, la.started_at, u.name
 		) ranked
 		WHERE rn <= ?
-		ORDER BY owner_id, rn`,
+		ORDER BY owner_id, assigned_at ASC`,
 		append(args, adminOwnerOutletShareLimit)...,
 	)
 	if err != nil {
@@ -153,31 +168,30 @@ func (r *Repository) loadAdminOwnerExportSnapshots(ctx context.Context, ownerIDs
 	for assignmentRows.Next() {
 		var (
 			ownerID    int64
-			rank       int
 			assignedAt string
 			shareName  string
 		)
-		if err := assignmentRows.Scan(&ownerID, &rank, &assignedAt, &shareName); err != nil {
+		if err := assignmentRows.Scan(&ownerID, &assignedAt, &shareName); err != nil {
 			return nil, err
 		}
-		if rank < 1 || rank > adminOwnerOutletShareLimit {
+		if shareName == "" {
 			continue
 		}
-		snapshot := snapshots[ownerID]
-		snapshot.Shares[rank-1].Date = formatAdminDate(assignedAt)
-		snapshot.Shares[rank-1].Name = shareName
-		snapshots[ownerID] = snapshot
+		ownerAssignments[ownerID] = append(ownerAssignments[ownerID], rawAssignment{
+			Date: formatAdminDate(assignedAt),
+			Name: shareName,
+		})
 	}
 	if err := assignmentRows.Err(); err != nil {
 		return nil, err
 	}
 
 	noteRows, err := r.db.QueryContext(ctx, `
-		SELECT owner_id, rn, interaction_at, note
+		SELECT owner_id, interaction_at, note
 		FROM (
 			SELECT
 				ci.owner_id,
-				ROW_NUMBER() OVER (PARTITION BY ci.owner_id ORDER BY ci.interaction_at ASC, ci.id ASC) AS rn,
+				ROW_NUMBER() OVER (PARTITION BY ci.owner_id ORDER BY ci.interaction_at DESC, ci.id DESC) AS rn,
 				DATE_FORMAT(ci.interaction_at, '%Y-%m-%dT%H:%i:%sZ') AS interaction_at,
 				COALESCE(ci.note, '') AS note
 			FROM customer_interactions ci
@@ -187,7 +201,7 @@ func (r *Repository) loadAdminOwnerExportSnapshots(ctx context.Context, ownerIDs
 			  AND ci.owner_id IN (`+inClause+`)
 		) ranked
 		WHERE rn <= ?
-		ORDER BY owner_id, rn`,
+		ORDER BY owner_id, interaction_at ASC`,
 		append(args, adminOwnerOutletShareLimit)...,
 	)
 	if err != nil {
@@ -198,34 +212,77 @@ func (r *Repository) loadAdminOwnerExportSnapshots(ctx context.Context, ownerIDs
 	for noteRows.Next() {
 		var (
 			ownerID       int64
-			rank          int
 			interactionAt string
 			note          string
 		)
-		if err := noteRows.Scan(&ownerID, &rank, &interactionAt, &note); err != nil {
+		if err := noteRows.Scan(&ownerID, &interactionAt, &note); err != nil {
 			return nil, err
 		}
-		if rank < 1 || rank > adminOwnerOutletShareLimit {
+		shareName, category := parseAdminShareNote(note)
+		if shareName == "" {
 			continue
 		}
-		shareName, category := parseAdminShareNote(note)
-		snapshot := snapshots[ownerID]
-		share := snapshot.Shares[rank-1]
-		if share.Date == "" {
-			share.Date = formatAdminDate(interactionAt)
-		}
-		if share.Name == "" {
-			share.Name = shareName
-		}
-		share.Category = category
-		snapshot.Shares[rank-1] = share
-		if category != "" {
-			snapshot.StatusTerbaru = deriveAdminStatusTerbaru(category, snapshot.Akuisisi == "Berlangganan", snapshot.Akuisisi == "Berlangganan", "", "")
-		}
-		snapshots[ownerID] = snapshot
+		ownerNotes[ownerID] = append(ownerNotes[ownerID], rawNote{
+			Date:     formatAdminDate(interactionAt),
+			Name:     shareName,
+			Category: category,
+		})
 	}
 	if err := noteRows.Err(); err != nil {
 		return nil, err
+	}
+
+	for _, ownerID := range ownerIDs {
+		snapshot := snapshots[ownerID]
+		assignments := ownerAssignments[ownerID]
+		notes := ownerNotes[ownerID]
+
+		sharesCount := 0
+		for _, assign := range assignments {
+			if sharesCount >= adminOwnerOutletShareLimit {
+				break
+			}
+			snapshot.Shares[sharesCount] = adminShareSnapshot{
+				Date: assign.Date,
+				Name: assign.Name,
+			}
+			sharesCount++
+		}
+
+		for _, nt := range notes {
+			matched := false
+			for i := 0; i < sharesCount; i++ {
+				if snapshot.Shares[i].Name == nt.Name && snapshot.Shares[i].Category == "" {
+					snapshot.Shares[i].Category = nt.Category
+					if snapshot.Shares[i].Date == "" {
+						snapshot.Shares[i].Date = nt.Date
+					}
+					matched = true
+					break
+				}
+			}
+			if !matched && sharesCount < adminOwnerOutletShareLimit {
+				snapshot.Shares[sharesCount] = adminShareSnapshot{
+					Date:     nt.Date,
+					Name:     nt.Name,
+					Category: nt.Category,
+				}
+				sharesCount++
+			}
+		}
+
+		lastCategory := ""
+		for i := sharesCount - 1; i >= 0; i-- {
+			if snapshot.Shares[i].Category != "" {
+				lastCategory = snapshot.Shares[i].Category
+				break
+			}
+		}
+		if lastCategory != "" {
+			snapshot.StatusTerbaru = deriveAdminStatusTerbaru(lastCategory, snapshot.Akuisisi == "Berlangganan", snapshot.Akuisisi == "Berlangganan", "", "")
+		}
+
+		snapshots[ownerID] = snapshot
 	}
 
 	return snapshots, nil

@@ -99,7 +99,7 @@ func BuildXLSX(reportKey, sheetName string, columns []ReportColumn, items []map[
 	return buf.Bytes(), nil
 }
 
-const adminOwnerOutletShareExportMax = 10
+const adminOwnerOutletShareExportMax = 5
 
 func adminOwnerOutletShareColumns() []ReportColumn {
 	columns := make([]ReportColumn, 0, adminOwnerOutletShareExportMax*3)
@@ -107,7 +107,7 @@ func adminOwnerOutletShareColumns() []ReportColumn {
 		columns = append(columns,
 			ReportColumn{Key: fmt.Sprintf("tanggal_dibagikan_%d", index), Label: fmt.Sprintf("Tanggal Dibagikan %d", index), Type: "string"},
 			ReportColumn{Key: fmt.Sprintf("share_%d", index), Label: fmt.Sprintf("Share %d", index), Type: "string"},
-			ReportColumn{Key: fmt.Sprintf("kategori_nasabah_%d", index), Label: fmt.Sprintf("Kategori Nasabah %d", index), Type: "string"},
+			ReportColumn{Key: fmt.Sprintf("kategori_nasabah_%d", index), Label: "Kategori Nasabah", Type: "string"},
 		)
 	}
 	return columns
@@ -126,7 +126,8 @@ func GetAdminOwnerOutletColumns() []ReportColumn {
 		{Key: "owner_email", Label: "Email Owner", Type: "string"},
 		{Key: "owner_phone", Label: "No Hp Owner", Type: "string"},
 		{Key: "outlet_phone", Label: "No. Hp Outlet", Type: "string"},
-		{Key: "create_date_project", Label: "Create Date", Type: "string"},
+		{Key: "create_date_project", Label: "Create Date Project", Type: "string"},
+		{Key: "bulan", Label: "Bulan", Type: "string"},
 		{Key: "brand_name", Label: "Nama Project/BRAND", Type: "string"},
 		{Key: "outlet_name", Label: "Nama Outlet", Type: "string"},
 		{Key: "kelurahan", Label: "Kelurahan", Type: "string"},
@@ -134,12 +135,16 @@ func GetAdminOwnerOutletColumns() []ReportColumn {
 		{Key: "kota", Label: "Kota", Type: "string"},
 		{Key: "provinsi", Label: "Provinsi", Type: "string"},
 		{Key: "alamat_lengkap", Label: "Alamat Lengkap", Type: "string"},
+		{Key: "nama_pengisi", Label: "Nama Pengisi", Type: "string"},
+		{Key: "check", Label: "Check", Type: "string"},
 		{Key: "status_terbaru", Label: "STATUS TERBARU", Type: "string"},
 		{Key: "akuisisi", Label: "Akuisisi", Type: "string"},
 		{Key: "pic", Label: "PIC", Type: "string"},
+		{Key: "tanggal_berlangganan", Label: "Tanggal Berlangganan", Type: "string"},
+		{Key: "booking", Label: "Booking", Type: "string"},
+		{Key: "mitra", Label: "Mitra", Type: "string"},
 	}
 	columns = append(columns, adminOwnerOutletShareColumns()...)
-	columns = append(columns, ReportColumn{Key: "jumlah_outlet", Label: "Jumlah Outlet", Type: "number"})
 	return columns
 }
 

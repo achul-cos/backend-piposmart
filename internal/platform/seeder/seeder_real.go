@@ -332,12 +332,15 @@ func seedDemoReal(ctx context.Context, tx *sql.Tx, options Options) error {
 	// years (2021-2022) reference owners/outlets that never appear in the "01. Owner & Outlet"
 	// file at all — those get created on the fly, assigned to the "Tanpa PIC" fallback sales
 	// account (same placeholder identity used elsewhere in this seeder for un-attributed leads).
-	fallbackSalesEmail := salesEmailByKey[salesIdentityKey(noPICIdentity)]
-	if err := SeedSubscriptionsFromExcel(ctx, tx, fake, adminID, fallbackSalesEmail); err != nil {
-		return fmt.Errorf("seed subscriptions from excel: %w", err)
-	}
+	// fallbackSalesEmail := salesEmailByKey[salesIdentityKey(noPICIdentity)]
+	// if err := SeedSubscriptionsFromExcel(ctx, tx, fake, adminID, fallbackSalesEmail); err != nil {
+	// 	return fmt.Errorf("seed subscriptions from excel: %w", err)
+	// }
 	if err := SeedMitraFromExcel(ctx, tx, adminID, nil); err != nil {
 		return fmt.Errorf("seed mitra from excel: %w", err)
+	}
+	if err := SeedKomisiMitraFromExcel(ctx, tx, adminID); err != nil {
+		return fmt.Errorf("seed komisi mitra from excel: %w", err)
 	}
 
 	return nil

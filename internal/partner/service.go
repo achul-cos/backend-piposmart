@@ -432,6 +432,14 @@ func (s *Service) DeactivatePartner(ctx context.Context, id int64) error {
 	return s.repo.DeactivatePartner(ctx, id)
 }
 
+func (s *Service) RestorePartner(ctx context.Context, id int64) error {
+	return s.repo.RestorePartner(ctx, id)
+}
+
+func (s *Service) PermanentDeletePartner(ctx context.Context, id int64) error {
+	return s.repo.PermanentDeletePartner(ctx, id)
+}
+
 /* ---------- PartnerAssignment ---------- */
 
 func (s *Service) AssignPIC(ctx context.Context, partnerID int64, userID int64, assignedByID *int64, createdAt *time.Time) (*PartnerAssignmentResponse, error) {
