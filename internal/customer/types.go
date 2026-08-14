@@ -82,6 +82,7 @@ type OutletOverview struct {
 	LatestSubscriptionStatus sql.NullString
 	LatestSubscriptionStart  sql.NullTime
 	LatestSubscriptionUntil  sql.NullTime
+	LatestPIC                sql.NullString
 	CreatedAt                time.Time
 	UpdatedAt                time.Time
 }
@@ -218,6 +219,8 @@ type OutletOverviewResponse struct {
 	Address             string                      `json:"address,omitempty"`
 	Status              string                      `json:"status"`
 	SubscriptionSummary SubscriptionSummaryResponse `json:"subscription_summary"`
+	LatestPIC           string                      `json:"latest_pic,omitempty"`
+	CreationStatus      string                      `json:"creation_status"`
 	CreatedAt           time.Time                   `json:"created_at"`
 	UpdatedAt           time.Time                   `json:"updated_at"`
 }
@@ -235,6 +238,7 @@ type OutletDetailResponse struct {
 	Address             string                      `json:"address,omitempty"`
 	Status              string                      `json:"status"`
 	SubscriptionSummary SubscriptionSummaryResponse `json:"subscription_summary"`
+	LatestPIC           string                      `json:"latest_pic,omitempty"`
 	CreatedAt           time.Time                   `json:"created_at"`
 	UpdatedAt           time.Time                   `json:"updated_at"`
 }
@@ -389,7 +393,9 @@ type ListParams struct {
 	CreatedFrom        *time.Time
 	CreatedTo          *time.Time
 	OwnerID            *int64
+	OwnerKeyword       string
 	SubscriptionStatus string
+	CreationStatus     string
 	SubscriptionMonth  string
 	Scope              string
 	All                bool
@@ -484,6 +490,12 @@ func NewOutletResponse(outlet Outlet) OutletResponse {
 }
 
 func NewOutletOverviewResponse(item OutletOverview) OutletOverviewResponse {
+	// CreationStatus: NEW jika outlet dibuat di bulan & tahun saat ini, EXISTING jika sebelumnya.
+	now := time.Now()
+	creationStatus := "EXISTING"
+	if item.CreatedAt.Year() == now.Year() && item.CreatedAt.Month() == now.Month() {
+		creationStatus = "NEW"
+	}
 	return OutletOverviewResponse{
 		ID:       item.ID,
 		Owner:    newOwnerBriefResponse(item),
@@ -503,8 +515,10 @@ func NewOutletOverviewResponse(item OutletOverview) OutletOverviewResponse {
 			LatestSubscriptionStart:  formatNullDate(item.LatestSubscriptionStart),
 			LatestSubscriptionEnd:    formatNullDate(item.LatestSubscriptionUntil),
 		},
-		CreatedAt: item.CreatedAt,
-		UpdatedAt: item.UpdatedAt,
+		LatestPIC:      item.LatestPIC.String,
+		CreationStatus: creationStatus,
+		CreatedAt:      item.CreatedAt,
+		UpdatedAt:      item.UpdatedAt,
 	}
 }
 
@@ -523,6 +537,7 @@ func NewOutletDetailResponse(item OutletOverview) OutletDetailResponse {
 		Address:             overview.Address,
 		Status:              overview.Status,
 		SubscriptionSummary: overview.SubscriptionSummary,
+		LatestPIC:           overview.LatestPIC,
 		CreatedAt:           overview.CreatedAt,
 		UpdatedAt:           overview.UpdatedAt,
 	}

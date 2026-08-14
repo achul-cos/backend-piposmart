@@ -3,6 +3,7 @@ package customer
 import (
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"time"
@@ -68,6 +69,8 @@ func (h *Handler) RegisterRoutes(api *gin.RouterGroup) {
 	outlets.GET("/unscoped", h.listGlobalOutletsUnscoped)
 	outlets.GET("/subscription-statuses", h.listOutletSubscriptionStatuses)
 	outlets.GET("/subscription-statuses/all", h.listAllOutletSubscriptionStatuses)
+	outlets.GET("/subscription-statuses/export-matrix", h.downloadOutletSubscriptionMatrixExcel)
+	outlets.GET("/subscription-statuses/import-template", h.downloadOutletSubscriptionImportTemplateExcel)
 	outlets.GET("/:outlet_id", h.getGlobalOutlet)
 }
 
@@ -216,6 +219,86 @@ func (h *Handler) downloadOwnerExcel(c *gin.Context) {
 		filename = fmt.Sprintf("Data_Owner_%s.xlsx", timestamp)
 	}
 
+	c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
+	c.Data(http.StatusOK, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", data)
+}
+
+// // downloadGlobalOutletExcel â€” download file Excel Data Owner-Outlet berdasarkan filter outlet global.
+// func (h *Handler) downloadGlobalOutletExcel(c *gin.Context) {
+// 	params, err := listParams(c)
+// 	if err != nil {
+// 		httpx.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
+// 		return
+// 	}
+// 	params.All = true
+// 	dateFrom, dateTo := exportDateParams(c, &params)
+// 
+// 	rows, err := h.service.ExportGlobalOutlets(c.Request.Context(), currentActor(c), params)
+// 	if err != nil {
+// 		httpx.Error(c, http.StatusInternalServerError, "EXPORT_ERROR", err.Error(), nil)
+// 		return
+// 	}
+// 	items := ToAdminOwnerOutletRows(rows)
+// 	data, err := reporting.BuildAdminOwnerOutletXLSX("Report Owner & Outlet", "Data Owner Outlet", reporting.GetAdminOwnerOutletColumns(), items, dateFrom, dateTo)
+// 	if err != nil {
+// 		httpx.Error(c, http.StatusInternalServerError, "EXPORT_ERROR", err.Error(), nil)
+// 		return
+// 	}
+// 
+// 	filename := "Data_Owner_Outlet.xlsx"
+// 	if dateFrom != "" && dateTo != "" {
+// 		filename = fmt.Sprintf("Data_Owner_Outlet_%s_%s.xlsx", dateFrom, dateTo)
+// 	} else {
+// 		timestamp := time.Now().Format("20060102_150405")
+// 		filename = fmt.Sprintf("Data_Owner_Outlet_%s.xlsx", timestamp)
+// 	}
+// 
+// 	c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
+// 	c.Data(http.StatusOK, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", data)
+// }
+
+func (h *Handler) downloadOutletSubscriptionMatrixExcel(c *gin.Context) {
+	params := outletSubscriptionStatusParams(c)
+	year, _ := strconv.Atoi(c.DefaultQuery("year", ""))
+	if year <= 0 && params.Month != "" {
+		if len(params.Month) >= 4 {
+			year, _ = strconv.Atoi(params.Month[:4])
+		}
+	}
+	if year <= 0 {
+		year = time.Now().UTC().Year()
+	}
+
+	log.Printf("[export-matrix] year=%d month=%s status_langganan=%s status_jatuh_tempo=%s",
+		year, params.Month, params.StatusLangganan, params.StatusJatuhTempo)
+
+	rows, minYear, err := h.service.ExportSubscriptionMatrix(c.Request.Context(), currentActor(c), params, year)
+	if err != nil {
+		httpx.Error(c, http.StatusInternalServerError, "EXPORT_ERROR", err.Error(), nil)
+		return
+	}
+
+	log.Printf("[export-matrix] result row_count=%d, minYear=%d", len(rows), minYear)
+
+	data, err := BuildSubscriptionMatrixXLSX(year, minYear, rows)
+	if err != nil {
+		httpx.Error(c, http.StatusInternalServerError, "EXPORT_ERROR", err.Error(), nil)
+		return
+	}
+
+	filename := fmt.Sprintf("Monthly Active %d.xlsx", year)
+	c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
+	c.Data(http.StatusOK, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", data)
+}
+
+func (h *Handler) downloadOutletSubscriptionImportTemplateExcel(c *gin.Context) {
+	data, err := BuildSubscriptionImportTemplateXLSX()
+	if err != nil {
+		httpx.Error(c, http.StatusInternalServerError, "EXPORT_ERROR", err.Error(), nil)
+		return
+	}
+
+	filename := "Template_Import_Langganan_Outlet.xlsx"
 	c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
 	c.Data(http.StatusOK, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", data)
 }
@@ -634,11 +717,12 @@ func listParams(c *gin.Context) (ListParams, error) {
 			}
 			return c.Query("status")
 		}(),
-		SubscriptionMonth:  c.Query("subscription_month"),
-		All:                false,
-		Page:               page,
-		Limit:              limit,
-		Sort:               c.Query("sort"),
+		CreationStatus:    c.Query("creation_status"),
+		SubscriptionMonth: c.Query("subscription_month"),
+		All:               false,
+		Page:              page,
+		Limit:             limit,
+		Sort:              c.Query("sort"),
 	}
 	if ownerID, err := strconv.ParseInt(c.Query("owner_id"), 10, 64); err == nil && ownerID > 0 {
 		params.OwnerID = &ownerID

@@ -17,14 +17,14 @@ import (
 const (
 	OutletSubscriptionStatusNotSubscribe = "NOT_SUBSCRIBE"
 	OutletSubscriptionStatusTrial        = "TRIAL"
-	OutletSubscriptionStatusInactive     = "TIDAK_AKTIF"
+	OutletSubscriptionStatusInactive     = "UNSUBSCRIBE"
+	OutletSubscriptionDueStatusNoPackage = "NO_PACKAGE"
 	OutletSubscriptionStatusDueThisMonth = "JATUH_TEMPO"
 	OutletSubscriptionStatusWillBeDue    = "AKAN_JATUH_TEMPO"
 	OutletSubscriptionStatusDue          = "JATUH_TEMPO"
 	OutletSubscriptionStatusPassedDue    = "TELAH_JATUH_TEMPO"
-	OutletSubscriptionStatusSubscribed   = "BERLANGGANAN"
+	OutletSubscriptionStatusSubscribed   = "SUBSCRIBE"
 	OutletSubscriptionStatusNew          = "NEW"
-	OutletSubscriptionStatusRenewal      = "RENEWAL"
 	OutletSubscriptionLabelOneMonth      = "BERLANGGANAN 1 BULAN"
 	NeverSubscribedDisplay               = "TIDAK PERNAH"
 	TrialDurationDays                    = 14
@@ -60,6 +60,7 @@ type OutletSubscriptionSnapshot struct {
 	SubscriptionEnd         sql.NullTime
 	CreatedAt               time.Time
 	UpdatedAt               time.Time
+	LatestPIC               sql.NullString // No HP & Nama PIC terakhir dari customer_leads outlet ini
 }
 
 type OutletSubscriptionStatusParams struct {
@@ -72,6 +73,7 @@ type OutletSubscriptionStatusParams struct {
 	City               string
 	OwnerID            *int64
 	SubscriptionStatus string
+	CreationStatus     string
 	StatusLangganan    string
 	StatusJatuhTempo   string
 	Month              string
@@ -79,7 +81,11 @@ type OutletSubscriptionStatusParams struct {
 	DueDateReference   string
 	DueDateStart       string
 	DueDateEnd         string
+	StartDateStart     string
+	StartDateEnd       string
+	PackageName        string
 	All                bool
+	HasActivityOnly    bool
 	Page               int
 	Limit              int
 	Sort               string
@@ -115,6 +121,7 @@ type OutletSubscriptionStatusResponse struct {
 	SubscriptionStartDate      string                   `json:"subscription_start_date,omitempty"`
 	SubscriptionEndDate        string                   `json:"subscription_end_date,omitempty"`
 	PackagePlan                PackagePlanBriefResponse `json:"package_plan"`
+	CreationStatus             string                   `json:"creation_status"`
 	CreatedAt                  time.Time                `json:"created_at"`
 	UpdatedAt                  time.Time                `json:"updated_at"`
 }
@@ -170,6 +177,7 @@ func outletSubscriptionStatusParams(c *gin.Context) OutletSubscriptionStatusPara
 		Province:           c.Query("province"),
 		City:               c.Query("city"),
 		SubscriptionStatus: c.Query("subscription_status"),
+		CreationStatus:     c.Query("creation_status"),
 		StatusLangganan:    c.Query("status_langganan"),
 		StatusJatuhTempo:   c.Query("status_jatuh_tempo"),
 		Month: func() string {
@@ -185,7 +193,19 @@ func outletSubscriptionStatusParams(c *gin.Context) OutletSubscriptionStatusPara
 		DueDateReference: c.Query("due_date_reference"),
 		DueDateStart:     c.Query("due_date_start"),
 		DueDateEnd:       c.Query("due_date_end"),
+		StartDateStart:   c.Query("start_date_start"),
+		StartDateEnd:     c.Query("start_date_end"),
+		PackageName: func() string {
+			if p := c.Query("package_name"); p != "" {
+				return p
+			}
+			if p := c.Query("package"); p != "" {
+				return p
+			}
+			return c.Query("plan")
+		}(),
 		All:              false,
+		HasActivityOnly:  c.Query("has_activity_only") == "true",
 		Page:             page,
 		Limit:            limit,
 		Sort:             c.Query("sort"),
@@ -260,7 +280,19 @@ func (r *Repository) ListOutletSubscriptionSnapshots(ctx context.Context, actor 
 			ls.package_id, ls.package_code, ls.package_name,
 			ls.plan_id, ls.plan_code, ls.plan_name, ls.tenure_months,
 			ls.active_from, ls.active_until,
-			ot.created_at, ot.updated_at
+			ot.created_at, ot.updated_at,
+			(
+				SELECT IF(
+					TRIM(COALESCE(pic.phone, '')) != '',
+					CONCAT(COALESCE(pic.name, ''), ' (', RIGHT(TRIM(pic.phone), 3), ')'),
+					COALESCE(pic.name, '')
+				)
+				FROM customer_leads cl
+				LEFT JOIN users pic ON pic.id = COALESCE(cl.active_sales_id, IF(cl.current_owner_role = 'SALES', cl.current_owner_user_id, NULL))
+				WHERE cl.outlet_id = ot.id AND cl.deleted_at IS NULL
+				ORDER BY cl.created_at DESC, cl.id DESC
+				LIMIT 1
+			) AS latest_pic
 		FROM outlets ot
 		LEFT JOIN owners o ON o.id = ot.owner_id
 		LEFT JOIN latest_subscriptions ls ON ls.outlet_id = ot.id AND ls.rn = 1
@@ -309,6 +341,7 @@ func (r *Repository) ListOutletSubscriptionSnapshots(ctx context.Context, actor 
 			&item.SubscriptionEnd,
 			&item.CreatedAt,
 			&item.UpdatedAt,
+			&item.LatestPIC,
 		); err != nil {
 			return nil, 0, err
 		}
@@ -372,8 +405,9 @@ func outletSubscriptionStatusWhere(actor Actor, params OutletSubscriptionStatusP
 		args = append(args, like(params.Phone))
 	}
 	if params.BrandName != "" {
-		where = append(where, "o.brand_name LIKE ?")
-		args = append(args, like(params.BrandName))
+		pattern := like(params.BrandName)
+		where = append(where, "(o.brand_name LIKE ? OR o.name LIKE ? OR o.code LIKE ?)")
+		args = append(args, pattern, pattern, pattern)
 	}
 	if params.Province != "" {
 		where = append(where, "ot.province LIKE ?")
@@ -383,21 +417,78 @@ func outletSubscriptionStatusWhere(actor Actor, params OutletSubscriptionStatusP
 		where = append(where, "ot.city LIKE ?")
 		args = append(args, like(params.City))
 	}
+	if params.PackageName != "" {
+		pattern := like(params.PackageName)
+		where = append(where, "(ls.package_name LIKE ? OR ls.package_code LIKE ? OR ls.plan_name LIKE ? OR ls.plan_code LIKE ?)")
+		args = append(args, pattern, pattern, pattern, pattern)
+	}
 	if params.DueDate != "" {
 		if dueDate, err := time.Parse("2006-01-02", params.DueDate); err == nil {
 			where = append(where, "DATE(ls.active_until) = DATE(?)")
 			args = append(args, dueDate)
 		}
 	}
-	if params.DueDateStart != "" {
-		if startDate, err := time.Parse("2006-01-02", params.DueDateStart); err == nil {
+	// Jika hanya salah satu tanggal diisi, gunakan batas bulan yang sama sebagai bound implisit
+	// agar filter tidak menampilkan data dari seluruh waktu (beginning of time)
+	effectiveDueDateStart := params.DueDateStart
+	effectiveDueDateEnd := params.DueDateEnd
+	if effectiveDueDateStart == "" && effectiveDueDateEnd != "" {
+		// Hanya Sampai Tanggal diisi → batas bawah = awal bulan dari Sampai Tanggal
+		if endDate, err := time.Parse("2006-01-02", effectiveDueDateEnd); err == nil {
+			effectiveDueDateStart = time.Date(endDate.Year(), endDate.Month(), 1, 0, 0, 0, 0, endDate.Location()).Format("2006-01-02")
+		}
+	}
+	if effectiveDueDateEnd == "" && effectiveDueDateStart != "" {
+		// Hanya Dari Tanggal diisi → batas atas = akhir bulan dari Dari Tanggal
+		if startDate, err := time.Parse("2006-01-02", effectiveDueDateStart); err == nil {
+			lastDay := time.Date(startDate.Year(), startDate.Month()+1, 0, 23, 59, 59, 0, startDate.Location())
+			effectiveDueDateEnd = lastDay.Format("2006-01-02")
+		}
+	}
+	if effectiveDueDateStart != "" {
+		if startDate, err := time.Parse("2006-01-02", effectiveDueDateStart); err == nil {
 			where = append(where, "ls.active_until >= ?")
 			args = append(args, startDate)
 		}
 	}
-	if params.DueDateEnd != "" {
-		if endDate, err := time.Parse("2006-01-02", params.DueDateEnd); err == nil {
+	if effectiveDueDateEnd != "" {
+		if endDate, err := time.Parse("2006-01-02", effectiveDueDateEnd); err == nil {
 			where = append(where, "ls.active_until <= ?")
+			args = append(args, endDate.Add(23*time.Hour+59*time.Minute+59*time.Second))
+		}
+	}
+	if params.CreationStatus != "" {
+		st := strings.ToUpper(strings.TrimSpace(params.CreationStatus))
+		if st == "NEW" {
+			where = append(where, "YEAR(ot.created_at) = ? AND MONTH(ot.created_at) = ?")
+			args = append(args, referenceMonth.Year(), int(referenceMonth.Month()))
+		} else if st == "EXISTING" {
+			where = append(where, "(YEAR(ot.created_at) < ? OR (YEAR(ot.created_at) = ? AND MONTH(ot.created_at) < ?))")
+			args = append(args, referenceMonth.Year(), referenceMonth.Year(), int(referenceMonth.Month()))
+		}
+	}
+	effectiveStartDateStart := params.StartDateStart
+	effectiveStartDateEnd := params.StartDateEnd
+	if effectiveStartDateStart == "" && effectiveStartDateEnd != "" {
+		if endDate, err := time.Parse("2006-01-02", effectiveStartDateEnd); err == nil {
+			effectiveStartDateStart = time.Date(endDate.Year(), endDate.Month(), 1, 0, 0, 0, 0, endDate.Location()).Format("2006-01-02")
+		}
+	}
+	if effectiveStartDateEnd == "" && effectiveStartDateStart != "" {
+		if startDate, err := time.Parse("2006-01-02", effectiveStartDateStart); err == nil {
+			lastDay := time.Date(startDate.Year(), startDate.Month()+1, 0, 23, 59, 59, 0, startDate.Location())
+			effectiveStartDateEnd = lastDay.Format("2006-01-02")
+		}
+	}
+	if effectiveStartDateStart != "" {
+		if startDate, err := time.Parse("2006-01-02", effectiveStartDateStart); err == nil {
+			where = append(where, "ls.active_from >= ?")
+			args = append(args, startDate)
+		}
+	}
+	if effectiveStartDateEnd != "" {
+		if endDate, err := time.Parse("2006-01-02", effectiveStartDateEnd); err == nil {
+			where = append(where, "ls.active_from <= ?")
 			args = append(args, endDate.Add(23*time.Hour+59*time.Minute+59*time.Second))
 		}
 	}
@@ -430,6 +521,30 @@ func resolveRefDate(referenceMonth time.Time, isSpecificDate bool) time.Time {
 }
 
 func outletSubscriptionStatusFilterCondition(status string, referenceMonth time.Time, isSpecificDate bool, dueDateReference string) (string, []any) {
+	if strings.Contains(status, ",") {
+		parts := strings.Split(status, ",")
+		var conds []string
+		var allArgs []any
+		for _, part := range parts {
+			part = strings.TrimSpace(part)
+			c, args := singleOutletSubscriptionStatusFilterCondition(part, referenceMonth, isSpecificDate, dueDateReference)
+			if c != "" {
+				conds = append(conds, c)
+				allArgs = append(allArgs, args...)
+			}
+		}
+		if len(conds) == 0 {
+			return "", nil
+		}
+		if len(conds) == 1 {
+			return conds[0], allArgs
+		}
+		return "(" + strings.Join(conds, " OR ") + ")", allArgs
+	}
+	return singleOutletSubscriptionStatusFilterCondition(status, referenceMonth, isSpecificDate, dueDateReference)
+}
+
+func singleOutletSubscriptionStatusFilterCondition(status string, referenceMonth time.Time, isSpecificDate bool, dueDateReference string) (string, []any) {
 	refDate := resolveRefDate(referenceMonth, isSpecificDate)
 	if dueDateReference != "" {
 		if parsedRef, err := time.Parse("2006-01-02", dueDateReference); err == nil {
@@ -439,55 +554,124 @@ func outletSubscriptionStatusFilterCondition(status string, referenceMonth time.
 
 	switch status {
 	case OutletSubscriptionStatusTrial:
-		trialCutoff := time.Now().UTC().AddDate(0, 0, -TrialDurationDays)
+		// TRIAL = belum pernah berlangganan DAN masih dalam masa trial (created > trialCutoff14)
+		trialCutoff14 := refDate.AddDate(0, 0, -TrialDurationDays)
 		return `(
 			ls.active_until IS NULL
-			AND o.created_at >= ?
+			AND COALESCE(o.created_at, ot.created_at) > ?
 			AND NOT EXISTS(
 				SELECT 1 FROM subscriptions s2
 				JOIN outlets ot5 ON ot5.id = s2.outlet_id
 				WHERE ot5.owner_id = ot.owner_id AND s2.deleted_at IS NULL
 			)
-		)`, []any{trialCutoff}
+		)`, []any{trialCutoff14}
+	case OutletSubscriptionDueStatusNoPackage:
+		// NO_PACKAGE sebagai Kategori Nasabah: belum pernah berlangganan DAN trial sudah habis
+		trialCutoff14 := refDate.AddDate(0, 0, -TrialDurationDays)
+		return `(
+			ls.active_until IS NULL
+			AND COALESCE(o.created_at, ot.created_at) <= ?
+			AND NOT EXISTS(
+				SELECT 1 FROM subscriptions s2
+				JOIN outlets ot5 ON ot5.id = s2.outlet_id
+				WHERE ot5.owner_id = ot.owner_id AND s2.deleted_at IS NULL
+			)
+		)`, []any{trialCutoff14}
 	case OutletSubscriptionStatusInactive:
-		// Sisa hari < 0 (ls.active_until < refDate) ATAU belum pernah berlangganan (bukan Trial).
-		trialCutoff := time.Now().UTC().AddDate(0, 0, -TrialDurationDays)
+		// UNSUBSCRIBE: pernah berlangganan tapi sekarang tidak aktif.
+		// Dua kasus: (1) langganan sudah expired, (2) tidak ada langganan tapi owner pernah punya sub
 		return `(
 			ls.active_until < ? OR (
-				(ls.active_until IS NULL OR ls.active_from IS NULL) AND (
-					o.created_at < ? OR EXISTS(
-						SELECT 1 FROM subscriptions s2
-						JOIN outlets ot5 ON ot5.id = s2.outlet_id
-						WHERE ot5.owner_id = ot.owner_id AND s2.deleted_at IS NULL
-					)
+				(ls.active_until IS NULL OR ls.active_from IS NULL) AND EXISTS(
+					SELECT 1 FROM subscriptions s2
+					JOIN outlets ot5 ON ot5.id = s2.outlet_id
+					WHERE ot5.owner_id = ot.owner_id AND s2.deleted_at IS NULL
 				)
 			)
-		)`, []any{refDate, trialCutoff}
+		)`, []any{refDate}
 	case OutletSubscriptionStatusNew:
 		return `(
 			ls.active_until >= ? 
 			AND YEAR(ls.active_from) = YEAR(?) AND MONTH(ls.active_from) = MONTH(?)
 			AND (SELECT COUNT(*) FROM subscriptions s3 WHERE s3.outlet_id = ot.id AND s3.deleted_at IS NULL) = 1
 		)`, []any{refDate, refDate, refDate}
-	case OutletSubscriptionStatusRenewal:
-		return `(
-			ls.active_until >= ? 
-			AND YEAR(ls.active_from) = YEAR(?) AND MONTH(ls.active_from) = MONTH(?)
-			AND (SELECT COUNT(*) FROM subscriptions s3 WHERE s3.outlet_id = ot.id AND s3.deleted_at IS NULL) > 1
-		)`, []any{refDate, refDate, refDate}
 	case OutletSubscriptionStatusSubscribed:
 		return `(
 			ls.active_until >= ? 
-			AND NOT (YEAR(ls.active_from) = YEAR(?) AND MONTH(ls.active_from) = MONTH(?))
-		)`, []any{refDate, refDate, refDate}
+			AND (
+				(YEAR(ls.active_from) = YEAR(?) AND MONTH(ls.active_from) = MONTH(?) AND (SELECT COUNT(*) FROM subscriptions s3 WHERE s3.outlet_id = ot.id AND s3.deleted_at IS NULL) > 1)
+				OR NOT (YEAR(ls.active_from) = YEAR(?) AND MONTH(ls.active_from) = MONTH(?))
+			)
+		)`, []any{refDate, refDate, refDate, refDate, refDate}
 	case OutletSubscriptionStatusWillBeDue:
-		return `(ls.active_until IS NOT NULL AND ls.active_until > ? AND ls.active_until <= ?)`, []any{refDate, refDate.AddDate(0, 0, 7)}
+		// Cutoff dihitung dari refDate agar Acuan Jatuh Tempo berpengaruh
+		// AKAN JATUH TEMPO TRIAL: owner dibuat antara (refDate-14) eksklusif dan (refDate-7) inklusif
+		// yaitu sisa 1-7 hari trial
+		trialCutoff14 := refDate.AddDate(0, 0, -TrialDurationDays)
+		trialCutoff7 := refDate.AddDate(0, 0, -7)
+		return `(
+			(ls.active_until IS NOT NULL AND ls.active_until > ? AND ls.active_until <= ?)
+			OR (
+				ls.active_until IS NULL
+				AND COALESCE(o.created_at, ot.created_at) > ? 
+				AND COALESCE(o.created_at, ot.created_at) <= ?
+				AND NOT EXISTS(
+					SELECT 1 FROM subscriptions s2
+					JOIN outlets ot5 ON ot5.id = s2.outlet_id
+					WHERE ot5.owner_id = ot.owner_id AND s2.deleted_at IS NULL
+				)
+			)
+		)`, []any{refDate, refDate.AddDate(0, 0, 14), trialCutoff14, trialCutoff7}
 	case OutletSubscriptionStatusDue:
-		return `(ls.active_until IS NOT NULL AND DATE(ls.active_until) = DATE(?))`, []any{refDate}
+		trialCutoff14 := refDate.AddDate(0, 0, -TrialDurationDays)
+		return `(
+			(ls.active_until IS NOT NULL AND DATE(ls.active_until) = DATE(?))
+			OR (
+				ls.active_until IS NULL
+				AND DATE(COALESCE(o.created_at, ot.created_at)) = DATE(?)
+				AND NOT EXISTS(
+					SELECT 1 FROM subscriptions s2
+					JOIN outlets ot5 ON ot5.id = s2.outlet_id
+					WHERE ot5.owner_id = ot.owner_id AND s2.deleted_at IS NULL
+				)
+			)
+		)`, []any{refDate, trialCutoff14}
 	case OutletSubscriptionStatusPassedDue:
-		return `(ls.active_until IS NOT NULL AND ls.active_until < ?)`, []any{refDate}
+		trialCutoff14 := refDate.AddDate(0, 0, -TrialDurationDays)
+		return `(
+			(ls.active_until IS NOT NULL AND ls.active_until < ?)
+			OR (
+				ls.active_until IS NULL
+				AND DATE(COALESCE(o.created_at, ot.created_at)) < DATE(?)
+				AND NOT EXISTS(
+					SELECT 1 FROM subscriptions s2
+					JOIN outlets ot5 ON ot5.id = s2.outlet_id
+					WHERE ot5.owner_id = ot.owner_id AND s2.deleted_at IS NULL
+				)
+			)
+			OR (
+				(ls.active_until IS NULL OR ls.active_from IS NULL) AND EXISTS(
+					SELECT 1 FROM subscriptions s2
+					JOIN outlets ot5 ON ot5.id = s2.outlet_id
+					WHERE ot5.owner_id = ot.owner_id AND s2.deleted_at IS NULL
+				)
+			)
+		)`, []any{refDate, trialCutoff14}
 	case "BELUM_JATUH_TEMPO":
-		return `(ls.active_until IS NOT NULL AND ls.active_until > ?)`, []any{refDate.AddDate(0, 0, 7)}
+		// Cutoff dihitung dari refDate agar Acuan Jatuh Tempo berpengaruh
+		trialCutoff7 := refDate.AddDate(0, 0, -7)
+		return `(
+			(ls.active_until IS NOT NULL AND ls.active_until > ?)
+			OR (
+				ls.active_until IS NULL
+				AND COALESCE(o.created_at, ot.created_at) >= ?
+				AND NOT EXISTS(
+					SELECT 1 FROM subscriptions s2
+					JOIN outlets ot5 ON ot5.id = s2.outlet_id
+					WHERE ot5.owner_id = ot.owner_id AND s2.deleted_at IS NULL
+				)
+			)
+		)`, []any{refDate.AddDate(0, 0, 14), trialCutoff7}
 	default:
 		return "", nil
 	}
@@ -544,13 +728,20 @@ func normalizeOutletSubscriptionStatusParams(params OutletSubscriptionStatusPara
 }
 
 func normalizeOutletSubscriptionStatusCode(value string) string {
-	value = strings.ToUpper(strings.TrimSpace(value))
-	switch value {
-	case OutletSubscriptionStatusTrial, OutletSubscriptionStatusInactive, OutletSubscriptionStatusDue, OutletSubscriptionStatusWillBeDue, OutletSubscriptionStatusPassedDue, OutletSubscriptionStatusSubscribed, OutletSubscriptionStatusNew, OutletSubscriptionStatusRenewal, "BELUM_JATUH_TEMPO":
-		return value
-	default:
+	value = strings.TrimSpace(value)
+	if value == "" {
 		return ""
 	}
+	parts := strings.Split(value, ",")
+	var normalized []string
+	for _, p := range parts {
+		p = strings.ToUpper(strings.TrimSpace(p))
+		switch p {
+		case OutletSubscriptionStatusTrial, OutletSubscriptionStatusInactive, OutletSubscriptionStatusDue, OutletSubscriptionStatusWillBeDue, OutletSubscriptionStatusPassedDue, OutletSubscriptionStatusSubscribed, OutletSubscriptionStatusNew, "BELUM_JATUH_TEMPO", OutletSubscriptionDueStatusNoPackage:
+			normalized = append(normalized, p)
+		}
+	}
+	return strings.Join(normalized, ",")
 }
 
 func resolveReferenceMonth(value string) (time.Time, bool, error) {
@@ -585,7 +776,7 @@ func monthEnd(referenceMonth time.Time) time.Time {
 func computeDueStatus(statusCode string) (string, string) {
 	switch statusCode {
 	case OutletSubscriptionStatusTrial:
-		return OutletSubscriptionStatusTrial, "TRIAL"
+		return OutletSubscriptionDueStatusNoPackage, "NO PACKAGE"
 	case OutletSubscriptionStatusWillBeDue:
 		return OutletSubscriptionStatusWillBeDue, "AKAN JATUH TEMPO"
 	case OutletSubscriptionStatusDue:
@@ -599,6 +790,11 @@ func computeDueStatus(statusCode string) (string, string) {
 
 func buildOutletSubscriptionStatusResponse(snapshot OutletSubscriptionSnapshot, referenceMonth time.Time, isSpecificDate bool, dueDateReference string) OutletSubscriptionStatusResponse {
 	statusCode, statusLabel, dueCode, dueLabel, remainingDays, remainingDaysDisplay, lastSubscriptionEndDisplay := classifyOutletSubscription(snapshot, referenceMonth, isSpecificDate, dueDateReference)
+	creationStatus := "EXISTING"
+	if snapshot.CreatedAt.Year() == referenceMonth.Year() && snapshot.CreatedAt.Month() == referenceMonth.Month() {
+		creationStatus = "NEW"
+	}
+
 	response := OutletSubscriptionStatusResponse{
 		OutletID:                   snapshot.OutletID,
 		OutletCode:                 snapshot.OutletCode,
@@ -616,6 +812,7 @@ func buildOutletSubscriptionStatusResponse(snapshot OutletSubscriptionSnapshot, 
 		RemainingDaysDisplay:       remainingDaysDisplay,
 		LastSubscriptionEndDisplay: lastSubscriptionEndDisplay,
 		PackagePlan:                packagePlanBriefFromSnapshot(snapshot),
+		CreationStatus:             creationStatus,
 		CreatedAt:                  snapshot.CreatedAt,
 		UpdatedAt:                  snapshot.UpdatedAt,
 	}
@@ -631,30 +828,46 @@ func buildOutletSubscriptionStatusResponse(snapshot OutletSubscriptionSnapshot, 
 }
 
 func classifyOutletSubscription(snapshot OutletSubscriptionSnapshot, referenceMonth time.Time, isSpecificDate bool, dueDateReference string) (string, string, string, string, *int64, string, string) {
-	if !snapshot.SubscriptionEnd.Valid || !snapshot.SubscriptionStart.Valid {
-		now := time.Now().UTC()
-		ownerAge := now.Sub(snapshot.OwnerCreatedAt)
-		if ownerAge <= time.Duration(TrialDurationDays)*24*time.Hour && !snapshot.OwnerHasAnySubscription {
-			trialEnd := snapshot.OwnerCreatedAt.AddDate(0, 0, TrialDurationDays)
-			diffTrialDays := int64(trialEnd.Sub(now).Hours() / 24)
-			if diffTrialDays < 0 {
-				diffTrialDays = 0
-			}
-			trialEndDisplay := trialEnd.Format("2006-01-02")
-			remainingDisplay := fmt.Sprintf("%d hari", diffTrialDays)
-			return OutletSubscriptionStatusTrial, "TRIAL", OutletSubscriptionStatusTrial, "TRIAL", &diffTrialDays, remainingDisplay, trialEndDisplay
-		}
-		return OutletSubscriptionStatusInactive, "TIDAK AKTIF", "", "", nil, NeverSubscribedDisplay, NeverSubscribedDisplay
-	}
-
-	start := dateOnly(snapshot.SubscriptionStart.Time)
-	end := dateOnly(snapshot.SubscriptionEnd.Time)
+	// Tentukan refDate terlebih dahulu, agar trial classification juga menggunakan Acuan Jatuh Tempo
 	refDate := resolveRefDate(referenceMonth, isSpecificDate)
 	if dueDateReference != "" {
 		if parsedRef, err := time.Parse("2006-01-02", dueDateReference); err == nil {
 			refDate = dateOnly(parsedRef)
 		}
 	}
+
+	if !snapshot.SubscriptionEnd.Valid || !snapshot.SubscriptionStart.Valid {
+		ownerCreated := dateOnly(snapshot.OwnerCreatedAt)
+		trialEnd := ownerCreated.AddDate(0, 0, TrialDurationDays)
+		diffTrialDays := int64(trialEnd.Sub(refDate).Hours() / 24)
+		trialEndDisplay := trialEnd.Format("2006-01-02")
+
+		if !snapshot.OwnerHasAnySubscription {
+			// Belum pernah berlangganan:
+			// - Hari 1-13 (sisa > 7): TRIAL / BELUM JATUH TEMPO
+			// - Hari 8-13 (sisa 1-7): TRIAL / AKAN JATUH TEMPO
+			// - Hari 14+ (sisa <= 0): NO_PACKAGE / JATUH TEMPO atau TELAH JATUH TEMPO
+			if diffTrialDays > 7 {
+				remainingDisplay := fmt.Sprintf("%d hari", diffTrialDays)
+				return OutletSubscriptionStatusTrial, "TRIAL", "BELUM_JATUH_TEMPO", "BELUM JATUH TEMPO", &diffTrialDays, remainingDisplay, trialEndDisplay
+			} else if diffTrialDays > 0 && diffTrialDays <= 7 {
+				remainingDisplay := fmt.Sprintf("%d hari", diffTrialDays)
+				return OutletSubscriptionStatusTrial, "TRIAL", OutletSubscriptionStatusWillBeDue, "AKAN JATUH TEMPO", &diffTrialDays, remainingDisplay, trialEndDisplay
+			} else if diffTrialDays == 0 {
+				// Hari jatuh tempo trial → NO PACKAGE / JATUH TEMPO
+				zero := int64(0)
+				return OutletSubscriptionDueStatusNoPackage, "NO PACKAGE", OutletSubscriptionStatusDue, "JATUH TEMPO", &zero, "0 hari", trialEndDisplay
+			}
+			// diffTrialDays < 0: trial sudah lewat → NO PACKAGE / TELAH JATUH TEMPO
+			return OutletSubscriptionDueStatusNoPackage, "NO PACKAGE", OutletSubscriptionStatusPassedDue, "TELAH JATUH TEMPO", &diffTrialDays, fmt.Sprintf("%d hari", diffTrialDays), trialEndDisplay
+		}
+		// Pernah berlangganan di outlet lain, sehingga outlet baru tidak dapat trial.
+		// Status yang tepat adalah NO PACKAGE (karena outlet ini sendiri belum pernah dibelikan paket).
+		return OutletSubscriptionDueStatusNoPackage, "NO PACKAGE", OutletSubscriptionStatusPassedDue, "TELAH JATUH TEMPO", nil, NeverSubscribedDisplay, NeverSubscribedDisplay
+	}
+
+	start := dateOnly(snapshot.SubscriptionStart.Time)
+	end := dateOnly(snapshot.SubscriptionEnd.Time)
 	lastSubscriptionEndDisplay := end.Format("2006-01-02")
 	diffDays := int64(end.Sub(refDate).Hours() / 24)
 
@@ -666,34 +879,36 @@ func classifyOutletSubscription(snapshot OutletSubscriptionSnapshot, referenceMo
 		dueCode = OutletSubscriptionStatusPassedDue
 		dueLabel = "TELAH JATUH TEMPO"
 	} else if diffDays == 0 {
+		// 0 hari = JATUH TEMPO (jatuh tempo hari ini)
 		dueCode = OutletSubscriptionStatusDue
 		dueLabel = "JATUH TEMPO"
-	} else if diffDays > 0 && diffDays <= 7 {
+	} else if diffDays > 0 && diffDays <= 14 {
+		// 1-14 hari = AKAN JATUH TEMPO
 		dueCode = OutletSubscriptionStatusWillBeDue
 		dueLabel = "AKAN JATUH TEMPO"
-	} else if diffDays > 7 {
+	} else if diffDays > 14 {
 		dueCode = "BELUM_JATUH_TEMPO"
 		dueLabel = "BELUM JATUH TEMPO"
 	}
 
 	if diffDays < 0 {
-		return OutletSubscriptionStatusInactive, "TIDAK AKTIF", dueCode, dueLabel, remaining, remainingDisplay, lastSubscriptionEndDisplay
+		return OutletSubscriptionStatusInactive, "UNSUBSCRIBE", dueCode, dueLabel, remaining, remainingDisplay, lastSubscriptionEndDisplay
 	}
 
 	isStartSameMonth := start.Year() == refDate.Year() && start.Month() == refDate.Month()
 	var statusCode, statusLabel string
 
 	if isStartSameMonth {
-		if snapshot.OutletSubscriptionCount > 1 {
-			statusCode = OutletSubscriptionStatusRenewal
-			statusLabel = "RENEWAL"
-		} else {
+		if snapshot.OutletSubscriptionCount <= 1 {
 			statusCode = OutletSubscriptionStatusNew
 			statusLabel = "NEW"
+		} else {
+			statusCode = OutletSubscriptionStatusSubscribed
+			statusLabel = "SUBSCRIBE"
 		}
 	} else {
 		statusCode = OutletSubscriptionStatusSubscribed
-		statusLabel = "BERLANGGANAN"
+		statusLabel = "SUBSCRIBE"
 	}
 
 	return statusCode, statusLabel, dueCode, dueLabel, remaining, remainingDisplay, lastSubscriptionEndDisplay
@@ -740,4 +955,65 @@ func nullableInt64Ptr(value sql.NullInt64) *int64 {
 	}
 	out := value.Int64
 	return &out
+}
+
+type SubscriptionDetail struct {
+	ID           int64
+	OutletID     int64
+	PackageID    sql.NullInt64
+	PackageCode  sql.NullString
+	PackageName  sql.NullString
+	PlanID       sql.NullInt64
+	PlanCode     sql.NullString
+	PlanName     sql.NullString
+	TenureMonths sql.NullInt64
+	ActiveFrom   sql.NullTime
+	ActiveUntil  sql.NullTime
+}
+
+func (r *Repository) GetSubscriptionsForOutlets(ctx context.Context, outletIDs []int64) (map[int64][]SubscriptionDetail, error) {
+	if len(outletIDs) == 0 {
+		return make(map[int64][]SubscriptionDetail), nil
+	}
+
+	args := make([]any, len(outletIDs))
+	placeholders := make([]string, len(outletIDs))
+	for i, id := range outletIDs {
+		args[i] = id
+		placeholders[i] = "?"
+	}
+
+	query := `
+		SELECT 
+			s.id, s.outlet_id, s.package_id, s.plan_id, s.active_from, s.active_until, 
+			p.code AS package_code, p.name AS package_name,
+			pl.code AS plan_code, pl.name AS plan_name, pl.tenure_months
+		FROM subscriptions s
+		LEFT JOIN subscription_packages p ON p.id = s.package_id
+		LEFT JOIN subscription_plans pl ON pl.id = s.plan_id
+		WHERE s.deleted_at IS NULL AND s.outlet_id IN (` + strings.Join(placeholders, ",") + `)
+	`
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make(map[int64][]SubscriptionDetail)
+	for rows.Next() {
+		var d SubscriptionDetail
+		err := rows.Scan(
+			&d.ID, &d.OutletID, &d.PackageID, &d.PlanID, &d.ActiveFrom, &d.ActiveUntil,
+			&d.PackageCode, &d.PackageName, &d.PlanCode, &d.PlanName, &d.TenureMonths,
+		)
+		if err != nil {
+			return nil, err
+		}
+		result[d.OutletID] = append(result[d.OutletID], d)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return result, nil
 }

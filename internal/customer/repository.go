@@ -820,6 +820,7 @@ func scanOutletOverview(row scanner) (OutletOverview, error) {
 		&item.LatestSubscriptionStatus,
 		&item.LatestSubscriptionStart,
 		&item.LatestSubscriptionUntil,
+		&item.LatestPIC,
 		&item.CreatedAt,
 		&item.UpdatedAt,
 	)
@@ -912,8 +913,9 @@ func ownerWhere(actor Actor, params ListParams) (string, []any) {
 		args = append(args, like(params.Phone))
 	}
 	if params.BrandName != "" {
-		where = append(where, "o.brand_name LIKE ?")
-		args = append(args, like(params.BrandName))
+		pattern := like(params.BrandName)
+		where = append(where, "(o.brand_name LIKE ? OR o.name LIKE ? OR o.code LIKE ?)")
+		args = append(args, pattern, pattern, pattern)
 	}
 	if params.Province != "" {
 		where = append(where, "o.province LIKE ?")
@@ -1044,6 +1046,11 @@ func globalOutletWhere(actor Actor, params ListParams) (string, []any) {
 		where = append(where, "ot.owner_id = ?")
 		args = append(args, *params.OwnerID)
 	}
+	if params.OwnerKeyword != "" {
+		pattern := like(params.OwnerKeyword)
+		where = append(where, "(o.code LIKE ? OR o.name LIKE ? OR o.brand_name LIKE ?)")
+		args = append(args, pattern, pattern, pattern)
+	}
 	if params.Code != "" {
 		where = append(where, "ot.code LIKE ?")
 		args = append(args, like(params.Code))
@@ -1057,8 +1064,9 @@ func globalOutletWhere(actor Actor, params ListParams) (string, []any) {
 		args = append(args, like(params.Phone))
 	}
 	if params.BrandName != "" {
-		where = append(where, "o.brand_name LIKE ?")
-		args = append(args, like(params.BrandName))
+		pattern := like(params.BrandName)
+		where = append(where, "(o.brand_name LIKE ? OR o.name LIKE ? OR o.code LIKE ?)")
+		args = append(args, pattern, pattern, pattern)
 	}
 	if params.Province != "" {
 		where = append(where, "ot.province LIKE ?")
@@ -1076,22 +1084,57 @@ func globalOutletWhere(actor Actor, params ListParams) (string, []any) {
 		where = append(where, "ot.created_at < ?")
 		args = append(args, params.CreatedTo.AddDate(0, 0, 1))
 	}
-	if params.SubscriptionStatus != "" || params.SubscriptionMonth != "" {
+	if params.CreationStatus != "" {
+		st := strings.ToUpper(strings.TrimSpace(params.CreationStatus))
+		refDate := time.Now()
+		if st == "NEW" {
+			where = append(where, "YEAR(ot.created_at) = ? AND MONTH(ot.created_at) = ?")
+			args = append(args, refDate.Year(), int(refDate.Month()))
+		} else if st == "EXISTING" {
+			where = append(where, "(YEAR(ot.created_at) < ? OR (YEAR(ot.created_at) = ? AND MONTH(ot.created_at) < ?))")
+			args = append(args, refDate.Year(), refDate.Year(), int(refDate.Month()))
+		}
+	}
+	if params.SubscriptionStatus != "" {
+		st := strings.ToUpper(strings.TrimSpace(params.SubscriptionStatus))
+		refDate := time.Now()
+		trialCutoff14 := refDate.AddDate(0, 0, -TrialDurationDays)
+
+		latestUntilSubquery := `(SELECT s.active_until FROM subscriptions s WHERE s.outlet_id = ot.id AND s.deleted_at IS NULL ORDER BY s.active_from DESC, s.id DESC LIMIT 1)`
+		latestStatusSubquery := `(SELECT s.status FROM subscriptions s WHERE s.outlet_id = ot.id AND s.deleted_at IS NULL ORDER BY s.active_from DESC, s.id DESC LIMIT 1)`
+		hasSubSubquery := `(EXISTS(SELECT 1 FROM subscriptions s2 WHERE s2.outlet_id = ot.id AND s2.deleted_at IS NULL) OR EXISTS(SELECT 1 FROM subscriptions s2 JOIN outlets ot5 ON ot5.id = s2.outlet_id WHERE ot5.owner_id = ot.owner_id AND s2.deleted_at IS NULL))`
+
+		switch st {
+		case "SUBSCRIBE", "ACTIVE", "BERLANGGANAN":
+			where = append(where, `(`+latestUntilSubquery+` >= ? AND COALESCE(`+latestStatusSubquery+`, '') NOT IN ('EXPIRED', 'UNSUBSCRIBE', 'TIDAK_AKTIF', 'NOT_SUBSCRIBE', 'INACTIVE', 'NEW', 'BARU'))`)
+			args = append(args, refDate)
+		case "NEW", "BARU":
+			where = append(where, `(`+latestUntilSubquery+` >= ? AND `+latestStatusSubquery+` IN ('NEW', 'BARU'))`)
+			args = append(args, refDate)
+		case "UNSUBSCRIBE", "EXPIRED", "KEDALUWARSA", "TIDAK_AKTIF":
+			where = append(where, `(`+hasSubSubquery+` AND (`+latestUntilSubquery+` IS NULL OR `+latestUntilSubquery+` < ? OR `+latestStatusSubquery+` IN ('EXPIRED', 'UNSUBSCRIBE', 'TIDAK_AKTIF', 'NOT_SUBSCRIBE', 'INACTIVE')))`)
+			args = append(args, refDate)
+		case "TRIAL":
+			where = append(where, `(`+latestUntilSubquery+` IS NULL AND COALESCE(o.created_at, ot.created_at) > ? AND NOT `+hasSubSubquery+`)`)
+			args = append(args, trialCutoff14)
+		case "NO_PACKAGE", "NO PACKAGE":
+			where = append(where, `(`+latestUntilSubquery+` IS NULL AND COALESCE(o.created_at, ot.created_at) <= ? AND NOT `+hasSubSubquery+`)`)
+			args = append(args, trialCutoff14)
+		default:
+			where = append(where, `(`+latestUntilSubquery+` >= ?)`)
+			args = append(args, refDate)
+		}
+	}
+	if params.SubscriptionMonth != "" {
 		subQuery := []string{"s.outlet_id = ot.id", "s.deleted_at IS NULL"}
 		subArgs := []any{}
-		if params.SubscriptionStatus != "" {
-			subQuery = append(subQuery, "s.status = ?")
-			subArgs = append(subArgs, params.SubscriptionStatus)
-		}
-		if params.SubscriptionMonth != "" {
-			if len(params.SubscriptionMonth) == 10 {
-				subQuery = append(subQuery, "s.active_until = ?")
-				subArgs = append(subArgs, params.SubscriptionMonth)
-			} else {
-				subQuery = append(subQuery, "STR_TO_DATE(CONCAT(?, '-01'), '%Y-%m-%d') <= s.active_until")
-				subQuery = append(subQuery, "LAST_DAY(STR_TO_DATE(CONCAT(?, '-01'), '%Y-%m-%d')) >= s.active_from")
-				subArgs = append(subArgs, params.SubscriptionMonth, params.SubscriptionMonth)
-			}
+		if len(params.SubscriptionMonth) == 10 {
+			subQuery = append(subQuery, "s.active_until = ?")
+			subArgs = append(subArgs, params.SubscriptionMonth)
+		} else {
+			subQuery = append(subQuery, "STR_TO_DATE(CONCAT(?, '-01'), '%Y-%m-%d') <= s.active_until")
+			subQuery = append(subQuery, "LAST_DAY(STR_TO_DATE(CONCAT(?, '-01'), '%Y-%m-%d')) >= s.active_from")
+			subArgs = append(subArgs, params.SubscriptionMonth, params.SubscriptionMonth)
 		}
 		where = append(where, "EXISTS (SELECT 1 FROM subscriptions s WHERE "+strings.Join(subQuery, " AND ")+")")
 		args = append(args, subArgs...)
@@ -1140,13 +1183,20 @@ func outletOverviewSelect() string {
 				FROM subscriptions s
 				WHERE s.outlet_id = ot.id AND s.deleted_at IS NULL AND s.status = 'ACTIVE'
 			) AS active_subscription_count,
-			(
-				SELECT s.status
-				FROM subscriptions s
-				WHERE s.outlet_id = ot.id AND s.deleted_at IS NULL
-				ORDER BY s.active_until DESC, s.id DESC
-				LIMIT 1
-			) AS latest_subscription_status,
+			CASE
+				WHEN (
+					SELECT s.active_until FROM subscriptions s WHERE s.outlet_id = ot.id AND s.deleted_at IS NULL ORDER BY s.active_from DESC, s.id DESC LIMIT 1
+				) >= NOW() AND COALESCE((
+					SELECT s.status FROM subscriptions s WHERE s.outlet_id = ot.id AND s.deleted_at IS NULL ORDER BY s.active_from DESC, s.id DESC LIMIT 1
+				), '') NOT IN ('EXPIRED', 'UNSUBSCRIBE', 'TIDAK_AKTIF', 'NOT_SUBSCRIBE', 'INACTIVE') THEN 'SUBSCRIBE'
+				WHEN EXISTS(
+					SELECT 1 FROM subscriptions s2 WHERE s2.outlet_id = ot.id AND s2.deleted_at IS NULL
+				) OR EXISTS(
+					SELECT 1 FROM subscriptions s2 JOIN outlets ot5 ON ot5.id = s2.outlet_id WHERE ot5.owner_id = ot.owner_id AND s2.deleted_at IS NULL
+				) THEN 'UNSUBSCRIBE'
+				WHEN COALESCE(o.created_at, ot.created_at) > NOW() - INTERVAL 14 DAY THEN 'TRIAL'
+				ELSE 'NO_PACKAGE'
+			END AS latest_subscription_status,
 			(
 				SELECT s.active_from
 				FROM subscriptions s
@@ -1161,6 +1211,18 @@ func outletOverviewSelect() string {
 				ORDER BY s.active_until DESC, s.id DESC
 				LIMIT 1
 			) AS latest_subscription_until,
+			(
+				SELECT IF(
+					TRIM(COALESCE(pic.phone, '')) != '',
+					CONCAT(COALESCE(pic.name, ''), ' (', RIGHT(TRIM(pic.phone), 3), ')'),
+					COALESCE(pic.name, '')
+				)
+				FROM customer_leads cl
+				LEFT JOIN users pic ON pic.id = COALESCE(cl.active_sales_id, IF(cl.current_owner_role = 'SALES', cl.current_owner_user_id, NULL))
+				WHERE cl.outlet_id = ot.id AND cl.deleted_at IS NULL
+				ORDER BY cl.created_at DESC, cl.id DESC
+				LIMIT 1
+			) AS latest_pic,
 			ot.created_at,
 			ot.updated_at
 		FROM outlets ot
@@ -1292,6 +1354,10 @@ func trim(value string) string {
 
 func like(value string) string {
 	return "%" + trim(value) + "%"
+}
+
+func likePrefix(value string) string {
+	return trim(value) + "%"
 }
 
 func wordBoundaryRegexp(value string) string {
