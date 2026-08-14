@@ -139,14 +139,12 @@ Alur praktis yang dipakai sehari-hari:
    git commit -m "update backend"
    git push public main
    ```
-
 2. Di VPS, ambil update source:
 
    ```bash
    cd /opt/backend-piposmart
    git pull
    ```
-
 3. Rebuild dan jalankan ulang container:
 
    ```bash
@@ -160,13 +158,11 @@ Catatan:
   ```bash
   docker-compose -f compose.prod.external-db.yaml --env-file .env.production up -d --build --no-deps api
   ```
-
 - Bila update hanya menyentuh worker:
 
   ```bash
   docker-compose -f compose.prod.external-db.yaml --env-file .env.production up -d --build --no-deps worker
   ```
-
 - `setup` pada backend ini akan otomatis menjalankan `migrate up`, `seed master`, dan `bootstrap-admin` sesuai env saat service tersebut dijalankan ulang.
 
 ## 6A. Kalau ingin update `.env.production`
@@ -180,13 +176,11 @@ Langkah aman:
    ```bash
    nano .env.production
    ```
-
 2. Simpan perubahan, lalu jalankan recreate:
 
    ```bash
    docker-compose -f compose.prod.external-db.yaml --env-file .env.production up -d
    ```
-
 3. Kalau perubahan env memengaruhi image atau source code juga, pakai build sekalian:
 
    ```bash
@@ -276,21 +270,18 @@ Kalau error `ContainerConfig` muncul saat habis update `.env.production`, pakai 
    docker ps -a --format '{{.ID}} {{.Names}}' | grep backend-piposmart_api
    docker ps -a --format '{{.ID}} {{.Names}}' | grep backend-piposmart_worker
    ```
-
 3. Hapus container yang memang mau di-recreate:
 
    ```bash
    docker rm -f <nama-atau-id-api>
    docker rm -f <nama-atau-id-worker>
    ```
-
 4. Jalankan ulang:
 
    ```bash
    docker-compose -f compose.prod.external-db.yaml --env-file .env.production up -d --no-deps api
    docker-compose -f compose.prod.external-db.yaml --env-file .env.production up -d --no-deps worker
    ```
-
 5. Verifikasi:
 
    ```bash
@@ -330,7 +321,6 @@ Jadi sebelum menjalankan demo seed, yang harus dilakukan dulu adalah menonaktifk
    ```bash
    nano .env.production
    ```
-
 2. Ubah sementara:
 
    ```env
@@ -342,7 +332,6 @@ Jadi sebelum menjalankan demo seed, yang harus dilakukan dulu adalah menonaktifk
    ```env
    APP_ENV=staging
    ```
-
 3. Jalankan demo seed:
 
    ```bash
