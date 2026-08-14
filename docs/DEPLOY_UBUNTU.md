@@ -130,6 +130,252 @@ git pull
 docker compose -f compose.prod.external-db.yaml --env-file .env.production up -d --build
 ```
 
+Alur praktis yang dipakai sehari-hari:
+
+1. Di lokal, push perubahan backend ke repo:
+
+   ```bash
+   git add .
+   git commit -m "update backend"
+   git push public main
+   ```
+
+2. Di VPS, ambil update source:
+
+   ```bash
+   cd /opt/backend-piposmart
+   git pull
+   ```
+
+3. Rebuild dan jalankan ulang container:
+
+   ```bash
+   docker-compose -f compose.prod.external-db.yaml --env-file .env.production up -d --build
+   ```
+
+Catatan:
+
+- Bila update hanya menyentuh backend `api`, bisa rebuild service itu saja:
+
+  ```bash
+  docker-compose -f compose.prod.external-db.yaml --env-file .env.production up -d --build --no-deps api
+  ```
+
+- Bila update hanya menyentuh worker:
+
+  ```bash
+  docker-compose -f compose.prod.external-db.yaml --env-file .env.production up -d --build --no-deps worker
+  ```
+
+- `setup` pada backend ini akan otomatis menjalankan `migrate up`, `seed master`, dan `bootstrap-admin` sesuai env saat service tersebut dijalankan ulang.
+
+## 6A. Kalau ingin update `.env.production`
+
+Perubahan file env tidak otomatis masuk ke container yang sedang berjalan. Setelah edit `.env.production`, service terkait harus di-recreate.
+
+Langkah aman:
+
+1. Edit env:
+
+   ```bash
+   nano .env.production
+   ```
+
+2. Simpan perubahan, lalu jalankan recreate:
+
+   ```bash
+   docker-compose -f compose.prod.external-db.yaml --env-file .env.production up -d
+   ```
+
+3. Kalau perubahan env memengaruhi image atau source code juga, pakai build sekalian:
+
+   ```bash
+   docker-compose -f compose.prod.external-db.yaml --env-file .env.production up -d --build
+   ```
+
+Panduan cepat memilih service yang perlu dijalankan ulang:
+
+- Jika mengubah env API seperti `APP_PORT`, `APP_ENV`, `JWT_*`, `CORS_*`, `AUTH_*`, `OPENAPI_*`, jalankan ulang `api`.
+- Jika mengubah env worker seperti `WORKER_*`, queue, polling, atau koneksi database, jalankan ulang `worker`.
+- Jika mengubah env setup seperti `SETUP_RUN_*`, `BOOTSTRAP_ADMIN_*`, atau ingin menjalankan migrate/seed lagi, jalankan `setup` secara manual.
+
+Contoh recreate service tertentu saja:
+
+```bash
+docker-compose -f compose.prod.external-db.yaml --env-file .env.production up -d --no-deps api
+docker-compose -f compose.prod.external-db.yaml --env-file .env.production up -d --no-deps worker
+```
+
+Kalau yang berubah adalah env untuk proses setup, jalankan manual:
+
+```bash
+docker-compose -f compose.prod.external-db.yaml --env-file .env.production run --rm setup
+```
+
+Contoh:
+
+- Setelah ganti `CORS_ALLOWED_ORIGINS`, cukup recreate `api`.
+- Setelah ganti `WORKER_POLL_INTERVAL`, cukup recreate `worker`.
+- Setelah ganti `BOOTSTRAP_ADMIN_PASSWORD`, perubahan tidak akan mengubah password admin lama secara otomatis; env itu dipakai saat proses bootstrap dijalankan lagi.
+
+## 6B. Troubleshooting `ContainerConfig` di docker-compose lama
+
+Pada beberapa VPS yang masih memakai `docker-compose 1.29.2`, proses recreate container bisa gagal dengan error:
+
+```text
+KeyError: 'ContainerConfig'
+```
+
+Kalau ini terjadi, jangan menebak nama container. Cari dulu nama container yang benar:
+
+Untuk `api`:
+
+```bash
+docker ps -a --format '{{.ID}} {{.Names}}' | grep backend-piposmart_api
+```
+
+Untuk `worker`:
+
+```bash
+docker ps -a --format '{{.ID}} {{.Names}}' | grep backend-piposmart_worker
+```
+
+Untuk `setup`:
+
+```bash
+docker ps -a --format '{{.ID}} {{.Names}}' | grep backend-piposmart_setup
+```
+
+Setelah nama container muncul, copy nama atau ID yang benar dari hasil command di atas, baru hapus:
+
+```bash
+docker rm -f <nama-atau-id-container>
+```
+
+Contoh:
+
+```bash
+docker rm -f backend-piposmart_api_1
+docker rm -f backend-piposmart_worker_1
+docker rm -f 4dcb203aaded_backend-piposmart_setup_1
+```
+
+Lalu buat ulang service yang dibutuhkan:
+
+```bash
+docker-compose -f compose.prod.external-db.yaml --env-file .env.production up -d --build --no-deps api
+docker-compose -f compose.prod.external-db.yaml --env-file .env.production up -d --build --no-deps worker
+```
+
+Kalau error `ContainerConfig` muncul saat habis update `.env.production`, pakai alur ini:
+
+1. Edit dan simpan `.env.production`
+2. Cari container lama:
+
+   ```bash
+   docker ps -a --format '{{.ID}} {{.Names}}' | grep backend-piposmart_api
+   docker ps -a --format '{{.ID}} {{.Names}}' | grep backend-piposmart_worker
+   ```
+
+3. Hapus container yang memang mau di-recreate:
+
+   ```bash
+   docker rm -f <nama-atau-id-api>
+   docker rm -f <nama-atau-id-worker>
+   ```
+
+4. Jalankan ulang:
+
+   ```bash
+   docker-compose -f compose.prod.external-db.yaml --env-file .env.production up -d --no-deps api
+   docker-compose -f compose.prod.external-db.yaml --env-file .env.production up -d --no-deps worker
+   ```
+
+5. Verifikasi:
+
+   ```bash
+   docker-compose -f compose.prod.external-db.yaml --env-file .env.production ps
+   docker-compose -f compose.prod.external-db.yaml --env-file .env.production logs --tail 50 api
+   docker-compose -f compose.prod.external-db.yaml --env-file .env.production logs --tail 50 worker
+   ```
+
+Kalau perlu recreate penuh setelah container lama dibersihkan:
+
+```bash
+docker-compose -f compose.prod.external-db.yaml --env-file .env.production up -d --build
+```
+
+## 6C. Menjalankan `seed demo` di VPS
+
+Backend ini sengaja menolak `seed demo` ketika `APP_ENV=production`.
+
+Kalau mencoba langsung:
+
+```bash
+docker-compose -f compose.prod.external-db.yaml --env-file .env.production run --rm setup seed demo --preset=real
+```
+
+hasilnya akan ditolak dengan pesan:
+
+```text
+demo seeder ditolak pada environment production
+```
+
+Jadi sebelum menjalankan demo seed, yang harus dilakukan dulu adalah menonaktifkan mode production sementara.
+
+### Opsi paling praktis
+
+1. Edit env:
+
+   ```bash
+   nano .env.production
+   ```
+
+2. Ubah sementara:
+
+   ```env
+   APP_ENV=production
+   ```
+
+   menjadi:
+
+   ```env
+   APP_ENV=staging
+   ```
+
+3. Jalankan demo seed:
+
+   ```bash
+   docker-compose -f compose.prod.external-db.yaml --env-file .env.production run --rm setup seed demo --preset=real
+   ```
+
+Contoh lain:
+
+```bash
+docker-compose -f compose.prod.external-db.yaml --env-file .env.production run --rm setup seed demo --preset=minimal
+docker-compose -f compose.prod.external-db.yaml --env-file .env.production run --rm setup seed demo --preset=large --scale=2 --variation=0.5
+docker-compose -f compose.prod.external-db.yaml --env-file .env.production run --rm setup seed demo --preset=real --scale=1 --variation=0.5
+```
+
+Setelah selesai, kembalikan lagi env ke production:
+
+```env
+APP_ENV=production
+```
+
+Lalu restart service utama:
+
+```bash
+docker-compose -f compose.prod.external-db.yaml --env-file .env.production up -d --build --no-deps api
+docker-compose -f compose.prod.external-db.yaml --env-file .env.production up -d --build --no-deps worker
+```
+
+### Catatan penting
+
+- Jangan jalankan `seed demo` pada database production live kecuali memang sengaja ingin mengisi data demo.
+- `preset=real` tetap termasuk demo seed, bukan data production sungguhan.
+- Perintah `run --rm setup seed demo ...` tidak perlu menulis `/app/crm` lagi, karena image backend sudah punya `ENTRYPOINT ["/app/crm"]`.
+
 ## 7. Rollback cepat
 
 Paling aman pakai image tag per-release. Kalau masih build langsung dari source, rollback berarti checkout commit/tag lama lalu jalankan ulang:
