@@ -499,8 +499,58 @@ func (r *Repository) lockLead(ctx context.Context, tx *sql.Tx, id int64) (LeadSt
 		SELECT id, owner_id, outlet_id, active_sales_id, current_owner_user_id,
 			current_owner_role, supervisor_id, stage, status, current_score
 		FROM customer_leads
+		WHERE (id = ? OR outlet_id = ? OR owner_id = ?) AND deleted_at IS NULL
+		ORDER BY CASE WHEN id = ? THEN 0 WHEN outlet_id = ? THEN 1 ELSE 2 END
+		LIMIT 1
+		FOR UPDATE`, id, id, id, id, id).
+		Scan(
+			&item.ID,
+			&item.OwnerID,
+			&item.OutletID,
+			&item.ActiveSalesID,
+			&item.CurrentOwnerUserID,
+			&item.CurrentOwnerRole,
+			&item.SupervisorID,
+			&item.Stage,
+			&item.Status,
+			&item.CurrentScore,
+		)
+	if err == nil {
+		return item, nil
+	}
+	if err != sql.ErrNoRows {
+		return LeadState{}, err
+	}
+
+	var otID, ownerID int64
+	err = tx.QueryRowContext(ctx, `
+		SELECT id, owner_id
+		FROM outlets
 		WHERE id = ? AND deleted_at IS NULL
-		FOR UPDATE`, id).
+		LIMIT 1`, id).Scan(&otID, &ownerID)
+	if err == sql.ErrNoRows {
+		err = tx.QueryRowContext(ctx, `
+			SELECT id, owner_id
+			FROM outlets
+			WHERE owner_id = ? AND deleted_at IS NULL
+			ORDER BY id ASC
+			LIMIT 1`, id).Scan(&otID, &ownerID)
+		if err == sql.ErrNoRows {
+			return LeadState{}, ErrNotFound
+		}
+	}
+	if err != nil {
+		return LeadState{}, err
+	}
+
+	err = tx.QueryRowContext(ctx, `
+		SELECT id, owner_id, outlet_id, active_sales_id, current_owner_user_id,
+			current_owner_role, supervisor_id, stage, status, current_score
+		FROM customer_leads
+		WHERE (outlet_id = ? OR owner_id = ?) AND deleted_at IS NULL
+		ORDER BY CASE WHEN outlet_id = ? THEN 0 ELSE 1 END
+		LIMIT 1
+		FOR UPDATE`, otID, ownerID, otID).
 		Scan(
 			&item.ID,
 			&item.OwnerID,
