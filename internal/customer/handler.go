@@ -803,6 +803,9 @@ func listParams(c *gin.Context) (ListParams, error) {
 		BrandName:    c.Query("brand_name"),
 		Province:     c.Query("province"),
 		City:         c.Query("city"),
+		District:     c.Query("district"),
+		EnteredBy:    c.Query("entered_by"),
+		PIC:          c.Query("pic"),
 		SubscriptionStatus: func() string {
 			if s := c.Query("subscription_status"); s != "" {
 				return s
