@@ -46,20 +46,20 @@ type Owner struct {
 }
 
 type Outlet struct {
-	ID          int64
-	OwnerID     sql.NullInt64
-	Code        string
-	Name        string
-	Phone       sql.NullString
-	Province    sql.NullString
-	City        sql.NullString
-	District    sql.NullString
-	SubDistrict sql.NullString
-	Address     sql.NullString
-	Status             string
-	EnteredByUserID    sql.NullInt64
-	CreatedAt          time.Time
-	UpdatedAt          time.Time
+	ID              int64
+	OwnerID         sql.NullInt64
+	Code            string
+	Name            string
+	Phone           sql.NullString
+	Province        sql.NullString
+	City            sql.NullString
+	District        sql.NullString
+	SubDistrict     sql.NullString
+	Address         sql.NullString
+	Status          string
+	EnteredByUserID sql.NullInt64
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
 }
 
 type OutletOverview struct {
@@ -87,6 +87,7 @@ type OutletOverview struct {
 	LatestSubscriptionStatus sql.NullString
 	LatestSubscriptionStart  sql.NullTime
 	LatestSubscriptionUntil  sql.NullTime
+	LatestPIC                sql.NullString
 	CreatedAt                time.Time
 	UpdatedAt                time.Time
 }
@@ -166,16 +167,16 @@ type OwnerResponse struct {
 }
 
 type OutletResponse struct {
-	ID          int64     `json:"id"`
-	OwnerID     *int64    `json:"owner_id"`
-	Code        string    `json:"code"`
-	Name        string    `json:"name"`
-	Phone       string    `json:"phone,omitempty"`
-	Province    string    `json:"province,omitempty"`
-	City        string    `json:"city,omitempty"`
-	District    string    `json:"district,omitempty"`
-	SubDistrict string    `json:"sub_district,omitempty"`
-	Address     string    `json:"address,omitempty"`
+	ID              int64     `json:"id"`
+	OwnerID         *int64    `json:"owner_id"`
+	Code            string    `json:"code"`
+	Name            string    `json:"name"`
+	Phone           string    `json:"phone,omitempty"`
+	Province        string    `json:"province,omitempty"`
+	City            string    `json:"city,omitempty"`
+	District        string    `json:"district,omitempty"`
+	SubDistrict     string    `json:"sub_district,omitempty"`
+	Address         string    `json:"address,omitempty"`
 	Status          string    `json:"status"`
 	EnteredByUserID *int64    `json:"entered_by_user_id,omitempty"`
 	EnteredByName   string    `json:"entered_by_name,omitempty"`
@@ -228,6 +229,8 @@ type OutletOverviewResponse struct {
 	EnteredByUserID     *int64                      `json:"entered_by_user_id,omitempty"`
 	EnteredByName       string                      `json:"entered_by_name,omitempty"`
 	SubscriptionSummary SubscriptionSummaryResponse `json:"subscription_summary"`
+	LatestPIC           string                      `json:"latest_pic,omitempty"`
+	CreationStatus      string                      `json:"creation_status"`
 	CreatedAt           time.Time                   `json:"created_at"`
 	UpdatedAt           time.Time                   `json:"updated_at"`
 }
@@ -247,6 +250,7 @@ type OutletDetailResponse struct {
 	EnteredByUserID     *int64                      `json:"entered_by_user_id,omitempty"`
 	EnteredByName       string                      `json:"entered_by_name,omitempty"`
 	SubscriptionSummary SubscriptionSummaryResponse `json:"subscription_summary"`
+	LatestPIC           string                      `json:"latest_pic,omitempty"`
 	CreatedAt           time.Time                   `json:"created_at"`
 	UpdatedAt           time.Time                   `json:"updated_at"`
 }
@@ -421,6 +425,7 @@ type ListParams struct {
 	CreatedTo          *time.Time
 	OwnerID            *int64
 	SubscriptionStatus string
+	CreationStatus     string
 	SubscriptionMonth  string
 	Scope              string
 	All                bool
@@ -527,6 +532,12 @@ func NewOutletOverviewResponse(item OutletOverview) OutletOverviewResponse {
 		value := item.EnteredByUserID.Int64
 		enteredByUserID = &value
 	}
+	// CreationStatus: NEW jika outlet dibuat di bulan & tahun saat ini, EXISTING jika sebelumnya.
+	now := time.Now()
+	creationStatus := "EXISTING"
+	if item.CreatedAt.Year() == now.Year() && item.CreatedAt.Month() == now.Month() {
+		creationStatus = "NEW"
+	}
 	return OutletOverviewResponse{
 		ID:              item.ID,
 		Owner:           newOwnerBriefResponse(item),
@@ -548,11 +559,12 @@ func NewOutletOverviewResponse(item OutletOverview) OutletOverviewResponse {
 			LatestSubscriptionStart:  formatNullDate(item.LatestSubscriptionStart),
 			LatestSubscriptionEnd:    formatNullDate(item.LatestSubscriptionUntil),
 		},
-		CreatedAt: item.CreatedAt,
-		UpdatedAt: item.UpdatedAt,
+		LatestPIC:      item.LatestPIC.String,
+		CreationStatus: creationStatus,
+		CreatedAt:      item.CreatedAt,
+		UpdatedAt:      item.UpdatedAt,
 	}
 }
-
 func NewOutletDetailResponse(item OutletOverview) OutletDetailResponse {
 	overview := NewOutletOverviewResponse(item)
 	return OutletDetailResponse{
@@ -570,6 +582,7 @@ func NewOutletDetailResponse(item OutletOverview) OutletDetailResponse {
 		EnteredByUserID:     overview.EnteredByUserID,
 		EnteredByName:       overview.EnteredByName,
 		SubscriptionSummary: overview.SubscriptionSummary,
+		LatestPIC:           overview.LatestPIC,
 		CreatedAt:           overview.CreatedAt,
 		UpdatedAt:           overview.UpdatedAt,
 	}
