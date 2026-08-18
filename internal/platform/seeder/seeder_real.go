@@ -377,6 +377,9 @@ func seedDemoReal(ctx context.Context, tx *sql.Tx, options Options) error {
 	}
 	progress.FinishStage()
 	progress.Close()
+	if err := SeedKomisiMitraFromExcel(ctx, tx, adminID); err != nil {
+		return fmt.Errorf("seed komisi mitra from excel: %w", err)
+	}
 
 	return nil
 }

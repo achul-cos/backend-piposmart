@@ -185,7 +185,7 @@ func (r *Repository) CreatePartner(ctx context.Context, p Partner) (int64, error
 func (r *Repository) GetPartnerByID(ctx context.Context, id int64) (*Partner, error) {
 	query := `
 		SELECT p.id, p.partner_type_id, p.code, p.name, p.phone, p.email, p.province, p.city, p.district, p.sub_district, p.address,
-		       p.bank_account_encrypted, p.bank_account_last4, p.status, p.created_at, p.updated_at, u.name as pic_name, o.name as owner_name
+		       p.bank_account_encrypted, p.bank_account_last4, p.status, p.deleted_at, p.created_at, p.updated_at, u.name as pic_name, o.name as owner_name
 		FROM partners p
 		LEFT JOIN partner_assignments pa ON p.id = pa.partner_id AND pa.active = 1
 		LEFT JOIN users u ON pa.user_id = u.id
@@ -194,7 +194,7 @@ func (r *Repository) GetPartnerByID(ctx context.Context, id int64) (*Partner, er
 	var p Partner
 	err := r.db.QueryRowContext(ctx, query, id).Scan(
 		&p.ID, &p.PartnerTypeID, &p.Code, &p.Name, &p.Phone, &p.Email, &p.Province, &p.City, &p.District, &p.SubDistrict, &p.Address,
-		&p.BankAccountEncrypted, &p.BankAccountLast4, &p.Status, &p.CreatedAt, &p.UpdatedAt, &p.PicName, &p.OwnerName)
+		&p.BankAccountEncrypted, &p.BankAccountLast4, &p.Status, &p.DeletedAt, &p.CreatedAt, &p.UpdatedAt, &p.PicName, &p.OwnerName)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
@@ -207,7 +207,7 @@ func (r *Repository) GetPartnerByID(ctx context.Context, id int64) (*Partner, er
 func (r *Repository) GetPartnerByCode(ctx context.Context, code string) (*Partner, error) {
 	query := `
 		SELECT p.id, p.partner_type_id, p.code, p.name, p.phone, p.email, p.province, p.city, p.district, p.sub_district, p.address,
-		       p.bank_account_encrypted, p.bank_account_last4, p.status, p.created_at, p.updated_at, u.name as pic_name, o.name as owner_name
+		       p.bank_account_encrypted, p.bank_account_last4, p.status, p.deleted_at, p.created_at, p.updated_at, u.name as pic_name, o.name as owner_name
 		FROM partners p
 		LEFT JOIN partner_assignments pa ON p.id = pa.partner_id AND pa.active = 1
 		LEFT JOIN users u ON pa.user_id = u.id
@@ -216,7 +216,7 @@ func (r *Repository) GetPartnerByCode(ctx context.Context, code string) (*Partne
 	var p Partner
 	err := r.db.QueryRowContext(ctx, query, code).Scan(
 		&p.ID, &p.PartnerTypeID, &p.Code, &p.Name, &p.Phone, &p.Email, &p.Province, &p.City, &p.District, &p.SubDistrict, &p.Address,
-		&p.BankAccountEncrypted, &p.BankAccountLast4, &p.Status, &p.CreatedAt, &p.UpdatedAt, &p.PicName, &p.OwnerName)
+		&p.BankAccountEncrypted, &p.BankAccountLast4, &p.Status, &p.DeletedAt, &p.CreatedAt, &p.UpdatedAt, &p.PicName, &p.OwnerName)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
@@ -228,7 +228,18 @@ func (r *Repository) GetPartnerByCode(ctx context.Context, code string) (*Partne
 
 func (r *Repository) ListPartners(ctx context.Context, params PartnerListParams) ([]Partner, int64, error) {
 	var args []any
-	whereParts := []string{"1 = 1"}
+	whereParts := []string{}
+
+	if params.TrashOnly || strings.ToUpper(params.Status) == "DELETED" {
+		whereParts = append(whereParts, "(p.deleted_at IS NOT NULL OR p.status = 'DELETED')")
+	} else {
+		whereParts = append(whereParts, "p.deleted_at IS NULL AND p.status <> 'DELETED'")
+		if params.Status != "" {
+			whereParts = append(whereParts, "p.status = ?")
+			args = append(args, params.Status)
+		}
+	}
+
 	if strings.TrimSpace(params.Search) != "" {
 		pattern := "%" + strings.TrimSpace(params.Search) + "%"
 		whereParts = append(whereParts, "(p.name LIKE ? OR p.code LIKE ?)")
@@ -251,7 +262,7 @@ func (r *Repository) ListPartners(ctx context.Context, params PartnerListParams)
 		return nil, 0, err
 	}
 	// Data query
-	query := "SELECT p.id, p.partner_type_id, p.code, p.name, p.phone, p.email, p.province, p.city, p.district, p.sub_district, p.address, p.bank_account_encrypted, p.bank_account_last4, p.status, p.created_at, p.updated_at, u.name as pic_name, o.name as owner_name FROM partners p LEFT JOIN partner_assignments pa ON p.id = pa.partner_id AND pa.active = 1 LEFT JOIN users u ON pa.user_id = u.id LEFT JOIN owners o ON p.code = o.code " + where + " ORDER BY p.name"
+	query := "SELECT p.id, p.partner_type_id, p.code, p.name, p.phone, p.email, p.province, p.city, p.district, p.sub_district, p.address, p.bank_account_encrypted, p.bank_account_last4, p.status, p.deleted_at, p.created_at, p.updated_at, u.name as pic_name, o.name as owner_name FROM partners p LEFT JOIN partner_assignments pa ON p.id = pa.partner_id AND pa.active = 1 LEFT JOIN users u ON pa.user_id = u.id LEFT JOIN owners o ON p.code = o.code " + where + " ORDER BY p.name"
 	dataArgs := append([]any{}, args...)
 	if params.Limit > 0 {
 		query += " LIMIT ? OFFSET ?"
@@ -267,7 +278,7 @@ func (r *Repository) ListPartners(ctx context.Context, params PartnerListParams)
 		var p Partner
 		if err := rows.Scan(
 			&p.ID, &p.PartnerTypeID, &p.Code, &p.Name, &p.Phone, &p.Email, &p.Province, &p.City, &p.District,
-			&p.SubDistrict, &p.Address, &p.BankAccountEncrypted, &p.BankAccountLast4, &p.Status, &p.CreatedAt, &p.UpdatedAt, &p.PicName, &p.OwnerName,
+			&p.SubDistrict, &p.Address, &p.BankAccountEncrypted, &p.BankAccountLast4, &p.Status, &p.DeletedAt, &p.CreatedAt, &p.UpdatedAt, &p.PicName, &p.OwnerName,
 		); err != nil {
 			return nil, 0, err
 		}
@@ -299,13 +310,46 @@ func (r *Repository) UpdatePartner(ctx context.Context, id int64, p Partner) err
 	return nil
 }
 
-// Soft delete by setting status to INACTIVE
+// Soft delete partner (move to trash)
 func (r *Repository) DeactivatePartner(ctx context.Context, id int64) error {
+	return r.SoftDeletePartner(ctx, id)
+}
+
+func (r *Repository) SoftDeletePartner(ctx context.Context, id int64) error {
 	query := `
 		UPDATE partners
-		SET status = ?, updated_at = NOW()
+		SET status = 'DELETED', deleted_at = NOW(), updated_at = NOW()
 		WHERE id = ?`
-	result, err := r.db.ExecContext(ctx, query, StatusInactive, id)
+	result, err := r.db.ExecContext(ctx, query, id)
+	if err != nil {
+		return err
+	}
+	rowsAffected, _ := result.RowsAffected()
+	if rowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (r *Repository) RestorePartner(ctx context.Context, id int64) error {
+	query := `
+		UPDATE partners
+		SET status = 'ACTIVE', deleted_at = NULL, updated_at = NOW()
+		WHERE id = ?`
+	result, err := r.db.ExecContext(ctx, query, id)
+	if err != nil {
+		return err
+	}
+	rowsAffected, _ := result.RowsAffected()
+	if rowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (r *Repository) PermanentDeletePartner(ctx context.Context, id int64) error {
+	query := `DELETE FROM partners WHERE id = ?`
+	result, err := r.db.ExecContext(ctx, query, id)
 	if err != nil {
 		return err
 	}

@@ -5,6 +5,20 @@ import (
 	"time"
 )
 
+// indonesianMonth returns the Indonesian month name for a given RFC3339 timestamp string.
+func indonesianMonth(rfc3339 string) string {
+	if rfc3339 == "" {
+		return ""
+	}
+	t, err := time.Parse("2006-01-02T15:04:05Z", rfc3339)
+	if err != nil {
+		return ""
+	}
+	months := []string{"", "Januari", "Februari", "Maret", "April", "Mei", "Juni",
+		"Juli", "Agustus", "September", "Oktober", "November", "Desember"}
+	return months[t.Month()]
+}
+
 // ToAdminOwnerOutletRows remaps ExportOwnerOutlets' DB rows (one per owner+outlet pair) into the
 // column keys reporting.GetAdminOwnerOutletColumns expects — the same layout admins are used to
 // from the original Excel report, but sourced entirely from the database.
@@ -72,28 +86,59 @@ func ToAdminOwnerOutletRows(rows []map[string]any) []map[string]any {
 		if code == "" {
 			code = "-"
 		}
+
+		// Derive "Booking" from kategori or status
+		booking := ""
+		if kategori == "Akun Testing" {
+			booking = "Akun Testing"
+		}
+
+		// Derive "Check" — true if the owner has a known PIC or status
+		checkVal := ""
+		statusTerbaru := stringVal(row["status_terbaru"])
+		if statusTerbaru != "" || stringVal(row["pic"]) != "" {
+			checkVal = "TRUE"
+		}
+
+		// Derive "Tanggal Berlangganan"
+		tanggalBerlangganan := ""
+		subDateRaw := stringVal(row["subscription_start_date"])
+		if subDateRaw != "" {
+			tanggalBerlangganan = formatAdminDate(subDateRaw)
+		} else {
+			tanggalBerlangganan = "No Date"
+		}
+
+		// Derive "Mitra" from partner data
+		mitra := stringVal(row["mitra_name"])
+
 		item := map[string]any{
-			"date_of_work":        formatAdminDate(stringVal(row["owner_created_at"])),
-			"nama_penginput":      namaPenginput,
-			"kategori_akun":       kategori,
-			"kode_baris":          kodeBaris,
-			"owner_code":          code, // code is already stringVal(row["owner_code"])
-			"owner_name":          ownerName,
-			"owner_email":         ownerEmail,
-			"owner_phone":         ownerPhone,
-			"outlet_phone":        row["outlet_phone"],
-			"create_date_project": formatAdminDate(outletCreatedAt),
-			"brand_name":          row["brand_name"],
-			"outlet_name":         row["outlet_name"],
-			"kelurahan":           kel,
-			"kecamatan":           kec,
-			"kota":                row["outlet_city"],
-			"provinsi":            row["outlet_province"],
-			"alamat_lengkap":      row["outlet_address"],
-			"status_terbaru":      row["status_terbaru"],
-			"akuisisi":            row["akuisisi"],
-			"pic":                 row["pic"],
-			"jumlah_outlet":       row["outlet_count"],
+			"date_of_work":          formatAdminDate(stringVal(row["owner_created_at"])),
+			"nama_penginput":        namaPenginput,
+			"kategori_akun":         kategori,
+			"kode_baris":            kodeBaris,
+			"owner_code":            code, // code is already stringVal(row["owner_code"])
+			"owner_name":            ownerName,
+			"owner_email":           ownerEmail,
+			"owner_phone":           ownerPhone,
+			"outlet_phone":          row["outlet_phone"],
+			"create_date_project":   formatAdminDate(outletCreatedAt),
+			"bulan":                 indonesianMonth(outletCreatedAt),
+			"brand_name":            row["brand_name"],
+			"outlet_name":           row["outlet_name"],
+			"kelurahan":             kel,
+			"kecamatan":             kec,
+			"kota":                  row["outlet_city"],
+			"provinsi":              row["outlet_province"],
+			"alamat_lengkap":        row["outlet_address"],
+			"nama_pengisi":          namaPenginput,
+			"check":                 checkVal,
+			"status_terbaru":        statusTerbaru,
+			"akuisisi":              row["akuisisi"],
+			"pic":                   row["pic"],
+			"tanggal_berlangganan":  tanggalBerlangganan,
+			"booking":              booking,
+			"mitra":                mitra,
 		}
 		for index := 1; index <= adminOwnerOutletShareLimit; index++ {
 			item[fmt.Sprintf("tanggal_dibagikan_%d", index)] = row[fmt.Sprintf("tanggal_dibagikan_%d", index)]
@@ -104,6 +149,7 @@ func ToAdminOwnerOutletRows(rows []map[string]any) []map[string]any {
 	}
 	return out
 }
+
 
 // ToAdminOwnerRows remaps the same DB rows into reporting.GetAdminOwnerColumns' layout: one row
 // per unique owner (deduped, first row encountered per owner_code kept), with a wallet balance

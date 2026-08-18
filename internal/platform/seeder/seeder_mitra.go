@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -302,4 +303,178 @@ func syncSeedPartnerAssignment(ctx context.Context, tx *sql.Tx, partnerID, picID
 		partnerID, picID, adminID, assignedAt, assignedAt, assignedAt,
 	)
 	return err == nil, err
+}
+
+func SeedKomisiMitraFromExcel(ctx context.Context, tx *sql.Tx, adminID int64) error {
+	searchPaths := []string{
+		filepath.Join("asset", "data_admin", "06. Data Bonus Mitra 2025-2026 (Copy).xlsx"),
+		filepath.Join("..", "asset", "data_admin", "06. Data Bonus Mitra 2025-2026 (Copy).xlsx"),
+		filepath.Join("backend", "asset", "data_admin", "06. Data Bonus Mitra 2025-2026 (Copy).xlsx"),
+	}
+
+	var f *excelize.File
+	var err error
+	for _, fn := range searchPaths {
+		f, err = excelize.OpenFile(fn)
+		if err == nil {
+			break
+		}
+	}
+	if err != nil {
+		return nil // skip if not found
+	}
+	defer f.Close()
+
+	rows, err := f.GetRows("Mitra - Referral")
+	if err != nil || len(rows) <= 2 {
+		return nil
+	}
+
+	for rIdx := 2; rIdx < len(rows); rIdx++ {
+		row := rows[rIdx]
+		if len(row) < 70 {
+			padded := make([]string, 70)
+			copy(padded, row)
+			row = padded
+		}
+
+		partnerCode := strings.TrimSpace(getCol(row, 2))
+		if partnerCode == "" {
+			continue
+		}
+		leadCode := strings.TrimSpace(getCol(row, 5))
+		if leadCode == "" {
+			continue
+		}
+		leadName := strings.TrimSpace(getCol(row, 7))
+		if leadName == "" {
+			leadName = "Lead " + leadCode
+		}
+
+		totalStr := strings.ReplaceAll(getCol(row, 69), ",", "")
+		totalStr = strings.ReplaceAll(totalStr, ".", "")
+		totalAmount, _ := strconv.ParseFloat(totalStr, 64)
+		if totalAmount <= 0 {
+			continue
+		}
+
+		var partnerID int64
+		err = tx.QueryRowContext(ctx, "SELECT id FROM partners WHERE code = ?", partnerCode).Scan(&partnerID)
+		if err != nil {
+			continue
+		}
+
+		var ownerID int64
+		err = tx.QueryRowContext(ctx, "SELECT id FROM owners WHERE code = ?", leadCode).Scan(&ownerID)
+		if err != nil {
+			// Jika owner tidak ada, buat dummy owner agar bisa lanjut
+			res, err := tx.ExecContext(ctx, `
+				INSERT INTO owners (code, name, phone, status, created_at, updated_at)
+				VALUES (?, ?, ?, 'ACTIVE', NOW(), NOW())
+				ON DUPLICATE KEY UPDATE name=VALUES(name)
+			`, leadCode, leadName, "0000000000")
+			if err != nil {
+				return err
+			}
+			ownerID, _ = res.LastInsertId()
+			if ownerID == 0 {
+				_ = tx.QueryRowContext(ctx, "SELECT id FROM owners WHERE code = ?", leadCode).Scan(&ownerID)
+			}
+		}
+
+		var leadID int64
+		err = tx.QueryRowContext(ctx, "SELECT id FROM customer_leads WHERE owner_id = ?", ownerID).Scan(&leadID)
+		if err != nil {
+			res, err := tx.ExecContext(ctx, `
+				INSERT INTO customer_leads (code, owner_id, source_type, stage, status, created_at, updated_at)
+				VALUES (?, ?, 'REFERRAL', 'NEW', 'OPEN', NOW(), NOW())`,
+				leadCode+"_LEAD", ownerID)
+			if err != nil {
+				return err
+			}
+			leadID, _ = res.LastInsertId()
+		}
+
+		var referralID int64
+		err = tx.QueryRowContext(ctx, "SELECT id FROM partner_referrals WHERE partner_id = ? AND lead_id = ?", partnerID, leadID).Scan(&referralID)
+		if err != nil {
+			res, err := tx.ExecContext(ctx, `
+				INSERT INTO partner_referrals (partner_id, lead_id, referral_date, notes, created_at)
+				VALUES (?, ?, NOW(), 'Imported from Excel', NOW())`,
+				partnerID, leadID)
+			if err != nil {
+				return err
+			}
+			referralID, _ = res.LastInsertId()
+		}
+
+		var closingID int64
+		err = tx.QueryRowContext(ctx, "SELECT id FROM sales_closings WHERE lead_id = ? LIMIT 1", leadID).Scan(&closingID)
+		if err != nil {
+			closingCode := fmt.Sprintf("CLS-%d-%d", partnerID, leadID)
+			res, err := tx.ExecContext(ctx, `
+				INSERT INTO sales_closings (
+					code, lead_id, package_snapshot_json, plan_snapshot_json, 
+					tenure_months, duration_days, base_price, final_amount, 
+					currency, closed_at, confirmed_at, status, created_at, updated_at
+				) VALUES (?, ?, '{}', '{}', 1, 30, 0, ?, 'IDR', NOW(), NOW(), 'CONFIRMED', NOW(), NOW())`,
+				closingCode, leadID, 0)
+			if err != nil {
+				return err
+			}
+			closingID, _ = res.LastInsertId()
+		}
+
+		commissionMode := "FIXED"
+		commissionValue := totalAmount
+		statusVal := "PENDING"
+		statusCol := strings.ToUpper(strings.TrimSpace(getCol(row, 68)))
+		if statusCol == "FINISH" || statusCol == "PAY" {
+			statusVal = "PAID"
+		}
+
+		code := fmt.Sprintf("COM-%s-%s", partnerCode, leadCode)
+		res, err := tx.ExecContext(ctx, `
+			INSERT INTO partner_commissions (
+				code, partner_id, referral_id, closing_id, commission_mode, commission_value,
+				base_amount, commission_amount, currency, status, note, created_at, updated_at
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'IDR', ?, 'Seeded from Excel', NOW(), NOW())
+			ON DUPLICATE KEY UPDATE commission_amount=VALUES(commission_amount), status=VALUES(status)
+		`, code, partnerID, referralID, closingID, commissionMode, commissionValue,
+			0, totalAmount, statusVal)
+		
+		if err != nil {
+			return err
+		}
+
+		commissionID, _ := res.LastInsertId()
+		if commissionID == 0 {
+			_ = tx.QueryRowContext(ctx, "SELECT id FROM partner_commissions WHERE code = ?", code).Scan(&commissionID)
+		}
+
+		if statusVal == "PAID" && commissionID > 0 {
+			payoutCode := fmt.Sprintf("PAYOUT-%s-%s", partnerCode, leadCode)
+			res, err = tx.ExecContext(ctx, `
+				INSERT INTO partner_payouts (
+					code, partner_id, total_amount, currency, status, note, prepared_by_user_id, paid_by_user_id, paid_at, created_at, updated_at
+				) VALUES (?, ?, ?, 'IDR', 'PAID', 'Seeded from Excel', ?, ?, NOW(), NOW(), NOW())
+				ON DUPLICATE KEY UPDATE status='PAID'
+			`, payoutCode, partnerID, totalAmount, adminID, adminID)
+			if err != nil {
+				return err
+			}
+			payoutID, _ := res.LastInsertId()
+			if payoutID == 0 {
+				_ = tx.QueryRowContext(ctx, "SELECT id FROM partner_payouts WHERE code = ?", payoutCode).Scan(&payoutID)
+			}
+			if payoutID > 0 {
+				tx.ExecContext(ctx, `
+					INSERT IGNORE INTO partner_payout_items (payout_id, commission_id, amount, released_at, created_at, updated_at)
+					VALUES (?, ?, ?, NOW(), NOW(), NOW())
+				`, payoutID, commissionID, totalAmount)
+			}
+		}
+	}
+
+	return nil
 }

@@ -1,6 +1,7 @@
 package partner
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -60,6 +61,8 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 			partnerGroup.GET("", h.GetPartnerByID)       // GET /partners/:partnerID
 			partnerGroup.PUT("", h.UpdatePartner)        // PUT /partners/:partnerID
 			partnerGroup.DELETE("", h.DeactivatePartner) // DELETE /partners/:partnerID
+			partnerGroup.POST("/restore", h.RestorePartner)
+			partnerGroup.DELETE("/permanent", h.PermanentDeletePartner)
 
 			partnerGroup.GET("/assignments/active", h.GetActiveAssignmentForPartner)
 			partnerGroup.GET("/assignments", h.ListPartnerAssignments)
@@ -389,12 +392,16 @@ func (h *Handler) ListPartners(c *gin.Context) {
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
 	search := c.DefaultQuery("search", "")
+	status := c.DefaultQuery("status", "")
+	trash, _ := strconv.ParseBool(c.DefaultQuery("trash", "false"))
 	createdFrom, createdTo, ok := parseCreatedRange(c)
 	if !ok {
 		return
 	}
 	resp, total, err := h.service.ListPartners(c.Request.Context(), PartnerListParams{
 		Search:      search,
+		Status:      status,
+		TrashOnly:   trash,
 		CreatedFrom: createdFrom,
 		CreatedTo:   createdTo,
 		Limit:       limit,
@@ -416,12 +423,19 @@ func (h *Handler) ListPartners(c *gin.Context) {
 
 func (h *Handler) ListAllPartners(c *gin.Context) {
 	search := c.DefaultQuery("search", "")
+	status := c.DefaultQuery("status", "")
+	trash, _ := strconv.ParseBool(c.DefaultQuery("trash", "false"))
+	if strings.Contains(c.Request.URL.Path, "all-deleted") {
+		trash = true
+	}
 	createdFrom, createdTo, ok := parseCreatedRange(c)
 	if !ok {
 		return
 	}
 	resp, total, err := h.service.ListPartners(c.Request.Context(), PartnerListParams{
 		Search:      search,
+		Status:      status,
+		TrashOnly:   trash,
 		CreatedFrom: createdFrom,
 		CreatedTo:   createdTo,
 		Limit:       0,
@@ -497,6 +511,40 @@ func (h *Handler) DeactivatePartner(c *gin.Context) {
 			httpx.Error(c, http.StatusNotFound, "NOT_FOUND", "partner not found", nil)
 		} else {
 			internalServerError(c, "failed to deactivate partner", err)
+		}
+		return
+	}
+	httpx.Success(c, http.StatusNoContent, nil)
+}
+
+func (h *Handler) RestorePartner(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("partnerID"), 10, 64)
+	if err != nil {
+		httpx.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", "ID tidak valid", nil)
+		return
+	}
+	if err := h.service.RestorePartner(c.Request.Context(), id); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			httpx.Error(c, http.StatusNotFound, "NOT_FOUND", "partner not found", nil)
+		} else {
+			internalServerError(c, "failed to restore partner", err)
+		}
+		return
+	}
+	httpx.Success(c, http.StatusOK, map[string]string{"message": "partner restored successfully"})
+}
+
+func (h *Handler) PermanentDeletePartner(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("partnerID"), 10, 64)
+	if err != nil {
+		httpx.Error(c, http.StatusBadRequest, "VALIDATION_ERROR", "ID tidak valid", nil)
+		return
+	}
+	if err := h.service.PermanentDeletePartner(c.Request.Context(), id); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			httpx.Error(c, http.StatusNotFound, "NOT_FOUND", "partner not found", nil)
+		} else {
+			internalServerError(c, "failed to permanently delete partner", err)
 		}
 		return
 	}

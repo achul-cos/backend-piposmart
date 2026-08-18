@@ -74,6 +74,7 @@ type Partner struct {
 	BankAccountEncrypted       []byte         `json:"-"`                            // encrypted account number, never exposed
 	BankAccountLast4           sql.NullString `json:"bank_account_last4,omitempty"` // last 4 digits for masking
 	Status                     string         `json:"status"`
+	DeletedAt                  sql.NullTime   `json:"deleted_at,omitempty"`
 	CreatedAt                  time.Time      `json:"created_at"`
 	UpdatedAt                  time.Time      `json:"updated_at"`
 	PicName                    sql.NullString `json:"pic_name,omitempty"`
@@ -144,6 +145,7 @@ type PartnerResponse struct {
 	Address           *string             `json:"address,omitempty"`
 	BankAccountMasked *string             `json:"bank_account_masked,omitempty"` // e.g., ****1234
 	Status            string              `json:"status"`
+	DeletedAt         *time.Time          `json:"deleted_at,omitempty"`
 	CreatedAt         time.Time           `json:"created_at"`
 	UpdatedAt         time.Time           `json:"updated_at"`
 	PicName           *string             `json:"pic_name,omitempty"`
@@ -305,6 +307,8 @@ type PartnerListParams struct {
 	Search      string
 	CreatedFrom *time.Time
 	CreatedTo   *time.Time
+	Status      string
+	TrashOnly   bool
 	Limit       int
 	Offset      int
 }
@@ -323,6 +327,13 @@ type PartnerHistoryListParams struct {
 }
 
 // Helper functions to build responses
+
+func nullTimeToPtr(t sql.NullTime) *time.Time {
+	if !t.Valid {
+		return nil
+	}
+	return &t.Time
+}
 
 func NewPartnerTypeResponse(pt PartnerType) PartnerTypeResponse {
 	return PartnerTypeResponse{
@@ -366,6 +377,7 @@ func NewPartnerResponse(p Partner) PartnerResponse {
 		Address:           nullStringToPtr(p.Address),
 		BankAccountMasked: maskedAccountPtr(p.BankAccountLast4),
 		Status:            p.Status,
+		DeletedAt:         nullTimeToPtr(p.DeletedAt),
 		CreatedAt:         p.CreatedAt,
 		UpdatedAt:         p.UpdatedAt,
 		PicName:           nullStringToPtr(p.PicName),

@@ -797,6 +797,12 @@ func parseDateRobust(d string) time.Time {
 	if d == "" || strings.EqualFold(d, "No Date") {
 		return time.Time{}
 	}
+	if strings.Contains(d, " ") {
+		parts := strings.Split(d, " ")
+		if strings.Contains(parts[0], "-") || strings.Contains(parts[0], "/") {
+			d = parts[0]
+		}
+	}
 	// format dd/mm/yy
 	if t, err := time.Parse("02/01/06", d); err == nil {
 		return t

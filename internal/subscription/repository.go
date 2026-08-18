@@ -1074,7 +1074,7 @@ INSERT INTO subscription_orders
  upgrade_effective_start_date, upgrade_original_end_date, upgrade_remaining_days, upgrade_daily_price,
  previous_package_snapshot_json, previous_plan_snapshot_json, idempotency_key, external_reference,
  purchased_at, subscription_start_date, note, created_by_user_id, updated_by_user_id)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		code, ownerID, input.OutletID, input.ClosingID, input.SalesID, input.SupervisorID, walletID,
 		input.PackageID, input.PlanID, input.PromotionID, input.PackageSnapshotJSON, input.PlanSnapshotJSON,
 		input.PromotionSnapshotJSON, input.TenureMonths, input.DurationDays, input.BasePrice, input.DiscountAmount,
