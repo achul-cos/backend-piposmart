@@ -17,6 +17,10 @@ const (
 	ScopeActive  = "ACTIVE"
 	ScopeDeleted = "DELETED"
 	ScopeAll     = "ALL"
+
+	OwnerKindRegistered  = "REGISTERED"
+	OwnerKindNonRegister = "NON_REGISTER"
+	OwnerKindAll         = "ALL"
 )
 
 type Actor struct {
@@ -427,6 +431,7 @@ type ListParams struct {
 	SubscriptionStatus string
 	CreationStatus     string
 	SubscriptionMonth  string
+	OwnerKind          string
 	Scope              string
 	All                bool
 	Page               int

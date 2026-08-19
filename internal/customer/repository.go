@@ -94,6 +94,11 @@ func (r *Repository) createOwner(ctx context.Context, q queryExecutor, actor Act
 	if err := r.createLeadForOwner(ctx, q, id, actor); err != nil {
 		return Owner{}, err
 	}
+	if !isNonRegisterOwnerCode(req.Code) && normalizedPhone != "" {
+		if _, err := r.softDeleteDuplicateNonRegisterOwners(ctx, q, normalizedPhone, id); err != nil {
+			return Owner{}, err
+		}
+	}
 	return r.findOwnerByID(ctx, q, id, false)
 }
 
@@ -335,6 +340,11 @@ func (r *Repository) updateOwner(ctx context.Context, q queryExecutor, input Own
 	)
 	if err != nil {
 		return Owner{}, mapDuplicateError(err)
+	}
+	if !isNonRegisterOwnerCode(code) && phone.Valid && phone.String != "" {
+		if _, err := r.softDeleteDuplicateNonRegisterOwners(ctx, q, phone.String, input.ID); err != nil {
+			return Owner{}, err
+		}
 	}
 	return r.findOwnerByID(ctx, q, input.ID, false)
 }
@@ -927,6 +937,22 @@ func ownerWhere(actor Actor, params ListParams) (string, []any) {
 	visibility, visibilityArgs := ownerVisibilityWhere(actor)
 	where = append(where, visibility)
 	args = append(args, visibilityArgs...)
+	switch params.OwnerKind {
+	case OwnerKindNonRegister:
+		where = append(where, "o.code LIKE 'NONREG-%'")
+		where = append(where, "o.phone <> ''")
+		where = append(where, `NOT EXISTS (
+			SELECT 1
+			FROM owners registered_owner
+			WHERE registered_owner.deleted_at IS NULL
+				AND registered_owner.code NOT LIKE 'NONREG-%'
+				AND registered_owner.phone = o.phone
+		)`)
+	case OwnerKindAll:
+		// Intentionally no owner kind filter.
+	default:
+		where = append(where, "o.code NOT LIKE 'NONREG-%'")
+	}
 	if params.Query != "" {
 		pattern := wordBoundaryRegexp(params.Query)
 		where = append(where, "(o.code REGEXP ? OR o.name REGEXP ? OR o.phone REGEXP ? OR o.brand_name REGEXP ? OR o.city REGEXP ? OR o.province REGEXP ?)")
@@ -992,6 +1018,26 @@ func ownerWhere(actor Actor, params ListParams) (string, []any) {
 		args = append(args, params.CreatedTo.AddDate(0, 0, 1))
 	}
 	return strings.Join(where, " AND "), args
+}
+
+func isNonRegisterOwnerCode(code string) bool {
+	return strings.HasPrefix(strings.ToUpper(strings.TrimSpace(code)), "NONREG-")
+}
+
+func (r *Repository) softDeleteDuplicateNonRegisterOwners(ctx context.Context, q queryExecutor, normalizedPhone string, registeredOwnerID int64) (int64, error) {
+	result, err := q.ExecContext(ctx, `
+		UPDATE owners
+		SET status = ?, deleted_at = COALESCE(deleted_at, ?)
+		WHERE id <> ?
+			AND code LIKE 'NONREG-%'
+			AND phone = ?
+			AND deleted_at IS NULL`,
+		StatusDeleted, time.Now().UTC(), registeredOwnerID, normalizedPhone,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 func ownerVisibilityWhere(actor Actor) (string, []any) {

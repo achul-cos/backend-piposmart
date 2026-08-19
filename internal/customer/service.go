@@ -525,6 +525,7 @@ func normalizeListParams(params ListParams) ListParams {
 	params.City = strings.TrimSpace(params.City)
 	params.SubscriptionStatus = strings.ToUpper(strings.TrimSpace(params.SubscriptionStatus))
 	params.SubscriptionMonth = strings.TrimSpace(params.SubscriptionMonth)
+	params.OwnerKind = normalizeOwnerKind(params.OwnerKind)
 	params.Scope = normalizeScope(params.Scope)
 	params.Sort = strings.TrimSpace(params.Sort)
 	return params
@@ -548,6 +549,17 @@ func normalizeScope(scope string) string {
 		return ScopeAll
 	default:
 		return ScopeActive
+	}
+}
+
+func normalizeOwnerKind(kind string) string {
+	switch strings.ToUpper(strings.TrimSpace(kind)) {
+	case OwnerKindNonRegister, "NONREG", "NON_REGISTERED", "NON-REGISTER", "NON REGISTER":
+		return OwnerKindNonRegister
+	case OwnerKindAll:
+		return OwnerKindAll
+	default:
+		return OwnerKindRegistered
 	}
 }
 
@@ -594,9 +606,11 @@ func actorCanManageOwners(actor Actor) bool {
 }
 
 func (s *Service) ExportOwnerOutlets(ctx context.Context, actor Actor, params ListParams) ([]map[string]any, error) {
+	params = normalizeListParams(params)
 	return s.repo.ExportOwnerOutlets(ctx, actor, params)
 }
 
 func (s *Service) ExportGlobalOutlets(ctx context.Context, actor Actor, params ListParams) ([]map[string]any, error) {
+	params = normalizeListParams(params)
 	return s.repo.ExportGlobalOutlets(ctx, actor, params)
 }

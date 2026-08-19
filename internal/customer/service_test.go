@@ -1,6 +1,9 @@
 package customer
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestNormalizeListParams(t *testing.T) {
 	params := normalizeListParams(ListParams{Page: -1, Limit: 999, Query: " demo "})
@@ -12,6 +15,41 @@ func TestNormalizeListParams(t *testing.T) {
 	}
 	if params.Query != "demo" {
 		t.Fatalf("Query = %q, want demo", params.Query)
+	}
+}
+
+func TestNormalizeListParamsDefaultsToRegisteredOwners(t *testing.T) {
+	params := normalizeListParams(ListParams{OwnerKind: ""})
+	if params.OwnerKind != OwnerKindRegistered {
+		t.Fatalf("OwnerKind = %q, want %q", params.OwnerKind, OwnerKindRegistered)
+	}
+}
+
+func TestNormalizeListParamsAcceptsNonRegisterOwnerKind(t *testing.T) {
+	params := normalizeListParams(ListParams{OwnerKind: "non-register"})
+	if params.OwnerKind != OwnerKindNonRegister {
+		t.Fatalf("OwnerKind = %q, want %q", params.OwnerKind, OwnerKindNonRegister)
+	}
+}
+
+func TestOwnerWhereSeparatesRegisteredAndNonRegisterOwners(t *testing.T) {
+	registeredWhere, _ := ownerWhere(Actor{RoleCode: RoleAdmin}, normalizeListParams(ListParams{}))
+	if !strings.Contains(registeredWhere, "o.code NOT LIKE 'NONREG-%'") {
+		t.Fatalf("registered where = %q, want NONREG exclusion", registeredWhere)
+	}
+
+	nonRegisterWhere, _ := ownerWhere(Actor{RoleCode: RoleAdmin}, normalizeListParams(ListParams{OwnerKind: OwnerKindNonRegister}))
+	if !strings.Contains(nonRegisterWhere, "o.code LIKE 'NONREG-%'") {
+		t.Fatalf("non-register where = %q, want NONREG inclusion", nonRegisterWhere)
+	}
+	if !strings.Contains(nonRegisterWhere, "registered_owner.code NOT LIKE 'NONREG-%'") {
+		t.Fatalf("non-register where = %q, want registered phone duplicate exclusion", nonRegisterWhere)
+	}
+	if !strings.Contains(nonRegisterWhere, "registered_owner.phone = o.phone") {
+		t.Fatalf("non-register where = %q, want phone match duplicate exclusion", nonRegisterWhere)
+	}
+	if !strings.Contains(nonRegisterWhere, "o.phone <> ''") {
+		t.Fatalf("non-register where = %q, want empty phone exclusion", nonRegisterWhere)
 	}
 }
 
