@@ -425,6 +425,9 @@ type ListParams struct {
 	BrandName          string
 	Province           string
 	City               string
+	District           string
+	EnteredBy          string
+	PIC                string
 	CreatedFrom        *time.Time
 	CreatedTo          *time.Time
 	OwnerID            *int64

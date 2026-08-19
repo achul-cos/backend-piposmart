@@ -1167,6 +1167,34 @@ func globalOutletWhere(actor Actor, params ListParams) (string, []any) {
 		where = append(where, "ot.city LIKE ?")
 		args = append(args, like(params.City))
 	}
+	if params.District != "" {
+		where = append(where, "(ot.district LIKE ? OR ot.sub_district LIKE ?)")
+		args = append(args, like(params.District), like(params.District))
+	}
+	if params.EnteredBy != "" {
+		where = append(where, "(u.name LIKE ? OR u.email LIKE ?)")
+		args = append(args, like(params.EnteredBy), like(params.EnteredBy))
+	}
+	if params.PIC != "" {
+		picList := strings.Split(params.PIC, ",")
+		picConds := []string{}
+		picSubquery := `(SELECT IF(TRIM(COALESCE(pic.phone, '')) != '', CONCAT(COALESCE(pic.name, ''), ' (', RIGHT(TRIM(pic.phone), 3), ')'), COALESCE(pic.name, '')) FROM customer_leads cl LEFT JOIN users pic ON pic.id = COALESCE(cl.active_sales_id, IF(cl.current_owner_role = 'SALES', cl.current_owner_user_id, NULL)) WHERE cl.outlet_id = ot.id AND cl.deleted_at IS NULL ORDER BY cl.created_at DESC, cl.id DESC LIMIT 1)`
+		for _, p := range picList {
+			p = strings.TrimSpace(p)
+			if p == "" {
+				continue
+			}
+			if p == "Belum Ada PIC" || p == "No PIC" || p == "__NONE__" {
+				picConds = append(picConds, picSubquery+" IS NULL OR "+picSubquery+" = ''")
+			} else {
+				picConds = append(picConds, picSubquery+" LIKE ?")
+				args = append(args, like(p))
+			}
+		}
+		if len(picConds) > 0 {
+			where = append(where, "("+strings.Join(picConds, " OR ")+")")
+		}
+	}
 	if params.CreatedFrom != nil {
 		where = append(where, "ot.created_at >= ?")
 		args = append(args, *params.CreatedFrom)
@@ -1187,7 +1215,7 @@ func globalOutletWhere(actor Actor, params ListParams) (string, []any) {
 		}
 	}
 	if params.SubscriptionStatus != "" {
-		st := strings.ToUpper(strings.TrimSpace(params.SubscriptionStatus))
+		statuses := strings.Split(params.SubscriptionStatus, ",")
 		refDate := time.Now()
 		trialCutoff14 := refDate.AddDate(0, 0, -TrialDurationDays)
 
@@ -1195,25 +1223,35 @@ func globalOutletWhere(actor Actor, params ListParams) (string, []any) {
 		latestStatusSubquery := `(SELECT s.status FROM subscriptions s WHERE s.outlet_id = ot.id AND s.deleted_at IS NULL ORDER BY s.active_from DESC, s.id DESC LIMIT 1)`
 		hasSubSubquery := `(EXISTS(SELECT 1 FROM subscriptions s2 WHERE s2.outlet_id = ot.id AND s2.deleted_at IS NULL) OR EXISTS(SELECT 1 FROM subscriptions s2 JOIN outlets ot5 ON ot5.id = s2.outlet_id WHERE ot5.owner_id = ot.owner_id AND s2.deleted_at IS NULL))`
 
-		switch st {
-		case "SUBSCRIBE", "ACTIVE", "BERLANGGANAN":
-			where = append(where, `(`+latestUntilSubquery+` >= ? AND COALESCE(`+latestStatusSubquery+`, '') NOT IN ('EXPIRED', 'UNSUBSCRIBE', 'TIDAK_AKTIF', 'NOT_SUBSCRIBE', 'INACTIVE', 'NEW', 'BARU'))`)
-			args = append(args, refDate)
-		case "NEW", "BARU":
-			where = append(where, `(`+latestUntilSubquery+` >= ? AND `+latestStatusSubquery+` IN ('NEW', 'BARU'))`)
-			args = append(args, refDate)
-		case "UNSUBSCRIBE", "EXPIRED", "KEDALUWARSA", "TIDAK_AKTIF":
-			where = append(where, `(`+hasSubSubquery+` AND (`+latestUntilSubquery+` IS NULL OR `+latestUntilSubquery+` < ? OR `+latestStatusSubquery+` IN ('EXPIRED', 'UNSUBSCRIBE', 'TIDAK_AKTIF', 'NOT_SUBSCRIBE', 'INACTIVE')))`)
-			args = append(args, refDate)
-		case "TRIAL":
-			where = append(where, `(`+latestUntilSubquery+` IS NULL AND COALESCE(o.created_at, ot.created_at) > ? AND NOT `+hasSubSubquery+`)`)
-			args = append(args, trialCutoff14)
-		case "NO_PACKAGE", "NO PACKAGE":
-			where = append(where, `(`+latestUntilSubquery+` IS NULL AND COALESCE(o.created_at, ot.created_at) <= ? AND NOT `+hasSubSubquery+`)`)
-			args = append(args, trialCutoff14)
-		default:
-			where = append(where, `(`+latestUntilSubquery+` >= ?)`)
-			args = append(args, refDate)
+		subConds := []string{}
+		for _, rawSt := range statuses {
+			st := strings.ToUpper(strings.TrimSpace(rawSt))
+			if st == "" {
+				continue
+			}
+			switch st {
+			case "SUBSCRIBE", "ACTIVE", "BERLANGGANAN":
+				subConds = append(subConds, `(`+latestUntilSubquery+` >= ? AND COALESCE(`+latestStatusSubquery+`, '') NOT IN ('EXPIRED', 'UNSUBSCRIBE', 'TIDAK_AKTIF', 'NOT_SUBSCRIBE', 'INACTIVE', 'NEW', 'BARU'))`)
+				args = append(args, refDate)
+			case "NEW", "BARU":
+				subConds = append(subConds, `(`+latestUntilSubquery+` >= ? AND `+latestStatusSubquery+` IN ('NEW', 'BARU'))`)
+				args = append(args, refDate)
+			case "UNSUBSCRIBE", "EXPIRED", "KEDALUWARSA", "TIDAK_AKTIF":
+				subConds = append(subConds, `(`+hasSubSubquery+` AND (`+latestUntilSubquery+` IS NULL OR `+latestUntilSubquery+` < ? OR `+latestStatusSubquery+` IN ('EXPIRED', 'UNSUBSCRIBE', 'TIDAK_AKTIF', 'NOT_SUBSCRIBE', 'INACTIVE')))`)
+				args = append(args, refDate)
+			case "TRIAL":
+				subConds = append(subConds, `(`+latestUntilSubquery+` IS NULL AND COALESCE(o.created_at, ot.created_at) > ? AND NOT `+hasSubSubquery+`)`)
+				args = append(args, trialCutoff14)
+			case "NO_PACKAGE", "NO PACKAGE":
+				subConds = append(subConds, `(`+latestUntilSubquery+` IS NULL AND COALESCE(o.created_at, ot.created_at) <= ? AND NOT `+hasSubSubquery+`)`)
+				args = append(args, trialCutoff14)
+			default:
+				subConds = append(subConds, `(`+latestUntilSubquery+` >= ?)`)
+				args = append(args, refDate)
+			}
+		}
+		if len(subConds) > 0 {
+			where = append(where, "("+strings.Join(subConds, " OR ")+")")
 		}
 	}
 	if params.SubscriptionMonth != "" {
