@@ -73,8 +73,11 @@ func (s *Service) ListExports(ctx context.Context, actor identity.User, page, li
 	if page < 1 {
 		page = 1
 	}
-	if limit < 1 || limit > 100 {
+	if limit < 1 {
 		limit = 20
+	}
+	if limit > 10000 {
+		limit = 10000
 	}
 	return s.repo.ListExports(ctx, toActor(actor), page, limit)
 }

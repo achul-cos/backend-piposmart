@@ -28,6 +28,11 @@ ALTER TABLE commission_rules
 ALTER TABLE commission_rules
     CHANGE COLUMN plan_id package_id BIGINT UNSIGNED NULL;
 
+UPDATE commission_rules cr
+JOIN subscription_plans sp ON sp.id = cr.package_id
+SET cr.package_id = sp.package_id
+WHERE cr.package_id IS NOT NULL;
+
 ALTER TABLE commission_rules
     ADD CONSTRAINT fk_commission_rules_package
         FOREIGN KEY (package_id) REFERENCES subscription_packages(id);

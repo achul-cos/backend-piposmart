@@ -295,7 +295,7 @@ func (h *Handler) createManualTransaction(c *gin.Context, action func(context.Co
 func listParams(c *gin.Context) (ListParams, bool) {
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))
-	params := ListParams{Query: c.Query("q"), Status: c.Query("status"), PaymentType: c.Query("payment_type"), Channel: c.Query("channel"), Direction: c.Query("direction"), Type: c.Query("type"), All: false, Page: page, Limit: limit, Sort: c.Query("sort")}
+	params := ListParams{Query: c.Query("q"), Status: c.Query("status"), PaymentType: c.Query("payment_type"), Channel: c.Query("channel"), Direction: c.Query("direction"), Type: c.Query("type"), All: c.Query("all") == "true", Page: page, Limit: limit, Sort: c.Query("sort")}
 	if !parseOptionalInt64Query(c, "owner_id", &params.OwnerID) {
 		return ListParams{}, false
 	}

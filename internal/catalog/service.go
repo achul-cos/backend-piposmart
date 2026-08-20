@@ -418,8 +418,8 @@ func normalizeListParams(params ListParams) ListParams {
 		if params.Limit < 1 {
 			params.Limit = 10
 		}
-		if params.Limit > 100 {
-			params.Limit = 100
+		if params.Limit > 10000 {
+			params.Limit = 10000
 		}
 	}
 	params.Query = strings.TrimSpace(params.Query)

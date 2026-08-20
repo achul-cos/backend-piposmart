@@ -105,7 +105,7 @@ func (h *Handler) OverrideTarget(c *gin.Context) {
 func (h *Handler) ListTargets(c *gin.Context) {
 	params := ListTargetsParams{
 		MetricCode: c.Query("metric_code"),
-		All:        false,
+		All:        c.Query("all") == "true",
 	}
 	if v := c.Query("sales_id"); v != "" {
 		if id, err := strconv.ParseInt(v, 10, 64); err == nil {

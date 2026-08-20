@@ -239,7 +239,7 @@ func (h *Handler) listAllIssues(c *gin.Context) {
 func listParams(c *gin.Context) (ListParams, bool) {
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))
-	params := ListParams{Query: c.Query("q"), Status: c.Query("status"), OrderType: c.Query("order_type"), IssueType: c.Query("issue_type"), All: false, Page: page, Limit: limit, Sort: c.Query("sort")}
+	params := ListParams{Query: c.Query("q"), Status: c.Query("status"), OrderType: c.Query("order_type"), IssueType: c.Query("issue_type"), All: c.Query("all") == "true", Page: page, Limit: limit, Sort: c.Query("sort")}
 	if !parseOptionalInt64Query(c, "owner_id", &params.OwnerID) || !parseOptionalInt64Query(c, "outlet_id", &params.OutletID) || !parseOptionalInt64Query(c, "order_id", &params.OrderID) || !parseOptionalInt64Query(c, "source_subscription_id", &params.SourceSubscriptionID) || !parseOptionalInt64Query(c, "closing_id", &params.ClosingID) || !parseOptionalInt64Query(c, "sales_id", &params.SalesID) || !parseOptionalInt64Query(c, "supervisor_id", &params.SupervisorID) || !parseOptionalInt64Query(c, "plan_id", &params.PlanID) {
 		return ListParams{}, false
 	}

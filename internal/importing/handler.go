@@ -130,7 +130,7 @@ func (h *Handler) ListBatches(c *gin.Context) {
 	params := ListBatchesParams{
 		Status:  c.Query("status"),
 		Profile: c.Query("profile"),
-		All:     false,
+		All:     c.Query("all") == "true",
 	}
 	var ok bool
 	params.CreatedFrom, params.CreatedTo, ok = parseDateRangeQuery(c, "created_from", "created_to")
@@ -273,7 +273,7 @@ func (h *Handler) ListRows(c *gin.Context) {
 	if !ok {
 		return
 	}
-	params := ListRowsParams{Status: c.Query("status"), All: false}
+	params := ListRowsParams{Status: c.Query("status"), All: c.Query("all") == "true"}
 	var rangeOK bool
 	params.CreatedFrom, params.CreatedTo, rangeOK = parseDateRangeQuery(c, "created_from", "created_to")
 	if !rangeOK {

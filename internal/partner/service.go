@@ -664,8 +664,8 @@ func (s *Service) ListCommissions(ctx context.Context, partnerID int64, status s
 	if limit <= 0 {
 		limit = 0
 	} else {
-		if limit > 100 {
-			limit = 100
+		if limit > 10000 {
+			limit = 10000
 		}
 		offset = (page - 1) * limit
 	}
@@ -883,8 +883,8 @@ func (s *Service) ListPayouts(ctx context.Context, partnerID int64, status strin
 	if limit <= 0 {
 		limit = 0
 	} else {
-		if limit > 100 {
-			limit = 100
+		if limit > 10000 {
+			limit = 10000
 		}
 		offset = (page - 1) * limit
 	}

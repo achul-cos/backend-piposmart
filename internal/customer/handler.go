@@ -815,7 +815,7 @@ func listParams(c *gin.Context) (ListParams, error) {
 		CreationStatus:    c.Query("creation_status"),
 		SubscriptionMonth: c.Query("subscription_month"),
 		OwnerKind:         c.Query("owner_kind"),
-		All:               false,
+		All:               c.Query("all") == "true",
 		Page:              page,
 		Limit:             limit,
 		Sort:              c.Query("sort"),

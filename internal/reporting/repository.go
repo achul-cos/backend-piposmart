@@ -171,8 +171,11 @@ func buildPagination(params ListReportsParams) (page, limit int) {
 	if page < 1 {
 		page = 1
 	}
-	if limit < 1 || limit > 100 {
+	if limit < 1 {
 		limit = 20
+	}
+	if limit > 10000 {
+		limit = 10000
 	}
 	return page, limit
 }

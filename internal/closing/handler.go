@@ -199,7 +199,7 @@ func listParams(c *gin.Context) (ListParams, bool) {
 	params := ListParams{
 		Query:  c.Query("q"),
 		Status: c.Query("status"),
-		All:    false,
+		All:    c.Query("all") == "true",
 		Page:   page,
 		Limit:  limit,
 		Sort:   c.Query("sort"),

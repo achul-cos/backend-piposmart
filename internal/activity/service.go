@@ -169,8 +169,8 @@ func normalizeInteractionListParams(params InteractionListParams) InteractionLis
 		if params.Limit < 1 {
 			params.Limit = 10
 		}
-		if params.Limit > 100 {
-			params.Limit = 100
+		if params.Limit > 10000 {
+			params.Limit = 10000
 		}
 	}
 	params.Type = strings.ToUpper(strings.TrimSpace(params.Type))
@@ -189,8 +189,8 @@ func normalizeTrainingListParams(params TrainingListParams) TrainingListParams {
 		if params.Limit < 1 {
 			params.Limit = 10
 		}
-		if params.Limit > 100 {
-			params.Limit = 100
+		if params.Limit > 10000 {
+			params.Limit = 10000
 		}
 	}
 	params.Status = strings.ToUpper(strings.TrimSpace(params.Status))

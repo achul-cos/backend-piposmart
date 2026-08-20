@@ -347,7 +347,7 @@ func interactionListParams(c *gin.Context) (InteractionListParams, bool) {
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))
 	params := InteractionListParams{
 		Type:  c.Query("type"),
-		All:   false,
+		All:   c.Query("all") == "true",
 		Page:  page,
 		Limit: limit,
 		Sort:  c.Query("sort"),
@@ -401,7 +401,7 @@ func trainingListParams(c *gin.Context) (TrainingListParams, bool) {
 	params := TrainingListParams{
 		Status:       c.Query("status"),
 		TrainingType: c.Query("training_type"),
-		All:          false,
+		All:          c.Query("all") == "true",
 		Page:         page,
 		Limit:        limit,
 		Sort:         c.Query("sort"),

@@ -555,7 +555,7 @@ func (h *Handler) bulkFromBody(c *gin.Context, action bulkAction) {
 func listParams(c *gin.Context) (ListParams, bool) {
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))
-	params := ListParams{Query: c.Query("q"), Page: page, Limit: limit, Sort: c.Query("sort")}
+	params := ListParams{Query: c.Query("q"), All: c.Query("all") == "true", Page: page, Limit: limit, Sort: c.Query("sort")}
 	if !optionalBool(c, "active", &params.Active) {
 		return ListParams{}, false
 	}

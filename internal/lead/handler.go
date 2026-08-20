@@ -231,7 +231,7 @@ func listParams(c *gin.Context) (ListParams, bool) {
 		Ownership: c.Query("ownership"),
 		Stage:     c.Query("stage"),
 		Status:    c.Query("status"),
-		All:       false,
+		All:       c.Query("all") == "true",
 		Page:      page,
 		Limit:     limit,
 		Sort:      c.Query("sort"),

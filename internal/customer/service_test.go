@@ -6,12 +6,12 @@ import (
 )
 
 func TestNormalizeListParams(t *testing.T) {
-	params := normalizeListParams(ListParams{Page: -1, Limit: 999, Query: " demo "})
+	params := normalizeListParams(ListParams{Page: -1, Limit: 99999, Query: " demo "})
 	if params.Page != 1 {
 		t.Fatalf("Page = %d, want 1", params.Page)
 	}
-	if params.Limit != 100 {
-		t.Fatalf("Limit = %d, want 100", params.Limit)
+	if params.Limit != 10000 {
+		t.Fatalf("Limit = %d, want 10000", params.Limit)
 	}
 	if params.Query != "demo" {
 		t.Fatalf("Query = %q, want demo", params.Query)
